@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:cursey.github.io)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(dotnet build:*)",
+      "Read(//d/games/steam/steamapps/common/Street Fighter 6/**)",
+      "Bash(cp:*)"
+    ]
+  }
+}
