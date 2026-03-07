@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using SF6Access.Services;
@@ -11,6 +13,7 @@ public class MainMenuHooks
 {
     [ThreadStatic] static ManagedObject _pendingAgent;
     private static ManagedObject _flowParam;
+    private static string _lastMenuContext;
 
     // Cached TDB lookups
     private static Method _getMenuTypeMethod;
@@ -18,8 +21,12 @@ public class MainMenuHooks
     private static Field _iconMsgField;
     private static Field _itemMsgField;
     private static bool _fieldsCached;
+    private static bool _guidApproachFailed;
 
-    // Tab name mappings for top-level tabs that have no localized text
+    // Cache of MenuType int -> localized name (avoids repeated Guid resolution + crashes)
+    private static readonly Dictionary<int, string> _localizedNameCache = new();
+
+    // Tab name mappings for top-level tabs
     private static readonly Dictionary<string, string> TabNames = new()
     {
         { "fg", "Fighting Ground" },
@@ -29,7 +36,7 @@ public class MainMenuHooks
         { "c_SelectItem_club", "Club" },
     };
 
-    // MenuType enum int -> readable name
+    // MenuType enum int -> readable name (English fallback)
     private static readonly Dictionary<int, string> MenuTypeNames = new()
     {
         { 0, "Profile" },
@@ -58,21 +65,20 @@ public class MainMenuHooks
     {
         if (_fieldsCached) return;
         _fieldsCached = true;
+
         var td = TDB.Get().FindType("app.UIStartMenu.MenuItem");
-        if (td == null)
-        {
-            API.LogWarning("[SF6Access] MenuItem type not found in TDB");
-            return;
-        }
+        if (td == null) return;
+
         var fields = td.GetFields();
         if (fields == null) return;
+
         foreach (var f in fields)
         {
             string name = f.Name;
-            if (name != null && name.Contains("IconMessage")) _iconMsgField = f;
-            if (name != null && name.Contains("ItemMessage")) _itemMsgField = f;
+            if (name == null) continue;
+            if (name.Contains("IconMessage")) _iconMsgField = f;
+            else if (name.Contains("ItemMessage")) _itemMsgField = f;
         }
-        API.LogInfo($"[SF6Access] MenuItem fields - icon: {_iconMsgField?.Name}, item: {_itemMsgField?.Name}");
     }
 
     private static Method GetMenuTypeMethod()
@@ -81,7 +87,21 @@ public class MainMenuHooks
         return _getMenuTypeMethod;
     }
 
-    // Capture FlowParam instance when grid menu selection changes
+    private static int GetCurrentMenuTypeInt()
+    {
+        try
+        {
+            var method = GetMenuTypeMethod();
+            if (method == null) return -1;
+            var result = method.InvokeBoxed(typeof(int), _flowParam, new object[] { });
+            return result != null ? Convert.ToInt32(result) : -1;
+        }
+        catch { return -1; }
+    }
+
+    // Track menu context for dialog button labeling
+    public static string LastMenuContext => _lastMenuContext;
+
     [MethodHook(typeof(app.UIStartMenu.FlowParam), nameof(app.UIStartMenu.FlowParam.MenuItemSelectionChanged), MethodHookType.Pre)]
     static PreHookResult OnMenuSelectionPre(Span<ulong> args)
     {
@@ -129,19 +149,32 @@ public class MainMenuHooks
             var focusItem = (agent as IObject)?.Call("GetFocusItem") as ManagedObject;
             if (focusItem == null) return;
 
-            var selectedItem = (focusItem as IObject)?.Call("get_SelectedItem") as ManagedObject;
+            ManagedObject selectedItem = null;
+            try { selectedItem = (focusItem as IObject)?.Call("get_SelectedItem") as ManagedObject; }
+            catch { }
             if (selectedItem == null) return;
 
             string rawName = null;
             try { rawName = (selectedItem as IObject)?.Call("get_Name") as string; } catch { }
-
             if (string.IsNullOrEmpty(rawName)) return;
 
-            API.LogInfo($"[SF6Access] FocusChanged raw: '{rawName}'");
-
-            // Skip grid menu items - they're handled by MenuItemSelectionChanged hook
-            if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d+)$"))
+            // Skip grid menu items - handled by MenuItemSelectionChanged
+            if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d{2,})$"))
                 return;
+
+            // Dialog buttons: c_item_0 = first button, c_item_1 = second button
+            if (Regex.IsMatch(rawName, @"^c_item_\d$"))
+            {
+                int btnIdx = rawName[rawName.Length - 1] - '0';
+                // In SF6 confirm dialogs: c_item_0 = Yes/OK, c_item_1 = No/Cancel
+                string btnLabel = btnIdx == 0 ? "Yes" : "No";
+                if (GameStateTracker.HasChanged("focus_item", rawName))
+                {
+                    API.LogInfo($"[SF6Access] Dialog button: {btnLabel}");
+                    ScreenReaderService.Speak(btnLabel);
+                }
+                return;
+            }
 
             // Map known tab names to readable text
             string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped : rawName;
@@ -165,15 +198,39 @@ public class MainMenuHooks
 
         CacheMenuItemFields();
 
+        int menuType = GetCurrentMenuTypeInt();
         string name = null;
         string description = null;
 
-        // Strategy 1: Get MenuType enum and resolve name
-        name = GetNameFromMenuType();
+        // Check localized name cache first (fast path)
+        if (menuType >= 0 && _localizedNameCache.TryGetValue(menuType, out var cached))
+        {
+            name = cached;
+        }
+        else if (menuType >= 0 && !_guidApproachFailed)
+        {
+            // Try Guid resolution with a short timeout (200ms) to avoid lag from crashing Guids
+            name = ResolveWithTimeout(menuType);
 
-        // Strategy 2: Try reading Guid fields from MenuItem value type
-        if (string.IsNullOrEmpty(name))
-            name = GetNameFromMenuItemGuids();
+            // Fallback to English if timed out or failed
+            if (string.IsNullOrEmpty(name))
+            {
+                MenuTypeNames.TryGetValue(menuType, out name);
+                name ??= $"Menu {menuType}";
+                // Cache English name so we never retry this MenuType
+                _localizedNameCache[menuType] = name;
+            }
+        }
+
+        // Fallback for unknown menuType
+        if (string.IsNullOrEmpty(name) && menuType >= 0)
+        {
+            MenuTypeNames.TryGetValue(menuType, out name);
+            name ??= $"Menu {menuType}";
+        }
+
+        // Track context for dialog labeling
+        _lastMenuContext = name;
 
         // Get the description
         try
@@ -181,10 +238,7 @@ public class MainMenuHooks
             description = (_flowParam as IObject)?.Call("GetFocusMenuItemMessage") as string;
             description = CleanTags(description);
         }
-        catch (Exception ex)
-        {
-            API.LogError($"[SF6Access] GetFocusMenuItemMessage error: {ex.Message}");
-        }
+        catch { }
 
         if (!string.IsNullOrEmpty(name) && name == description)
             return name;
@@ -195,132 +249,93 @@ public class MainMenuHooks
         return description;
     }
 
-    private static string GetNameFromMenuType()
+    private static string ResolveWithTimeout(int menuType)
     {
-        try
+        var fp = _flowParam;
+        var task = Task.Run(() => GetLocalizedNameFromMenuItem(fp));
+
+        if (task.Wait(TimeSpan.FromMilliseconds(200)))
         {
-            var method = GetMenuTypeMethod();
-            if (method == null)
+            string result = task.Result;
+            if (!string.IsNullOrEmpty(result))
             {
-                API.LogWarning("[SF6Access] GetFocusMenuType method not found");
-                return null;
-            }
-
-            var result = method.InvokeBoxed(typeof(int), _flowParam, new object[] { });
-            if (result == null)
-            {
-                API.LogInfo("[SF6Access] GetFocusMenuType returned null");
-                return null;
-            }
-
-            int menuTypeInt = Convert.ToInt32(result);
-
-            if (MenuTypeNames.TryGetValue(menuTypeInt, out var name))
-            {
-                API.LogInfo($"[SF6Access] MenuType: {menuTypeInt} -> {name}");
-                return name;
-            }
-
-            API.LogInfo($"[SF6Access] MenuType: {menuTypeInt} (unknown)");
-            return $"Menu {menuTypeInt}";
-        }
-        catch (Exception ex)
-        {
-            API.LogError($"[SF6Access] GetNameFromMenuType error: {ex.Message}");
-            return null;
-        }
-    }
-
-    private static string GetNameFromMenuItemGuids()
-    {
-        try
-        {
-            var menuItem = (_flowParam as IObject)?.Call("GetFocusMenuItem");
-            if (menuItem == null)
-            {
-                API.LogInfo("[SF6Access] GetFocusMenuItem returned null");
-                return null;
-            }
-
-            var menuItemMo = menuItem as ManagedObject;
-            if (menuItemMo == null)
-            {
-                API.LogInfo($"[SF6Access] MenuItem is not ManagedObject, type: {menuItem.GetType().Name}");
-                return null;
-            }
-
-            var msgMethod = GetMsgMethod();
-            if (msgMethod == null) return null;
-
-            ulong addr = menuItemMo.GetAddress();
-            API.LogInfo($"[SF6Access] MenuItem address: 0x{addr:X}");
-
-            // Try IconMessageId
-            if (_iconMsgField != null)
-            {
-                try
-                {
-                    var guid = (Guid)_iconMsgField.GetDataBoxed(typeof(Guid), addr, false);
-                    API.LogInfo($"[SF6Access] IconMessageId Guid: {guid}");
-                    if (guid != Guid.Empty)
-                    {
-                        var text = msgMethod.InvokeBoxed(typeof(string), null, new object[] { guid }) as string;
-                        if (!string.IsNullOrEmpty(text))
-                            return CleanTags(text);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    API.LogError($"[SF6Access] IconMessageId read error: {ex.Message}");
-                }
-            }
-
-            // Try ItemMessageId
-            if (_itemMsgField != null)
-            {
-                try
-                {
-                    var guid = (Guid)_itemMsgField.GetDataBoxed(typeof(Guid), addr, false);
-                    API.LogInfo($"[SF6Access] ItemMessageId Guid: {guid}");
-                    if (guid != Guid.Empty)
-                    {
-                        var text = msgMethod.InvokeBoxed(typeof(string), null, new object[] { guid }) as string;
-                        if (!string.IsNullOrEmpty(text))
-                            return CleanTags(text);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    API.LogError($"[SF6Access] ItemMessageId read error: {ex.Message}");
-                }
+                _localizedNameCache[menuType] = result;
+                return result;
             }
         }
-        catch (Exception ex)
+        else
         {
-            API.LogError($"[SF6Access] GetNameFromMenuItemGuids error: {ex.Message}");
+            API.LogWarning($"[SF6Access] Guid resolution timed out for MenuType {menuType}, using English fallback");
         }
 
         return null;
     }
 
-    private static string FormatEnumName(string enumName)
+    private static string GetLocalizedNameFromMenuItem(ManagedObject fp = null)
     {
-        if (string.IsNullOrEmpty(enumName)) return null;
-        // EXIT_TO_DESKTOP -> Exit To Desktop
-        var parts = enumName.Split('_');
-        for (int i = 0; i < parts.Length; i++)
+        try
         {
-            if (parts[i].Length > 0)
-                parts[i] = char.ToUpper(parts[i][0]) + parts[i].Substring(1).ToLower();
+            fp ??= _flowParam;
+            var menuItem = (fp as IObject)?.Call("GetFocusMenuItem") as ManagedObject;
+            if (menuItem == null) return null;
+
+            ulong addr = menuItem.GetAddress();
+            if (addr == 0) return null;
+
+            var msgMethod = GetMsgMethod();
+            if (msgMethod == null) return null;
+
+            string text = TryReadGuidAndResolve(_iconMsgField, addr, msgMethod);
+            if (!string.IsNullOrEmpty(text)) return text;
+
+            text = TryReadGuidAndResolve(_itemMsgField, addr, msgMethod);
+            if (!string.IsNullOrEmpty(text)) return text;
         }
-        return string.Join(" ", parts);
+        catch (Exception ex)
+        {
+            API.LogError($"[SF6Access] GetLocalizedNameFromMenuItem error: {ex.Message}");
+            _guidApproachFailed = true;
+        }
+
+        return null;
+    }
+
+    private static string TryReadGuidAndResolve(Field guidField, ulong structAddr, Method msgGetMethod)
+    {
+        if (guidField == null) return null;
+
+        try
+        {
+            var rawValue = guidField.GetDataBoxed(typeof(Guid), structAddr, false);
+            if (rawValue is not REFrameworkNET.ValueType vt) return null;
+
+            ulong vtAddr = vt.GetAddress();
+            if (vtAddr == 0) return null;
+
+            // Check if Guid is all zeros (empty)
+            bool allZero = true;
+            for (int i = 0; i < 16; i++)
+            {
+                if (Marshal.ReadByte((IntPtr)(long)(vtAddr + (ulong)i)) != 0)
+                { allZero = false; break; }
+            }
+            if (allZero) return null;
+
+            var text = msgGetMethod.InvokeBoxed(typeof(string), null, new object[] { vt }) as string;
+            if (!string.IsNullOrEmpty(text))
+            {
+                API.LogInfo($"[SF6Access] Resolved {guidField.Name}: {CleanTags(text)}");
+                return CleanTags(text);
+            }
+        }
+        catch { }
+
+        return null;
     }
 
     private static string CleanTags(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
-        string cleaned = Regex.Replace(text, @"<[^>]+>", "").Trim();
-        cleaned = Regex.Replace(cleaned, @"\s+", " ");
-        return cleaned.Trim();
+        return Regex.Replace(Regex.Replace(text, @"<[^>]+>", "").Trim(), @"\s+", " ").Trim();
     }
 }
