@@ -240,6 +240,7 @@ public class MainMenuHooks
         // Track context for dialog labeling
         _lastMenuContext = name;
 
+
         // Get the description
         try
         {
