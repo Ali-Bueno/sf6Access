@@ -179,6 +179,14 @@ public class MainMenuHooks
             // Map known tab names to readable text
             string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped : rawName;
 
+            // Try to get description for tabs (fg, bh, wt)
+            if (TabNames.ContainsKey(rawName))
+            {
+                string tabDesc = TryGetTabDescription(rawName);
+                if (!string.IsNullOrEmpty(tabDesc) && tabDesc != announcement)
+                    announcement = $"{announcement}. {tabDesc}";
+            }
+
             if (GameStateTracker.HasChanged("focus_item", rawName))
             {
                 API.LogInfo($"[SF6Access] Focus: {announcement}");
@@ -329,6 +337,64 @@ public class MainMenuHooks
             }
         }
         catch { }
+
+        return null;
+    }
+
+    // GuideDescriptionMessage IDs for tab descriptions
+    private static readonly Dictionary<string, int> TabDescriptionIds = new()
+    {
+        { "fg", 267 },  // Fighting Ground
+        { "bh", 266 },  // Battle Hub
+        { "wt", 247 },  // World Tour
+    };
+
+    // Cache resolved tab descriptions
+    private static readonly Dictionary<string, string> _tabDescCache = new();
+    private static Method _guidDescMethod;
+    private static ManagedObject _tableDataMgr;
+
+    private static string TryGetTabDescription(string rawName)
+    {
+        if (!TabDescriptionIds.TryGetValue(rawName, out int gdmId))
+            return null;
+
+        // Check cache first
+        if (_tabDescCache.TryGetValue(rawName, out var cached))
+            return cached;
+
+        try
+        {
+            // Lazy init
+            _tableDataMgr ??= API.GetManagedSingleton("app.TableDataManager");
+            _guidDescMethod ??= TDB.Get().FindType("app.TableDataManager")
+                ?.GetMethod("TryGetGuideDescriptionMessage(app.MsgDef.GuideDescriptionMessage, System.Guid)");
+
+            if (_tableDataMgr == null || _guidDescMethod == null) return null;
+
+            var msgGet = GetMsgMethod();
+            if (msgGet == null) return null;
+
+            var guidVt = TDB.Get().FindType("System.Guid").CreateValueType();
+            var args = new object[] { gdmId, guidVt };
+            var result = _guidDescMethod.InvokeBoxed(typeof(bool), _tableDataMgr, args);
+
+            if (result is bool b && b)
+            {
+                var outGuid = args[1] as REFrameworkNET.ValueType ?? guidVt;
+                var text = msgGet.InvokeBoxed(typeof(string), null, new object[] { outGuid }) as string;
+                text = CleanTags(text);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    _tabDescCache[rawName] = text;
+                    return text;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            API.LogError($"[SF6Access] TryGetTabDescription error: {ex.Message}");
+        }
 
         return null;
     }
