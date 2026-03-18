@@ -24,6 +24,9 @@ public class OptionMenuHooks
     private static bool _hasPendingRead;
     private static string _lastAnnouncement;
 
+    // Flag to suppress MainMenuHooks.FocusChanged while in option menu
+    public static bool IsInOptionMenu { get; set; }
+
     // Track focused option for value change polling and sub-list reading
     private static ulong _lastFocusedAddr;
     private static int _lastFocusedTypeId = -1;
@@ -64,6 +67,7 @@ public class OptionMenuHooks
                 bool isFocus = args[2] != 0;
                 if (!isFocus) return PreHookResult.Continue;
 
+                IsInOptionMenu = true;
                 _pendingAddrs.Add(args[1]);
                 _hasPendingRead = true;
             }
@@ -87,8 +91,8 @@ public class OptionMenuHooks
                 {
                     try
                     {
-                        // Only handle if we have a focused value option
-                        if (_lastFocusedSetting == null || _lastFocusedTypeId <= 0)
+                        // Only handle if we have a focused option with a setting
+                        if (_lastFocusedSetting == null)
                             return PreHookResult.Continue;
 
                         var simpleList = ManagedObject.ToManagedObject(args[1]);

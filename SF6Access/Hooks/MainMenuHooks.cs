@@ -21,12 +21,8 @@ public class MainMenuHooks
     private static Field _iconMsgField;
     private static Field _itemMsgField;
     private static bool _fieldsCached;
-    private static bool _guidApproachFailed;
 
-    // Cache of MenuType int -> localized name (avoids repeated Guid resolution + crashes)
-    private static readonly Dictionary<int, string> _localizedNameCache = new();
-
-    // Tab name mappings for top-level tabs
+    // Tab name mappings for top-level tabs (proper nouns, don't change across languages)
     private static readonly Dictionary<string, string> TabNames = new()
     {
         { "fg", "Fighting Ground" },
@@ -34,25 +30,6 @@ public class MainMenuHooks
         { "wt", "World Tour" },
         { "c_SelectItem_friend", "Friends" },
         { "c_SelectItem_club", "Club" },
-    };
-
-    // MenuType enum int -> readable name (English fallback)
-    private static readonly Dictionary<int, string> MenuTypeNames = new()
-    {
-        { 0, "Profile" },
-        { 1, "CFN" },
-        { 2, "News" },
-        { 3, "Rewards" },
-        { 4, "Shop" },
-        { 5, "Options" },
-        { 6, "Gallery" },
-        { 7, "Tips" },
-        { 8, "Player List" },
-        { 9, "Server List" },
-        { 10, "Custom Room" },
-        { 11, "Tournament" },
-        { 12, "Main Menu" },
-        { 13, "Exit to Desktop" },
     };
 
     private static Method GetMsgMethod()
@@ -116,6 +93,9 @@ public class MainMenuHooks
         {
             if (_flowParam == null) return;
 
+            // User is back in main menu grid, no longer in options
+            OptionMenuHooks.IsInOptionMenu = false;
+
             string announcement = GetStartMenuAnnouncement();
             if (!string.IsNullOrEmpty(announcement) && GameStateTracker.HasChanged("menu_item", announcement))
             {
@@ -157,6 +137,14 @@ public class MainMenuHooks
             string rawName = null;
             try { rawName = (selectedItem as IObject)?.Call("get_Name") as string; } catch { }
             if (string.IsNullOrEmpty(rawName)) return;
+
+            // If navigating back to tabs, clear option menu flag
+            if (TabNames.ContainsKey(rawName))
+                OptionMenuHooks.IsInOptionMenu = false;
+
+            // Suppress FocusChanged events while in option menu (OptionMenuHooks handles those)
+            if (OptionMenuHooks.IsInOptionMenu)
+                return;
 
             // Skip grid menu items - handled by MenuItemSelectionChanged
             if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d{2,})$"))
@@ -210,30 +198,10 @@ public class MainMenuHooks
         string name = null;
         string description = null;
 
-        // Check localized name cache first (fast path)
-        if (menuType >= 0 && _localizedNameCache.TryGetValue(menuType, out var cached))
+        // Always resolve localized name fresh (reflects current game language)
+        if (menuType >= 0)
         {
-            name = cached;
-        }
-        else if (menuType >= 0 && !_guidApproachFailed)
-        {
-            // Try Guid resolution with a short timeout (200ms) to avoid lag from crashing Guids
-            name = ResolveWithTimeout(menuType);
-
-            // Fallback to English if timed out or failed
-            if (string.IsNullOrEmpty(name))
-            {
-                MenuTypeNames.TryGetValue(menuType, out name);
-                name ??= $"Menu {menuType}";
-                // Cache English name so we never retry this MenuType
-                _localizedNameCache[menuType] = name;
-            }
-        }
-
-        // Fallback for unknown menuType
-        if (string.IsNullOrEmpty(name) && menuType >= 0)
-        {
-            MenuTypeNames.TryGetValue(menuType, out name);
+            name = ResolveMenuItemName();
             name ??= $"Menu {menuType}";
         }
 
@@ -258,24 +226,13 @@ public class MainMenuHooks
         return description;
     }
 
-    private static string ResolveWithTimeout(int menuType)
+    private static string ResolveMenuItemName()
     {
         var fp = _flowParam;
         var task = Task.Run(() => GetLocalizedNameFromMenuItem(fp));
 
         if (task.Wait(TimeSpan.FromMilliseconds(200)))
-        {
-            string result = task.Result;
-            if (!string.IsNullOrEmpty(result))
-            {
-                _localizedNameCache[menuType] = result;
-                return result;
-            }
-        }
-        else
-        {
-            API.LogWarning($"[SF6Access] Guid resolution timed out for MenuType {menuType}, using English fallback");
-        }
+            return task.Result;
 
         return null;
     }
@@ -303,7 +260,6 @@ public class MainMenuHooks
         catch (Exception ex)
         {
             API.LogError($"[SF6Access] GetLocalizedNameFromMenuItem error: {ex.Message}");
-            _guidApproachFailed = true;
         }
 
         return null;
@@ -350,8 +306,6 @@ public class MainMenuHooks
         { "wt", 247 },  // World Tour
     };
 
-    // Cache resolved tab descriptions
-    private static readonly Dictionary<string, string> _tabDescCache = new();
     private static Method _guidDescMethod;
     private static ManagedObject _tableDataMgr;
 
@@ -359,10 +313,6 @@ public class MainMenuHooks
     {
         if (!TabDescriptionIds.TryGetValue(rawName, out int gdmId))
             return null;
-
-        // Check cache first
-        if (_tabDescCache.TryGetValue(rawName, out var cached))
-            return cached;
 
         try
         {
@@ -386,10 +336,7 @@ public class MainMenuHooks
                 var text = msgGet.InvokeBoxed(typeof(string), null, new object[] { outGuid }) as string;
                 text = CleanTags(text);
                 if (!string.IsNullOrEmpty(text))
-                {
-                    _tabDescCache[rawName] = text;
                     return text;
-                }
             }
         }
         catch (Exception ex)

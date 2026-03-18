@@ -94,10 +94,7 @@ public class DialogHooks
         {
             var lineData = (_dialogMgr as IObject)?.Call("GetEnableLineData") as ManagedObject;
             if (lineData == null)
-            {
-                API.LogInfo("[SF6Access] Dialog shown but GetEnableLineData returned null");
                 return;
-            }
 
             // Log all fields of the line data for research
             var td = lineData.GetTypeDefinition();
