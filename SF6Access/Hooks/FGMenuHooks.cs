@@ -1,0 +1,211 @@
+using System;
+using REFrameworkNET;
+using REFrameworkNET.Attributes;
+using SF6Access.Services;
+
+namespace SF6Access.Hooks;
+
+/// <summary>
+/// Hooks Fighting Ground menu navigation.
+/// FG uses UIFlowFGMainMenuList.Param with tateText[] for item names.
+/// MainChanged(bool) fires when navigation changes.
+/// </summary>
+public class FGMenuHooks
+{
+    private static ManagedObject _fgParam;
+    private static string _lastAnnounced;
+
+    /// <summary>Called from MainMenuHooks when c_SubMenu_item focus changes (vertical navigation)</summary>
+    public static void OnSubMenuItemFocused()
+    {
+        if (_fgParam == null) return;
+        ReadCurrentFGItem();
+    }
+
+    [PluginEntryPoint]
+    public static void Initialize()
+    {
+        // Hook MainChanged on the FG Param to detect navigation
+        var paramTd = TDB.Get().FindType("app.menu.UIFlowFGMainMenuList.Param");
+        if (paramTd == null)
+        {
+            API.LogError("[SF6Access] FG Param type not found");
+            return;
+        }
+
+        var mainChanged = paramTd.GetMethod("MainChanged");
+        if (mainChanged != null)
+        {
+            var hook = mainChanged.AddHook(false);
+            hook.AddPre(args =>
+            {
+                // Capture the Param instance (args[1] = this)
+                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                return PreHookResult.Continue;
+            });
+            hook.AddPost((ref ulong retval) =>
+            {
+                ReadCurrentFGItem();
+            });
+            API.LogInfo("[SF6Access] FG MainChanged hook installed");
+        }
+
+        // Also hook SetSubPos for vertical navigation within a category
+        var setSubPos = paramTd.GetMethod("SetSubPos");
+        if (setSubPos != null)
+        {
+            var hook = setSubPos.AddHook(false);
+            hook.AddPre(args =>
+            {
+                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                return PreHookResult.Continue;
+            });
+            hook.AddPost((ref ulong retval) =>
+            {
+                ReadCurrentFGItem();
+            });
+            API.LogInfo("[SF6Access] FG SetSubPos hook installed");
+        }
+
+        // Hook Right/Left for category switching
+        foreach (var methodName in new[] { "Right", "Left" })
+        {
+            var method = paramTd.GetMethod(methodName);
+            if (method == null) continue;
+            var hook = method.AddHook(false);
+            hook.AddPre(args =>
+            {
+                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                return PreHookResult.Continue;
+            });
+            hook.AddPost((ref ulong retval) =>
+            {
+                ReadCurrentFGItem();
+            });
+            API.LogInfo($"[SF6Access] FG {methodName} hook installed");
+        }
+    }
+
+    private static void ReadCurrentFGItem()
+    {
+        if (_fgParam == null) return;
+
+        try
+        {
+            // Try GetSelectData().GetModeTypeName() approach
+            string name = TryReadFromSelectData();
+
+            // Fallback: read from tateText array
+            if (string.IsNullOrEmpty(name))
+                name = TryReadFromTateText();
+
+            if (!string.IsNullOrEmpty(name) && name != _lastAnnounced)
+            {
+                _lastAnnounced = name;
+                API.LogInfo($"[SF6Access] FG item: {name}");
+                ScreenReaderService.Speak(name);
+            }
+        }
+        catch (Exception ex)
+        {
+            API.LogError($"[SF6Access] FG read error: {ex.Message}");
+        }
+    }
+
+    private static string TryReadFromSelectData()
+    {
+        try
+        {
+            var selectData = (_fgParam as IObject)?.Call("GetSelectData") as ManagedObject;
+            if (selectData == null) return null;
+
+            // Try to get a name/title from ModeTypeData
+            var td = selectData.GetTypeDefinition();
+            if (td == null) return null;
+
+            // Try reading string fields
+            foreach (var fname in new[] { "Name", "Title", "ModeName", "CategoryName" })
+            {
+                try
+                {
+                    var val = selectData.GetField(fname) as string;
+                    if (!string.IsNullOrEmpty(val)) return val;
+                }
+                catch { }
+            }
+
+            // Try reading Guid fields and resolving
+            var msgGet = TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
+            if (msgGet == null) return null;
+
+            var fields = td.GetFields();
+            if (fields == null) return null;
+            foreach (var f in fields)
+            {
+                try
+                {
+                    if (f.Type?.FullName != "System.Guid") continue;
+                    var guidVal = f.GetDataBoxed(typeof(Guid), selectData.GetAddress(), false);
+                    if (guidVal is REFrameworkNET.ValueType vt)
+                    {
+                        var text = msgGet.InvokeBoxed(typeof(string), null, new object[] { vt }) as string;
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            API.LogInfo($"[SF6Access] FG resolved {f.Name}: {text}");
+                            return text;
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static string TryReadFromTateText()
+    {
+        try
+        {
+            // Read modeSelect to know which index is selected
+            var modeSelectField = _fgParam.GetTypeDefinition()?.GetField("modeSelect");
+            if (modeSelectField == null) return null;
+
+            var rawIdx = modeSelectField.GetDataBoxed(typeof(uint), _fgParam.GetAddress(), false);
+            int idx = rawIdx != null ? Convert.ToInt32(rawIdx) : -1;
+            if (idx < 0) return null;
+
+            // Read tateText array
+            var tateTextField = _fgParam.GetTypeDefinition()?.GetField("tateText");
+            if (tateTextField == null) return null;
+
+            var tateArr = tateTextField.GetDataBoxed(typeof(object), _fgParam.GetAddress(), false) as ManagedObject;
+            if (tateArr == null) return null;
+
+            // Get array length and item
+            var lenMethod = tateArr.GetTypeDefinition()?.GetMethod("get_Length");
+            if (lenMethod == null) return null;
+            int len = Convert.ToInt32(lenMethod.InvokeBoxed(typeof(int), tateArr, Array.Empty<object>()));
+            if (idx >= len) return null;
+
+            var getMethod = tateArr.GetTypeDefinition()?.GetMethod("Get");
+            if (getMethod == null) return null;
+
+            var textObj = getMethod.InvokeBoxed(typeof(object), tateArr, new object[] { idx }) as ManagedObject;
+            if (textObj == null) return null;
+
+            // via.gui.Text has get_Message() or get_Text() to read displayed text
+            foreach (var mName in new[] { "get_Message", "get_Text", "get_String" })
+            {
+                try
+                {
+                    var text = (textObj as IObject)?.Call(mName) as string;
+                    if (!string.IsNullOrEmpty(text)) return text;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return null;
+    }
+}

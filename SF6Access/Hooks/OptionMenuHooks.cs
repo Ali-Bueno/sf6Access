@@ -17,7 +17,11 @@ public class OptionMenuHooks
     private static Field _descMsgField;
     private static Field _dataTypeField;
     private static Field _typeIdField;
+    private static Field _eventTypeField;
     private static bool _fieldsCached;
+
+    // DecideEventType of the currently focused option (3 = sub-list/dropdown)
+    private static int _lastFocusedEventType = -1;
 
     // Collect all SwitchFocus(true) addresses per frame
     private static readonly List<ulong> _pendingAddrs = new();
@@ -25,7 +29,29 @@ public class OptionMenuHooks
     private static string _lastAnnouncement;
 
     // Flag to suppress MainMenuHooks.FocusChanged while in option menu
-    public static bool IsInOptionMenu { get; set; }
+    private static bool _isInOptionMenu;
+    public static bool IsInOptionMenu
+    {
+        get => _isInOptionMenu;
+        set
+        {
+            if (_isInOptionMenu && !value)
+            {
+                // Leaving option menu - reset ALL option state
+                _currentTab = -1;
+                _lastAnnouncement = null;
+                _lastFocusedSetting = null;
+                _lastFocusedTypeId = -1;
+                _lastFocusedEventType = -1;
+                _lastPolledValue = -1;
+                _lastSubListIndex = -1;
+                _lastFocusedAddr = 0;
+                _optionMenuParam = null;
+
+            }
+            _isInOptionMenu = value;
+        }
+    }
 
     // Track focused option for value change polling and sub-list reading
     private static ulong _lastFocusedAddr;
@@ -37,6 +63,16 @@ public class OptionMenuHooks
     // Sub-list (language selection etc.) tracking
     private static bool _subListChanged;
     private static int _lastSubListIndex = -1;
+
+    // OptionMenuParam for ListState polling
+    private static ManagedObject _optionMenuParam;
+    private static Field _listStateField;
+
+    // Tab detection
+    private static int _currentTab = -1;
+    private static readonly string[] OptionTabNames = {
+        "General", "Interface", "Battle", "Field", "Audio", "Language", "Graphic"
+    };
 
     // Cache resolved titles/descriptions by Setting address
     private static readonly Dictionary<ulong, string> _titleCache = new();
@@ -79,7 +115,8 @@ public class OptionMenuHooks
             return PreHookResult.Continue;
         });
 
-        // Hook UIPartsSimpleList for sub-list navigation (language selection etc.)
+        // Hook SimpleList for navigation within open dropdowns
+        // Use OptionMenuParam.ListState to detect when sub-list is open
         var simpleListTd = TDB.Get().FindType("app.UIPartsSimpleList");
         if (simpleListTd != null)
         {
@@ -91,8 +128,11 @@ public class OptionMenuHooks
                 {
                     try
                     {
-                        // Only handle if we have a focused option with a setting
-                        if (_lastFocusedSetting == null)
+                        if (!_isInOptionMenu || _lastFocusedSetting == null)
+                            return PreHookResult.Continue;
+
+                        // Poll ListState from OptionMenuParam
+                        if (!IsSubListOpen())
                             return PreHookResult.Continue;
 
                         var simpleList = ManagedObject.ToManagedObject(args[1]);
@@ -124,8 +164,10 @@ public class OptionMenuHooks
         if (_hasPendingRead)
         {
             _hasPendingRead = false;
-            _lastSubListIndex = -1; // Reset sub-list tracking on new focus
+            _lastSubListIndex = -1;
+            _subListChanged = false;
             ProcessFocusChange();
+            return;
         }
 
         // Handle sub-list selection changes (language list etc.)
@@ -138,6 +180,15 @@ public class OptionMenuHooks
         // Poll for value changes on the focused option
         PollValueChange();
     }
+
+    // Language names by via.Language enum value for fallback
+    private static readonly string[] LanguageNames = {
+        "Japanese", "English", "French", "Italian", "German", "Spanish",
+        "Portuguese", "Russian", "Polish", "Dutch", "Norwegian", "Swedish",
+        "Chinese (Traditional)", "Chinese (Simplified)", "Korean", "Finnish",
+        "Thai", "Czech", "Hungarian", "Indonesian", "Vietnamese", "Romanian",
+        "Turkish", "Arabic", "Hindi", "Hebrew"
+    };
 
     private static void ProcessSubListChange()
     {
@@ -153,10 +204,23 @@ public class OptionMenuHooks
             }
             catch { }
 
+            // Fallback for language options: use known language names
+            if (string.IsNullOrEmpty(label) && _lastFocusedTypeId > 0)
+            {
+                // TypeIds 610-640 are language options
+                int typeGroup = _lastFocusedTypeId / 100;
+                if (typeGroup == 6 && _lastSubListIndex >= 0 && _lastSubListIndex < LanguageNames.Length)
+                    label = LanguageNames[_lastSubListIndex];
+            }
+
             if (!string.IsNullOrEmpty(label))
             {
-                API.LogInfo($"[SF6Access] Sub-list item: {label}");
+                API.LogInfo($"[SF6Access] Sub-list item [{_lastSubListIndex}]: {label}");
                 ScreenReaderService.Speak(label);
+            }
+            else
+            {
+                API.LogInfo($"[SF6Access] Sub-list index {_lastSubListIndex} (no label, typeId={_lastFocusedTypeId})");
             }
         }
         catch { }
@@ -166,8 +230,10 @@ public class OptionMenuHooks
     {
         try
         {
-            foreach (var addr in _pendingAddrs)
+            // Iterate in reverse: last SwitchFocus event is the actual focused item
+            for (int i = _pendingAddrs.Count - 1; i >= 0; i--)
             {
+                var addr = _pendingAddrs[i];
                 if (addr == 0) continue;
 
                 var optUnit = ManagedObject.ToManagedObject(addr);
@@ -201,12 +267,32 @@ public class OptionMenuHooks
                         }
                         catch { }
 
+                        // Only show raw number for true sliders (no ValueMessageList)
+                        // Don't show raw number for enums whose label failed to resolve
                         if (string.IsNullOrEmpty(valueLabel))
-                            valueLabel = currentValue.ToString();
+                        {
+                            if (GetValueMessageCount(setting) == 0)
+                                valueLabel = currentValue.ToString();
+                        }
+                    }
+                }
+
+                // Detect tab change from TypeId ranges (100s = General, 200s = Interface, etc.)
+                string tabPrefix = null;
+                if (typeId >= 100)
+                {
+                    int tab = typeId / 100 - 1;
+                    if (tab >= 0 && tab < OptionTabNames.Length && tab != _currentTab)
+                    {
+                        _currentTab = tab;
+                        tabPrefix = OptionTabNames[tab];
+                        API.LogInfo($"[SF6Access] Option tab: {tabPrefix}");
                     }
                 }
 
                 var parts = new List<string>();
+                if (tabPrefix != null)
+                    parts.Add(tabPrefix);
                 if (!string.IsNullOrEmpty(title))
                     parts.Add(title);
                 if (!string.IsNullOrEmpty(valueLabel))
@@ -221,6 +307,7 @@ public class OptionMenuHooks
                     _lastFocusedAddr = addr;
                     _lastFocusedSetting = setting;
                     _lastFocusedTypeId = (dataType == 1) ? typeId : -1;
+                    _lastFocusedEventType = GetIntField(setting, _eventTypeField);
                     _lastPolledValue = (dataType == 1 && typeId > 0) ? GetOptionValue(typeId) : -1;
                     API.LogInfo($"[SF6Access] Option: {announcement}");
                     ScreenReaderService.Speak(announcement);
@@ -249,7 +336,6 @@ public class OptionMenuHooks
 
             _lastPolledValue = currentValue;
 
-            // Get the setting to resolve the value label
             if (_lastFocusedSetting == null) return;
 
             string valueLabel = null;
@@ -261,9 +347,14 @@ public class OptionMenuHooks
             catch { }
 
             if (string.IsNullOrEmpty(valueLabel))
-                valueLabel = currentValue.ToString();
+            {
+                if (GetValueMessageCount(_lastFocusedSetting) == 0)
+                    valueLabel = currentValue.ToString();
+            }
 
-            _lastAnnouncement = null; // Reset so next focus reads full
+            if (string.IsNullOrEmpty(valueLabel)) return;
+
+            _lastAnnouncement = null;
             API.LogInfo($"[SF6Access] Value changed: {valueLabel}");
             ScreenReaderService.Speak(valueLabel);
         }
@@ -296,6 +387,88 @@ public class OptionMenuHooks
         catch { return -1; }
     }
 
+    /// <summary>
+    /// Check if the option menu currently has a sub-list dropdown open
+    /// by reading OptionMenuParam.ListState == SubList (1).
+    /// </summary>
+    private static bool IsSubListOpen()
+    {
+        try
+        {
+            // Find OptionMenuParam if we don't have it
+            if (_optionMenuParam == null)
+            {
+                var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+                if (flowMgr == null) return false;
+
+                var handlesField = flowMgr.GetTypeDefinition()?.GetField("_Handles");
+                if (handlesField == null) return false;
+
+                var handles = handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
+                if (handles == null) return false;
+
+                var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
+                var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
+                if (countMethod == null || getItemMethod == null) return false;
+
+                int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
+                for (int i = 0; i < count && i < 20; i++)
+                {
+                    try
+                    {
+                        var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
+                        if (handle == null) continue;
+                        var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
+                        if (param?.GetTypeDefinition()?.FullName == "app.UIOptionSettingMenu.OptionMenuParam")
+                        {
+                            _optionMenuParam = param;
+                            _listStateField = param.GetTypeDefinition().GetField("<ListState>k__BackingField");
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            if (_optionMenuParam == null || _listStateField == null)
+                return false;
+
+            // Read ListState: SubList=1, RadioButtonList=2 (both are open dropdowns)
+            var raw = _listStateField.GetDataBoxed(typeof(int), _optionMenuParam.GetAddress(), false);
+            int state = raw != null ? Convert.ToInt32(raw) : 0;
+            return state == 1 || state == 2;
+        }
+        catch
+        {
+            _optionMenuParam = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns number of entries in ValueMessageList.
+    /// 0 means it's a numeric/slider (show raw number).
+    /// > 0 means it's an enum (don't show raw number if label fails).
+    /// </summary>
+    private static int GetValueMessageCount(ManagedObject setting)
+    {
+        try
+        {
+            var msgList = (setting as IObject)?.Call("GetValueMessageList") as ManagedObject;
+            if (msgList != null)
+            {
+                var countMethod = msgList.GetTypeDefinition()?.GetMethod("get_Count");
+                if (countMethod != null)
+                {
+                    var cnt = countMethod.InvokeBoxed(typeof(int), msgList, Array.Empty<object>());
+                    if (cnt != null) return Convert.ToInt32(cnt);
+                }
+            }
+        }
+        catch { }
+        return 0;
+    }
+
     private static void CacheSettingFields()
     {
         if (_fieldsCached) return;
@@ -308,6 +481,7 @@ public class OptionMenuHooks
         _descMsgField = td.GetField("DescriptionMessage");
         _dataTypeField = td.GetField("_DataType");
         _typeIdField = td.GetField("TypeId");
+        _eventTypeField = td.GetField("EventType");
     }
 
     private static string ResolveGuidField(ManagedObject setting, Field guidField, Dictionary<ulong, string> cache)

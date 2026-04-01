@@ -146,15 +146,29 @@ public class MainMenuHooks
             if (OptionMenuHooks.IsInOptionMenu)
                 return;
 
-            // Skip grid menu items - handled by MenuItemSelectionChanged
+            // Grid menu items (item0, item1, c_item_00, etc.) - resolve via FlowParam
             if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d{2,})$"))
+            {
+                // MenuItemSelectionChanged handles this when FlowParam is active
+                // But some tabs (Fighting Ground) don't fire MenuItemSelectionChanged,
+                // so we try FlowParam here as backup
+                if (_flowParam != null)
+                {
+                    string resolved = GetStartMenuAnnouncement();
+                    if (!string.IsNullOrEmpty(resolved) && GameStateTracker.HasChanged("menu_item", resolved))
+                    {
+                        API.LogInfo($"[SF6Access] Grid: {resolved}");
+                        ScreenReaderService.Speak(resolved);
+                    }
+                }
+                // If _flowParam is null, MenuItemSelectionChanged will handle it
                 return;
+            }
 
             // Dialog buttons: c_item_0 = first button, c_item_1 = second button
             if (Regex.IsMatch(rawName, @"^c_item_\d$"))
             {
                 int btnIdx = rawName[rawName.Length - 1] - '0';
-                // In SF6 confirm dialogs: c_item_0 = Yes/OK, c_item_1 = No/Cancel
                 string btnLabel = btnIdx == 0 ? "Yes" : "No";
                 if (GameStateTracker.HasChanged("focus_item", rawName))
                 {
@@ -164,8 +178,19 @@ public class MainMenuHooks
                 return;
             }
 
+            // Sub-menu items (c_SubMenu_item0, etc.) - FG vertical navigation
+            if (Regex.IsMatch(rawName, @"^c_SubMenu_item\d+$"))
+            {
+                FGMenuHooks.OnSubMenuItemFocused();
+                return;
+            }
+
+            // Try to resolve localized text for unknown UI items (mail items, etc.)
+            string resolvedText = TryResolveItemText(selectedItem, rawName);
+
             // Map known tab names to readable text
-            string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped : rawName;
+            string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped
+                : !string.IsNullOrEmpty(resolvedText) ? resolvedText : rawName;
 
             // Try to get description for tabs (fg, bh, wt)
             if (TabNames.ContainsKey(rawName))
@@ -200,10 +225,7 @@ public class MainMenuHooks
 
         // Always resolve localized name fresh (reflects current game language)
         if (menuType >= 0)
-        {
             name = ResolveMenuItemName();
-            name ??= $"Menu {menuType}";
-        }
 
         // Track context for dialog labeling
         _lastMenuContext = name;
@@ -343,6 +365,37 @@ public class MainMenuHooks
         {
             API.LogError($"[SF6Access] TryGetTabDescription error: {ex.Message}");
         }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Try to read localized text from a SelectItem's GUI element.
+    /// Works for mail items, news items, and other dynamic UI elements.
+    /// </summary>
+    private static string TryResolveItemText(ManagedObject selectedItem, string rawName)
+    {
+        if (selectedItem == null) return null;
+
+        // Skip known patterns that are handled elsewhere
+        if (TabNames.ContainsKey(rawName)) return null;
+
+        try
+        {
+            // Try get_Message or get_Text on the SelectItem
+            foreach (var methodName in new[] { "get_Message", "get_Text", "get_Label" })
+            {
+                try
+                {
+                    var text = (selectedItem as IObject)?.Call(methodName) as string;
+                    text = CleanTags(text);
+                    if (!string.IsNullOrEmpty(text))
+                        return text;
+                }
+                catch { }
+            }
+        }
+        catch { }
 
         return null;
     }
