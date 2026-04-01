@@ -185,6 +185,13 @@ public class MainMenuHooks
                 return;
             }
 
+            // Stage select list items
+            if (rawName.Contains("StageSelectListItem"))
+            {
+                StageSelectHooks.OnStageItemFocused();
+                return;
+            }
+
             // Try to resolve localized text for unknown UI items (mail items, etc.)
             string resolvedText = TryResolveItemText(selectedItem, rawName);
 
