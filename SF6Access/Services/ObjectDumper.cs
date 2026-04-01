@@ -9,26 +9,22 @@ using REFrameworkNET.Callbacks;
 
 namespace SF6Access.Services;
 
+/// <summary>
+/// F9: unified dump of all game state to a single file for accessibility research.
+/// Includes: UIFlowManager handles, managed singletons, and TDB UI type scan.
+/// </summary>
 public static class ObjectDumper
 {
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
     private const int VK_F9 = 0x78;
-    private const int VK_F10 = 0x79;
-
     private static bool _lastKeyState;
-    private static bool _lastF10State;
     private static bool _isDumping;
 
     private static readonly string DumpPath = Path.Combine(
         @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data",
         "sf6access_dump.txt"
-    );
-
-    private static readonly string OptionDumpPath = Path.Combine(
-        @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data",
-        "sf6access_options_dump.txt"
     );
 
     [Callback(typeof(UpdateBehavior), CallbackType.Pre)]
@@ -41,9 +37,9 @@ public static class ObjectDumper
             _isDumping = true;
             try
             {
-                DumpAllObjects();
-                ScreenReaderService.Speak("Object dump complete");
-                API.LogInfo($"[SF6Access] Object dump saved to {DumpPath}");
+                DumpEverything();
+                ScreenReaderService.Speak("Full dump complete");
+                API.LogInfo($"[SF6Access] Full dump saved to {DumpPath}");
             }
             catch (Exception ex)
             {
@@ -57,458 +53,323 @@ public static class ObjectDumper
         }
 
         _lastKeyState = keyDown;
-
-        bool f10Down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
-
-        if (f10Down && !_lastF10State && !_isDumping)
-        {
-            _isDumping = true;
-            try
-            {
-                DumpOptionTypes();
-                ScreenReaderService.Speak("Option dump complete");
-                API.LogInfo($"[SF6Access] Option dump saved to {OptionDumpPath}");
-            }
-            catch (Exception ex)
-            {
-                API.LogError($"[SF6Access] Option dump failed: {ex.Message}");
-                ScreenReaderService.Speak("Option dump failed");
-            }
-            finally
-            {
-                _isDumping = false;
-            }
-        }
-
-        _lastF10State = f10Down;
     }
 
-    private static void DumpAllObjects()
+    private static void DumpEverything()
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"=== SF6 Object Dump - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        sb.AppendLine($"=== SF6 FULL DUMP - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
         sb.AppendLine();
 
+        // 1. Active UIFlowManager handles (most useful for debugging)
+        DumpFlowHandles(sb);
+
+        // 2. Managed singletons with fields
         DumpManagedSingletons(sb);
-        sb.AppendLine();
+
+        // 3. Native singletons (names only)
         DumpNativeSingletons(sb);
+
+        // 4. TDB UI type scan
+        DumpTDBScan(sb);
 
         Directory.CreateDirectory(Path.GetDirectoryName(DumpPath));
         File.WriteAllText(DumpPath, sb.ToString());
     }
+
+    // ==================== FLOW HANDLES ====================
+
+    private static void DumpFlowHandles(StringBuilder sb)
+    {
+        sb.AppendLine("========== ACTIVE UI FLOW HANDLES ==========");
+        sb.AppendLine();
+
+        try
+        {
+            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+            if (flowMgr == null)
+            {
+                sb.AppendLine("[UIFlowManager not found]");
+                sb.AppendLine();
+                return;
+            }
+
+            var handlesField = flowMgr.GetTypeDefinition()?.GetField("_Handles");
+            if (handlesField == null)
+            {
+                sb.AppendLine("[_Handles field not found]");
+                sb.AppendLine();
+                return;
+            }
+
+            var handles = handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
+            if (handles == null)
+            {
+                sb.AppendLine("[_Handles is null]");
+                sb.AppendLine();
+                return;
+            }
+
+            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
+            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
+            if (countMethod == null || getItemMethod == null)
+            {
+                sb.AppendLine("[Count/GetItem methods not found]");
+                sb.AppendLine();
+                return;
+            }
+
+            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
+            sb.AppendLine($"Total handles: {count}");
+            sb.AppendLine();
+
+            for (int i = 0; i < count && i < 50; i++)
+            {
+                try
+                {
+                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
+                    if (handle == null) continue;
+
+                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
+                    var element = handle.GetField("<Element>k__BackingField") as ManagedObject;
+
+                    string paramType = param?.GetTypeDefinition()?.FullName ?? "null";
+                    string elemType = element?.GetTypeDefinition()?.FullName ?? "null";
+
+                    sb.AppendLine($"--- Handle [{i}] ---");
+                    sb.AppendLine($"  Param:   {paramType}");
+                    sb.AppendLine($"  Element: {elemType}");
+
+                    // Dump param fields in detail
+                    if (param != null && paramType != "null" &&
+                        !paramType.Contains("BaseParam_Create"))
+                    {
+                        var ptd = param.GetTypeDefinition();
+                        DumpFieldsWithValues(sb, ptd, param, "  ");
+                    }
+
+                    sb.AppendLine();
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"  [Handle {i} error: {ex.Message}]");
+                    sb.AppendLine();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"[FlowHandles error: {ex.Message}]");
+            sb.AppendLine();
+        }
+    }
+
+    // ==================== MANAGED SINGLETONS ====================
 
     private static void DumpManagedSingletons(StringBuilder sb)
     {
         sb.AppendLine("========== MANAGED SINGLETONS ==========");
         sb.AppendLine();
 
-        List<ManagedSingleton> singletons;
         try
         {
-            singletons = API.GetManagedSingletons();
+            var singletons = API.GetManagedSingletons();
+
+            foreach (var singleton in singletons)
+            {
+                try
+                {
+                    var obj = singleton.Instance;
+                    if (obj == null) continue;
+
+                    var td = obj.GetTypeDefinition();
+                    string typeName = td?.FullName ?? "(unknown)";
+                    sb.AppendLine($"--- {typeName} ---");
+
+                    DumpFieldsWithValues(sb, td, obj, "  ");
+                    DumpMethodSignatures(sb, td, "  ");
+                    sb.AppendLine();
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"  [ERROR: {ex.Message}]");
+                    sb.AppendLine();
+                }
+            }
         }
         catch (Exception ex)
         {
-            sb.AppendLine($"[ERROR getting managed singletons: {ex.Message}]");
-            return;
-        }
-
-        foreach (var singleton in singletons)
-        {
-            try
-            {
-                var obj = singleton.Instance;
-                if (obj == null) continue;
-
-                var td = obj.GetTypeDefinition();
-                if (td == null) continue;
-
-                string typeName = td.FullName ?? td.Name ?? "(unknown)";
-                sb.AppendLine($"--- {typeName} ---");
-
-                DumpFields(sb, td, obj, "  ");
-                DumpMethods(sb, td, "  ");
-                sb.AppendLine();
-            }
-            catch (Exception ex)
-            {
-                sb.AppendLine($"  [ERROR: {ex.Message}]");
-                sb.AppendLine();
-            }
+            sb.AppendLine($"[ERROR getting singletons: {ex.Message}]");
+            sb.AppendLine();
         }
     }
+
+    // ==================== NATIVE SINGLETONS ====================
 
     private static void DumpNativeSingletons(StringBuilder sb)
     {
         sb.AppendLine("========== NATIVE SINGLETONS ==========");
         sb.AppendLine();
 
-        List<NativeSingleton> singletons;
         try
         {
-            singletons = API.GetNativeSingletons();
+            var singletons = API.GetNativeSingletons();
+
+            foreach (var singleton in singletons)
+            {
+                try
+                {
+                    var obj = singleton.Instance;
+                    if (obj == null) continue;
+
+                    var td = obj.GetTypeDefinition();
+                    string typeName = td?.FullName ?? "(unknown)";
+                    sb.AppendLine($"  {typeName}");
+                }
+                catch { }
+            }
+            sb.AppendLine();
         }
         catch (Exception ex)
         {
-            sb.AppendLine($"[ERROR getting native singletons: {ex.Message}]");
-            return;
-        }
-
-        foreach (var singleton in singletons)
-        {
-            try
-            {
-                var obj = singleton.Instance;
-                if (obj == null) continue;
-
-                var td = obj.GetTypeDefinition();
-                if (td == null) continue;
-
-                string typeName = td.FullName ?? td.Name ?? "(unknown)";
-                sb.AppendLine($"--- {typeName} ---");
-                DumpMethods(sb, td, "  ");
-                sb.AppendLine();
-            }
-            catch (Exception ex)
-            {
-                sb.AppendLine($"  [ERROR: {ex.Message}]");
-                sb.AppendLine();
-            }
+            sb.AppendLine($"[ERROR: {ex.Message}]");
+            sb.AppendLine();
         }
     }
 
-    private static void DumpFields(StringBuilder sb, TypeDefinition td, ManagedObject obj, string indent)
+    // ==================== TDB UI TYPE SCAN ====================
+
+    private static readonly string[] TDBPatterns = {
+        "UIFlow", "UIPartsTab", "UIPartsScroll", "UIPartsList", "UIPartsSpin",
+        "CharaSelect", "CharacterSelect", "StageSelect",
+        "BattleHud", "BattleResult", "RoundResult",
+        "UIOption", "OptionMenu", "OptionFlow",
+        "Training", "Tutorial",
+        "News", "Notice", "Information",
+        "MultiMenu", "UIFlowMulti",
+        "MatchingSetting", "VersusRule", "CommentatorSelect",
+    };
+
+    private static void DumpTDBScan(StringBuilder sb)
     {
+        sb.AppendLine("========== TDB UI TYPES ==========");
+        sb.AppendLine();
+
+        var tdb = TDB.Get();
+        uint numTypes = tdb.GetNumTypes();
+        sb.AppendLine($"Total TDB types: {numTypes}");
+        sb.AppendLine();
+
+        var results = new Dictionary<string, List<string>>();
+        foreach (var p in TDBPatterns)
+            results[p] = new List<string>();
+
+        for (uint idx = 0; idx < numTypes; idx++)
+        {
+            try
+            {
+                var td = tdb.GetType(idx);
+                if (td == null) continue;
+                string fullName = td.FullName;
+                if (string.IsNullOrEmpty(fullName)) continue;
+
+                foreach (var pattern in TDBPatterns)
+                {
+                    if (fullName.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                    {
+                        results[pattern].Add(fullName);
+                        break;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        foreach (var pattern in TDBPatterns)
+        {
+            var matches = results[pattern];
+            if (matches.Count == 0) continue;
+
+            matches.Sort();
+            sb.AppendLine($"--- {pattern} ({matches.Count} types) ---");
+            foreach (var name in matches)
+                sb.AppendLine($"  {name}");
+            sb.AppendLine();
+        }
+    }
+
+    // ==================== HELPERS ====================
+
+    private static void DumpFieldsWithValues(StringBuilder sb, TypeDefinition td, ManagedObject obj, string indent)
+    {
+        if (td == null) return;
+
         try
         {
             var fields = td.GetFields();
             if (fields == null || fields.Count == 0) return;
 
-            sb.AppendLine($"{indent}Fields:");
             foreach (var field in fields)
             {
                 try
                 {
                     string fieldName = field.Name ?? "(null)";
-                    var fieldType = field.Type;
-                    string fieldTypeName = fieldType?.FullName ?? fieldType?.Name ?? "?";
+                    string fieldTypeName = field.Type?.FullName ?? "?";
                     bool isStatic = field.IsStatic();
 
-                    string value = "(not read)";
+                    string value = "";
                     try
                     {
-                        var rawValue = field.GetDataBoxed(typeof(object), obj.GetAddress(), false);
+                        var rawValue = field.GetDataBoxed(typeof(object), obj.GetAddress(), isStatic);
                         value = rawValue?.ToString() ?? "null";
                         if (value.Length > 200) value = value.Substring(0, 200) + "...";
                     }
-                    catch
-                    {
-                        value = "(read error)";
-                    }
+                    catch { value = "(read error)"; }
 
                     string staticTag = isStatic ? " [static]" : "";
-                    sb.AppendLine($"{indent}  {fieldTypeName} {fieldName}{staticTag} = {value}");
-                }
-                catch
-                {
-                    // Skip unreadable fields
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            sb.AppendLine($"{indent}  [Fields error: {ex.Message}]");
-        }
-    }
-
-    private static void DumpOptionTypes()
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"=== SF6 Option Types Dump - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-        sb.AppendLine();
-
-        // Dump TabType enum
-        DumpEnumType(sb, "app.Option.TabType");
-        DumpEnumType(sb, "app.Option.ValueType");
-        DumpEnumType(sb, "app.Option.GroupType");
-        DumpEnumType(sb, "app.Option.SupportModeType");
-
-        // Dump OptionUnitBase type definition
-        DumpTypeDefinition(sb, "app.Option.OptionUnitBase");
-        DumpTypeDefinition(sb, "app.Option.OptionValueUnit");
-        DumpTypeDefinition(sb, "app.Option.OptionGroupUnit");
-        DumpTypeDefinition(sb, "app.Option.OptionValueData");
-        DumpTypeDefinition(sb, "app.Option.OptionSettingUserData");
-        DumpTypeDefinition(sb, "app.Option.OptionSettingUnit");
-        DumpTypeDefinition(sb, "app.Option.OptionValueSetting");
-        DumpTypeDefinition(sb, "app.Option.OptionSettingUserData.TabUnitList");
-
-        // Try to enumerate actual option data from OptionManager
-        sb.AppendLine("========== OPTION MANAGER LIVE DATA ==========");
-        sb.AppendLine();
-        try
-        {
-            var optMgr = API.GetManagedSingleton("app.OptionManager");
-            if (optMgr == null)
-            {
-                sb.AppendLine("[OptionManager singleton not found]");
-            }
-            else
-            {
-                // Try each TabType value (0-20 range)
-                var getListMethod = TDB.Get().FindType("app.OptionManager")
-                    ?.GetMethod("GetOptionUnitList(app.Option.TabType)");
-
-                if (getListMethod != null)
-                {
-                    for (int tab = 0; tab <= 20; tab++)
-                    {
-                        try
-                        {
-                            var list = getListMethod.InvokeBoxed(typeof(object), optMgr, new object[] { tab }) as ManagedObject;
-                            if (list == null) continue;
-
-                            var countProp = list.GetTypeDefinition()?.GetMethod("get_Count");
-                            if (countProp == null) continue;
-
-                            var count = countProp.InvokeBoxed(typeof(int), list, new object[] { });
-                            int cnt = count != null ? Convert.ToInt32(count) : 0;
-                            if (cnt == 0) continue;
-
-                            sb.AppendLine($"--- TabType {tab}: {cnt} units ---");
-
-                            var getItemMethod = list.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-                            if (getItemMethod == null) continue;
-
-                            for (int i = 0; i < cnt && i < 50; i++)
-                            {
-                                try
-                                {
-                                    var unit = getItemMethod.InvokeBoxed(typeof(object), list, new object[] { i }) as ManagedObject;
-                                    if (unit == null) continue;
-
-                                    var unitTd = unit.GetTypeDefinition();
-                                    string typeName = unitTd?.FullName ?? "?";
-                                    sb.AppendLine($"  [{i}] Type: {typeName}");
-
-                                    // Try to get Setting object and dump its fields
-                                    try
-                                    {
-                                        var setting = (unit as IObject)?.Call("get_Setting") as ManagedObject;
-                                        if (setting != null)
-                                        {
-                                            var settingTd = setting.GetTypeDefinition();
-                                            sb.AppendLine($"    Setting type: {settingTd?.FullName}");
-                                            if (settingTd != null)
-                                                DumpFields(sb, settingTd, setting, "      ");
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        sb.AppendLine($"    Setting error: {ex.Message}");
-                                    }
-
-                                    // For OptionValueUnit, also get ValueType and current value
-                                    if (typeName.Contains("OptionValueUnit"))
-                                    {
-                                        try
-                                        {
-                                            var vt = (unit as IObject)?.Call("get_ValueType");
-                                            var val = (unit as IObject)?.Call("get_Value");
-                                            sb.AppendLine($"    ValueType: {vt}, Value: {val}");
-
-                                            // Get ValueSetting and dump it
-                                            var vs = (unit as IObject)?.Call("get_ValueSetting") as ManagedObject;
-                                            if (vs != null)
-                                            {
-                                                var vsTd = vs.GetTypeDefinition();
-                                                sb.AppendLine($"    ValueSetting type: {vsTd?.FullName}");
-                                                if (vsTd != null)
-                                                    DumpFields(sb, vsTd, vs, "      ");
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            sb.AppendLine($"    ValueUnit error: {ex.Message}");
-                                        }
-                                    }
-
-                                    // For OptionGroupUnit, get GroupType
-                                    if (typeName.Contains("OptionGroupUnit"))
-                                    {
-                                        try
-                                        {
-                                            var gt = (unit as IObject)?.Call("get_GroupType");
-                                            sb.AppendLine($"    GroupType: {gt}");
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            sb.AppendLine($"    GroupUnit error: {ex.Message}");
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    sb.AppendLine($"  [{i}] Error: {ex.Message}");
-                                }
-                            }
-                            sb.AppendLine();
-                        }
-                        catch { }
-                    }
-                }
-                else
-                {
-                    sb.AppendLine("[GetOptionUnitList method not found]");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            sb.AppendLine($"[Error enumerating options: {ex.Message}]");
-        }
-
-        // Search for UI types related to options
-        sb.AppendLine();
-        sb.AppendLine("========== OPTION UI TYPES (TDB Search) ==========");
-        sb.AppendLine();
-        string[] typesToSearch = {
-            "app.UIOptionFlow", "app.UIOptionAgent", "app.UIOptionView",
-            "app.UIOptionCtrl", "app.UIOptionMenu", "app.UIOptionPage",
-            "app.UISystemOptionFlow", "app.UIOptionFlowParam",
-            "app.Option.OptionFlow", "app.Option.OptionAgent",
-        };
-        foreach (var name in typesToSearch)
-        {
-            var td = TDB.Get().FindType(name);
-            if (td != null)
-            {
-                sb.AppendLine($"--- {name} ---");
-                DumpMethods(sb, td, "  ");
-                sb.AppendLine();
-            }
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(OptionDumpPath));
-        File.WriteAllText(OptionDumpPath, sb.ToString());
-    }
-
-    private static void DumpEnumType(StringBuilder sb, string typeName)
-    {
-        var td = TDB.Get().FindType(typeName);
-        if (td == null)
-        {
-            sb.AppendLine($"[Enum {typeName} not found]");
-            return;
-        }
-
-        sb.AppendLine($"=== Enum: {typeName} ===");
-        var fields = td.GetFields();
-        if (fields != null)
-        {
-            foreach (var f in fields)
-            {
-                try
-                {
-                    string name = f.Name ?? "(null)";
-                    if (name == "value__") continue;
-                    // Try to read the enum value
-                    string val = "(?)";
-                    try
-                    {
-                        var raw = f.GetDataBoxed(typeof(int), 0, true);
-                        val = raw?.ToString() ?? "?";
-                    }
-                    catch { }
-                    sb.AppendLine($"  {name} = {val}");
+                    sb.AppendLine($"{indent}{fieldTypeName} {fieldName}{staticTag} = {value}");
                 }
                 catch { }
             }
         }
-        sb.AppendLine();
+        catch { }
     }
 
-    private static void DumpTypeDefinition(StringBuilder sb, string typeName)
+    private static void DumpMethodSignatures(StringBuilder sb, TypeDefinition td, string indent)
     {
-        var td = TDB.Get().FindType(typeName);
-        if (td == null)
-        {
-            sb.AppendLine($"[Type {typeName} not found]");
-            sb.AppendLine();
-            return;
-        }
+        if (td == null) return;
 
-        sb.AppendLine($"=== Type: {typeName} ===");
-        var parent = td.ParentType;
-        if (parent != null)
-            sb.AppendLine($"  Parent: {parent.FullName}");
-
-        var fields = td.GetFields();
-        if (fields != null && fields.Count > 0)
-        {
-            sb.AppendLine("  Fields:");
-            foreach (var f in fields)
-            {
-                try
-                {
-                    string fname = f.Name ?? "(null)";
-                    var ft = f.Type;
-                    string ftName = ft?.FullName ?? ft?.Name ?? "?";
-                    bool isStatic = f.IsStatic();
-                    string staticTag = isStatic ? " [static]" : "";
-                    sb.AppendLine($"    {ftName} {fname}{staticTag}");
-                }
-                catch { }
-            }
-        }
-
-        DumpMethods(sb, td, "  ");
-        sb.AppendLine();
-    }
-
-    private static void DumpMethods(StringBuilder sb, TypeDefinition td, string indent)
-    {
         try
         {
             var methods = td.GetMethods();
             if (methods == null || methods.Count == 0) return;
 
             sb.AppendLine($"{indent}Methods:");
-            foreach (var method in methods)
+            foreach (var m in methods)
             {
                 try
                 {
-                    string methodName = method.Name ?? "(null)";
-                    var returnType = method.ReturnType;
-                    string returnTypeName = returnType?.FullName ?? returnType?.Name ?? "void";
-                    bool isStatic = method.IsStatic();
+                    string retType = m.ReturnType?.FullName ?? "void";
+                    string name = m.Name ?? "?";
+                    bool isStatic = m.IsStatic();
 
-                    var parameters = method.GetParameters();
-                    var paramStr = new StringBuilder();
-                    if (parameters != null)
+                    var parms = m.GetParameters();
+                    var pStr = new StringBuilder();
+                    if (parms != null)
                     {
-                        for (int i = 0; i < parameters.Count; i++)
+                        for (int i = 0; i < parms.Count; i++)
                         {
-                            if (i > 0) paramStr.Append(", ");
-                            var p = parameters[i];
-                            string pType = p.Type?.FullName ?? p.Type?.Name ?? "?";
-                            string pName = p.Name ?? $"arg{i}";
-                            paramStr.Append($"{pType} {pName}");
+                            if (i > 0) pStr.Append(", ");
+                            pStr.Append($"{parms[i].Type?.FullName ?? "?"} {parms[i].Name ?? $"p{i}"}");
                         }
                     }
 
-                    string staticTag = isStatic ? " [static]" : "";
-                    sb.AppendLine($"{indent}  {returnTypeName} {methodName}({paramStr}){staticTag}");
+                    string sTag = isStatic ? " [static]" : "";
+                    sb.AppendLine($"{indent}  {retType} {name}({pStr}){sTag}");
                 }
-                catch
-                {
-                    // Skip unreadable methods
-                }
+                catch { }
             }
         }
-        catch (Exception ex)
-        {
-            sb.AppendLine($"{indent}  [Methods error: {ex.Message}]");
-        }
+        catch { }
     }
 }

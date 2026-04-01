@@ -192,6 +192,14 @@ public class MainMenuHooks
                 return;
             }
 
+            // Battle settings items (c_setting_00, c_setting_01, etc.)
+            if (Regex.IsMatch(rawName, @"^c_setting_\d+$"))
+            {
+                int settingIdx = int.Parse(rawName.Substring("c_setting_".Length));
+                BattleSettingsHooks.OnSettingItemFocused(settingIdx);
+                return;
+            }
+
             // Try to resolve localized text for unknown UI items (mail items, etc.)
             string resolvedText = TryResolveItemText(selectedItem, rawName);
 

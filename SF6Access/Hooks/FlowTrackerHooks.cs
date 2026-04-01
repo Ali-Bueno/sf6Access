@@ -54,6 +54,11 @@ public class FlowTrackerHooks
         { "UIFlowArcade", "Arcade" },
         // Versus
         { "UIFlowVs", "Versus" },
+        // Battle Settings (pre-fight)
+        { "UIFlowMatchingSetting", "Battle Settings" },
+        { "UIFlowVersusRuleMain", "Versus Rules" },
+        { "UIFlowCommentatorSelect", "Commentator Select" },
+        { "UIFlowCommentatorSetting", "Commentator Settings" },
         // Battle Hub
         { "UIFlowBattleHub", "Battle Hub" },
         // Replay
