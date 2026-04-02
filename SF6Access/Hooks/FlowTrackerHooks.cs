@@ -59,6 +59,8 @@ public class FlowTrackerHooks
         { "UIFlowVersusRuleMain", "Versus Rules" },
         { "UIFlowCommentatorSelect", "Commentator Select" },
         { "UIFlowCommentatorSetting", "Commentator Settings" },
+        // Side select (Player/CPU)
+        { "UIFlowSideSelect", "Side Select" },
         // Battle Hub
         { "UIFlowBattleHub", "Battle Hub" },
         // Replay
