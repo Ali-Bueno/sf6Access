@@ -22,10 +22,8 @@ public static class ObjectDumper
     private static bool _lastKeyState;
     private static bool _isDumping;
 
-    private static readonly string DumpPath = Path.Combine(
-        @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data",
-        "sf6access_dump.txt"
-    );
+    private static readonly string DumpDir =
+        @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data";
 
     [Callback(typeof(UpdateBehavior), CallbackType.Pre)]
     public static void OnUpdate()
@@ -37,9 +35,9 @@ public static class ObjectDumper
             _isDumping = true;
             try
             {
-                DumpEverything();
+                string path = DumpEverything();
                 ScreenReaderService.Speak("Full dump complete");
-                API.LogInfo($"[SF6Access] Full dump saved to {DumpPath}");
+                API.LogInfo($"[SF6Access] Full dump saved to {path}");
             }
             catch (Exception ex)
             {
@@ -55,7 +53,7 @@ public static class ObjectDumper
         _lastKeyState = keyDown;
     }
 
-    private static void DumpEverything()
+    private static string DumpEverything()
     {
         var sb = new StringBuilder();
         sb.AppendLine($"=== SF6 FULL DUMP - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
@@ -64,17 +62,55 @@ public static class ObjectDumper
         // 1. Active UIFlowManager handles (most useful for debugging)
         DumpFlowHandles(sb);
 
-        // 2. Managed singletons with fields
+        // 2. All on-screen GUI texts (reveals text of screens without Param fields)
+        DumpGuiTexts(sb);
+
+        // 3. Managed singletons with fields
         DumpManagedSingletons(sb);
 
-        // 3. Native singletons (names only)
+        // 4. Native singletons (names only)
         DumpNativeSingletons(sb);
 
-        // 4. TDB UI type scan
+        // 5. TDB UI type scan
         DumpTDBScan(sb);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(DumpPath));
-        File.WriteAllText(DumpPath, sb.ToString());
+        // Timestamped file so consecutive dumps don't overwrite each other
+        string path = Path.Combine(DumpDir, $"sf6access_dump_{DateTime.Now:HHmmss}.txt");
+        Directory.CreateDirectory(DumpDir);
+        File.WriteAllText(path, sb.ToString());
+        return path;
+    }
+
+    // ==================== GUI TEXTS ====================
+
+    private static void DumpGuiTexts(StringBuilder sb)
+    {
+        sb.AppendLine("========== ON-SCREEN GUI TEXTS ==========");
+        sb.AppendLine();
+
+        try
+        {
+            var texts = GuiTextReader.ReadSceneTexts(visibleOnly: false);
+            sb.AppendLine($"Total texts: {texts.Count}");
+            sb.AppendLine();
+
+            string lastOwner = null;
+            foreach (var t in texts)
+            {
+                if (t.Owner != lastOwner)
+                {
+                    sb.AppendLine($"--- GUI: {t.Owner ?? "(unknown)"} ---");
+                    lastOwner = t.Owner;
+                }
+                string visTag = t.Visible ? "" : " [hidden]";
+                sb.AppendLine($"  {t.Name}{visTag} = {t.Text}");
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"[GuiTexts error: {ex.Message}]");
+        }
+        sb.AppendLine();
     }
 
     // ==================== FLOW HANDLES ====================

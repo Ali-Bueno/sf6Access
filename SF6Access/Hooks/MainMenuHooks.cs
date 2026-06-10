@@ -138,12 +138,20 @@ public class MainMenuHooks
             try { rawName = (selectedItem as IObject)?.Call("get_Name") as string; } catch { }
             if (string.IsNullOrEmpty(rawName)) return;
 
+            // Any focus change invalidates the previously tracked control
+            FocusValueHooks.Clear();
+
             // If navigating back to tabs, clear option menu flag
             if (TabNames.ContainsKey(rawName))
                 OptionMenuHooks.IsInOptionMenu = false;
 
             // Suppress FocusChanged events while in option menu (OptionMenuHooks handles those)
             if (OptionMenuHooks.IsInOptionMenu)
+                return;
+
+            // Suppress while dedicated menu hooks handle announcements
+            if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
+                CustomRoomHooks.IsInCustomRoomTop || GroupFocusHooks.IsActive)
                 return;
 
             // Grid menu items (item0, item1, c_item_00, etc.) - resolve via FlowParam
@@ -165,15 +173,39 @@ public class MainMenuHooks
                 return;
             }
 
-            // Dialog buttons: c_item_0 = first button, c_item_1 = second button
+            // c_item_N: used by dialog buttons AND by generic menu lists (custom rooms etc.)
+            // Read the item's actual on-screen text; Yes/No only as a last resort
             if (Regex.IsMatch(rawName, @"^c_item_\d$"))
             {
                 int btnIdx = rawName[rawName.Length - 1] - '0';
-                string btnLabel = btnIdx == 0 ? "Yes" : "No";
+
+                // Read at most the first two texts — a button label, not a whole panel
+                string btnLabel = ReadItemLabel(selectedItem);
+
+                // Item text often lives in a sibling of the SelectItem — walk the row
+                // container, but only when it looks like a button row (few texts);
+                // otherwise it grabs unrelated screen text behind the dialog
+                if (string.IsNullOrEmpty(btnLabel))
+                {
+                    try
+                    {
+                        var parent = (selectedItem as IObject)?.Call("get_Parent") as ManagedObject;
+                        var parentTexts = GuiTextReader.ReadControlTexts(parent);
+                        if (parentTexts.Count > 0 && parentTexts.Count <= 3)
+                            btnLabel = parentTexts[0].Text;
+                        API.LogInfo($"[SF6Access] {rawName}: subtree empty, parent has {parentTexts.Count} texts, label='{btnLabel}'");
+                    }
+                    catch { }
+                }
+
+                if (string.IsNullOrEmpty(btnLabel))
+                    btnLabel = btnIdx == 0 ? "Yes" : "No";
+
                 if (GameStateTracker.HasChanged("focus_item", rawName))
                 {
-                    API.LogInfo($"[SF6Access] Dialog button: {btnLabel}");
+                    API.LogInfo($"[SF6Access] Item button [{rawName}]: {btnLabel}");
                     ScreenReaderService.Speak(btnLabel);
+                    FocusValueHooks.Track(selectedItem);
                 }
                 return;
             }
@@ -202,6 +234,10 @@ public class MainMenuHooks
 
             // Try to resolve localized text for unknown UI items (mail items, etc.)
             string resolvedText = TryResolveItemText(selectedItem, rawName);
+
+            // Generic menus (custom rooms, lobby forms): watch the focused control
+            // so value changes (spin left/right) are announced without a focus change
+            FocusValueHooks.Track(selectedItem);
 
             // Map known tab names to readable text
             string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped
@@ -388,6 +424,24 @@ public class MainMenuHooks
     /// Try to read localized text from a SelectItem's GUI element.
     /// Works for mail items, news items, and other dynamic UI elements.
     /// </summary>
+    /// <summary>Read up to the first two visible texts under a control (item label + value).</summary>
+    private static string ReadItemLabel(ManagedObject control)
+    {
+        try
+        {
+            var texts = GuiTextReader.ReadControlTexts(control);
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var t in texts)
+            {
+                if (string.IsNullOrWhiteSpace(t.Text)) continue;
+                parts.Add(t.Text.Trim());
+                if (parts.Count >= 2) break;
+            }
+            return parts.Count > 0 ? string.Join(". ", parts) : null;
+        }
+        catch { return null; }
+    }
+
     private static string TryResolveItemText(ManagedObject selectedItem, string rawName)
     {
         if (selectedItem == null) return null;
@@ -409,6 +463,16 @@ public class MainMenuHooks
                 }
                 catch { }
             }
+        }
+        catch { }
+
+        // Fallback: read all visible texts under the item's GUI subtree
+        // (covers custom room lists, lobby forms and other generic menus)
+        try
+        {
+            string joined = GuiTextReader.ReadControlTextJoined(selectedItem);
+            if (!string.IsNullOrEmpty(joined))
+                return joined;
         }
         catch { }
 

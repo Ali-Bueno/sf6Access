@@ -15,6 +15,13 @@ public class DialogHooks
     private static int _frameCounter;
     private static bool _loggedOnce;
 
+    // get_IsShowDialog throws internally (logged by REFramework) and returns null
+    // in some states (e.g. while exiting) — back off instead of retrying 4x/sec.
+    private static int _consecutiveFailures;
+    private static int _backoffUntilFrame;
+    private const int MAX_FAILURES = 8;
+    private const int BACKOFF_FRAMES = 600;
+
     [Callback(typeof(UpdateBehavior), CallbackType.Pre)]
     static void OnUpdate()
     {
@@ -64,15 +71,31 @@ public class DialogHooks
             API.LogInfo("[SF6Access] DialogManager found!");
         }
 
+        if (_frameCounter < _backoffUntilFrame) return;
+
         bool isShowing = false;
         try
         {
             var result = (_dialogMgr as IObject)?.Call("get_IsShowDialog");
-            if (result is bool b) isShowing = b;
+            if (result is bool b)
+            {
+                isShowing = b;
+                _consecutiveFailures = 0;
+            }
+            else if (++_consecutiveFailures >= MAX_FAILURES)
+            {
+                // Internal game exception — stop hammering and re-find the manager later
+                _dialogMgr = null;
+                _consecutiveFailures = 0;
+                _backoffUntilFrame = _frameCounter + BACKOFF_FRAMES;
+                return;
+            }
         }
         catch
         {
             _dialogMgr = null; // Invalidate if object is dead
+            _consecutiveFailures = 0;
+            _backoffUntilFrame = _frameCounter + BACKOFF_FRAMES;
             return;
         }
 

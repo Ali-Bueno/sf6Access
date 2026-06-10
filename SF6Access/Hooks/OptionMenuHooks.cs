@@ -63,6 +63,7 @@ public class OptionMenuHooks
     // Sub-list (language selection etc.) tracking
     private static bool _subListChanged;
     private static int _lastSubListIndex = -1;
+    private static ManagedObject _lastSubList;
 
     // OptionMenuParam for ListState polling
     private static ManagedObject _optionMenuParam;
@@ -138,14 +139,12 @@ public class OptionMenuHooks
                         var simpleList = ManagedObject.ToManagedObject(args[1]);
                         if (simpleList == null) return PreHookResult.Continue;
 
-                        var idxObj = (simpleList as IObject)?.Call("get_SelectedIndex");
-                        int idx = idxObj != null ? Convert.ToInt32(idxObj) : -1;
-
-                        if (idx >= 0 && idx != _lastSubListIndex)
-                        {
-                            _lastSubListIndex = idx;
-                            _subListChanged = true;
-                        }
+                        // Don't read SelectedIndex here: in this PRE hook the
+                        // selection is not updated yet (announced previous row,
+                        // user picked Portuguese thinking it was Spanish).
+                        // ProcessSubListChange reads it fresh on the next update.
+                        _lastSubList = simpleList;
+                        _subListChanged = true;
                     }
                     catch { }
                     return PreHookResult.Continue;
@@ -192,7 +191,18 @@ public class OptionMenuHooks
 
     private static void ProcessSubListChange()
     {
-        if (_lastFocusedSetting == null || _lastSubListIndex < 0) return;
+        if (_lastFocusedSetting == null || _lastSubList == null) return;
+
+        // Read the index now — the selection has been applied by this point
+        int idx = -1;
+        try
+        {
+            var idxObj = (_lastSubList as IObject)?.Call("get_SelectedIndex");
+            if (idxObj != null) idx = Convert.ToInt32(idxObj);
+        }
+        catch { }
+        if (idx < 0 || idx == _lastSubListIndex) return;
+        _lastSubListIndex = idx;
 
         try
         {
@@ -204,7 +214,12 @@ public class OptionMenuHooks
             }
             catch { }
 
-            // Fallback for language options: use known language names
+            // Read the focused row's on-screen text (matches game language and
+            // the list's real display order — the hardcoded table did not)
+            if (string.IsNullOrEmpty(label))
+                label = ReadSubListRowText(_lastSubListIndex);
+
+            // Last resort for language options: known language names table
             if (string.IsNullOrEmpty(label) && _lastFocusedTypeId > 0)
             {
                 // TypeIds 610-640 are language options
@@ -224,6 +239,56 @@ public class OptionMenuHooks
             }
         }
         catch { }
+    }
+
+    /// <summary>Localized tab name from the options tab bar (mTabList children).</summary>
+    private static string ReadTabName(int tabIndex)
+    {
+        try
+        {
+            // Local only — assigning _optionMenuParam here would skip the
+            // _listStateField initialization in IsSubListOpen and break dropdowns
+            var param = _optionMenuParam ?? FlowHelper.FindFlowParam("app.UIOptionSettingMenu.OptionMenuParam");
+            if (param == null) return null;
+
+            var tabList = param.GetField("<mTabList>k__BackingField") as ManagedObject
+                ?? param.GetField("mTabList") as ManagedObject;
+            var children = tabList?.GetField("_Children") as ManagedObject;
+            var child = (children as IObject)?.Call("get_Item", tabIndex) as ManagedObject;
+            var control = child?.GetField("<Control>k__BackingField") as ManagedObject
+                ?? (child as IObject)?.Call("get_Control") as ManagedObject;
+
+            string name = GuiTextReader.ReadControlTextJoined(control);
+            return string.IsNullOrEmpty(name) ? null : name;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Read the sub-list row's displayed text (child part first, list texts fallback).</summary>
+    private static string ReadSubListRowText(int idx)
+    {
+        if (_lastSubList == null || idx < 0) return null;
+        try
+        {
+            var children = (_lastSubList as IObject)?.Call("get__Children") as ManagedObject
+                ?? _lastSubList.GetField("_Children") as ManagedObject;
+            if (children != null)
+            {
+                var child = (children as IObject)?.Call("get_Item", idx) as ManagedObject;
+                var control = child?.GetField("<Control>k__BackingField") as ManagedObject
+                    ?? (child as IObject)?.Call("get_Control") as ManagedObject;
+                string text = GuiTextReader.ReadControlTextJoined(control);
+                if (!string.IsNullOrEmpty(text)) return text;
+            }
+
+            // Uniform single-text rows: Nth text under the list control
+            var listControl = _lastSubList.GetField("<Control>k__BackingField") as ManagedObject
+                ?? (_lastSubList as IObject)?.Call("get_Control") as ManagedObject;
+            var texts = GuiTextReader.ReadControlTexts(listControl);
+            if (idx < texts.Count) return texts[idx].Text;
+        }
+        catch { }
+        return null;
     }
 
     private static void ProcessFocusChange()
@@ -285,7 +350,8 @@ public class OptionMenuHooks
                     if (tab >= 0 && tab < OptionTabNames.Length && tab != _currentTab)
                     {
                         _currentTab = tab;
-                        tabPrefix = OptionTabNames[tab];
+                        // Localized tab name from the on-screen tab bar; English fallback
+                        tabPrefix = ReadTabName(tab) ?? OptionTabNames[tab];
                         API.LogInfo($"[SF6Access] Option tab: {tabPrefix}");
                     }
                 }

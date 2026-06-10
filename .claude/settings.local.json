@@ -6,7 +6,12 @@
       "Bash(ls:*)",
       "Bash(dotnet build:*)",
       "Read(//d/games/steam/steamapps/common/Street Fighter 6/**)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(dotnet-ildasm:*)",
+      "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access\\\\sf6 code' -name *AvatarCreateEditParam*.cs)",
+      "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access' -type f -name *dump* -o -name *TODO*)",
+      "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access\\\\SF6Access' -not -path */obj/* -not -path */bin/* -type f)",
+      "Bash(find:*)"
     ]
   }
 }
