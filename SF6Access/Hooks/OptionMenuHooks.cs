@@ -48,6 +48,11 @@ public class OptionMenuHooks
                 _lastFocusedAddr = 0;
                 _optionMenuParam = null;
 
+                // The display language can only change through this menu —
+                // cached localized strings went stale (Portuguese titles kept
+                // being announced after switching the game to Spanish)
+                _titleCache.Clear();
+                _descCache.Clear();
             }
             _isInOptionMenu = value;
         }
@@ -255,6 +260,11 @@ public class OptionMenuHooks
 
             var tabList = param.GetField("<mTabList>k__BackingField") as ManagedObject
                 ?? param.GetField("mTabList") as ManagedObject;
+
+            // Selected tab's own text first (child order can be reversed)
+            string selected = FlowHelper.ReadSelectedItemText(tabList);
+            if (!string.IsNullOrEmpty(selected)) return selected;
+
             var children = tabList?.GetField("_Children") as ManagedObject;
             var child = (children as IObject)?.Call("get_Item", tabIndex) as ManagedObject;
             var control = child?.GetField("<Control>k__BackingField") as ManagedObject
@@ -266,12 +276,17 @@ public class OptionMenuHooks
         catch { return null; }
     }
 
-    /// <summary>Read the sub-list row's displayed text (child part first, list texts fallback).</summary>
+    /// <summary>Read the sub-list row's displayed text.</summary>
     private static string ReadSubListRowText(int idx)
     {
         if (_lastSubList == null || idx < 0) return null;
         try
         {
+            // The actually-selected row: index-based child reads announced the
+            // language list bottom-to-top (children stored in reverse order)
+            string text = FlowHelper.ReadSelectedItemText(_lastSubList);
+            if (!string.IsNullOrEmpty(text)) return text;
+
             var children = (_lastSubList as IObject)?.Call("get__Children") as ManagedObject
                 ?? _lastSubList.GetField("_Children") as ManagedObject;
             if (children != null)
@@ -279,7 +294,7 @@ public class OptionMenuHooks
                 var child = (children as IObject)?.Call("get_Item", idx) as ManagedObject;
                 var control = child?.GetField("<Control>k__BackingField") as ManagedObject
                     ?? (child as IObject)?.Call("get_Control") as ManagedObject;
-                string text = GuiTextReader.ReadControlTextJoined(control);
+                text = GuiTextReader.ReadControlTextJoined(control);
                 if (!string.IsNullOrEmpty(text)) return text;
             }
 

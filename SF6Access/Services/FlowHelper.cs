@@ -106,6 +106,97 @@ public static class FlowHelper
         return results;
     }
 
+    /// <summary>
+    /// ALL flow Params matching ANY of the prefixes, in handle order (newest
+    /// first). Per-prefix iteration loses the global ordering: the avatar
+    /// arcade param outranked the newer master menu param.
+    /// </summary>
+    public static System.Collections.Generic.List<(string typeName, ManagedObject param)> FindFlowParamsMatchingPrefixes(string[] prefixes)
+    {
+        var results = new System.Collections.Generic.List<(string, ManagedObject)>();
+        CacheTDB();
+        if (_handlesField == null) return results;
+        try
+        {
+            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+            if (flowMgr == null) return results;
+
+            var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
+            if (handles == null) return results;
+
+            var td = handles.GetTypeDefinition();
+            var countMethod = td?.GetMethod("get_Count");
+            var getItemMethod = td?.GetMethod("get_Item(System.Int32)");
+            if (countMethod == null || getItemMethod == null) return results;
+
+            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
+            for (int i = 0; i < count && i < 50; i++)
+            {
+                try
+                {
+                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
+                    var param = handle?.GetField("<Param>k__BackingField") as ManagedObject;
+                    string name = param?.GetTypeDefinition()?.FullName;
+                    if (name == null) continue;
+
+                    foreach (var prefix in prefixes)
+                    {
+                        if (name.StartsWith(prefix))
+                        {
+                            results.Add((name, param));
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return results;
+    }
+
+    /// <summary>First (newest) flow Param per prefix, in a single pass over _Handles.</summary>
+    public static System.Collections.Generic.Dictionary<string, (string typeName, ManagedObject param)> FindFirstFlowParamsByPrefixes(string[] prefixes)
+    {
+        var found = new System.Collections.Generic.Dictionary<string, (string, ManagedObject)>();
+        CacheTDB();
+        if (_handlesField == null) return found;
+        try
+        {
+            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+            if (flowMgr == null) return found;
+
+            var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
+            if (handles == null) return found;
+
+            var td = handles.GetTypeDefinition();
+            var countMethod = td?.GetMethod("get_Count");
+            var getItemMethod = td?.GetMethod("get_Item(System.Int32)");
+            if (countMethod == null || getItemMethod == null) return found;
+
+            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
+            for (int i = 0; i < count && i < 50 && found.Count < prefixes.Length; i++)
+            {
+                try
+                {
+                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
+                    var param = handle?.GetField("<Param>k__BackingField") as ManagedObject;
+                    string name = param?.GetTypeDefinition()?.FullName;
+                    if (name == null) continue;
+
+                    foreach (var prefix in prefixes)
+                    {
+                        if (!found.ContainsKey(prefix) && name.StartsWith(prefix))
+                            found[prefix] = (name, param);
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return found;
+    }
+
     /// <summary>Find flow Params for several types in a single pass over _Handles.</summary>
     public static System.Collections.Generic.Dictionary<string, ManagedObject> FindFlowParams(string[] typeFullNames)
     {
@@ -238,8 +329,41 @@ public static class FlowHelper
     }
 
     /// <summary>
+    /// Read the on-screen text of the row a UIParts list/grid actually has
+    /// selected, via get_SelectedItem. Index-based child reads proved
+    /// unreliable: _Children order can be REVERSED relative to SelectedIndex
+    /// (verified with the language list, announced bottom-to-top).
+    /// </summary>
+    public static string ReadSelectedItemText(ManagedObject listObj)
+    {
+        if (listObj == null) return null;
+        try
+        {
+            var item = Call(listObj, "get_SelectedItem") as ManagedObject;
+            if (item == null) return null;
+
+            string text = GuiTextReader.ReadControlTextJoined(item);
+            if (!string.IsNullOrEmpty(text)) return text;
+
+            // Some grids render labels as images and keep the text hidden
+            // (master select panels) — fall back to the first hidden texts
+            var hidden = GuiTextReader.ReadControlTexts(item, visibleOnly: false);
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var t in hidden)
+            {
+                if (string.IsNullOrWhiteSpace(t.Text)) continue;
+                parts.Add(t.Text.Trim());
+                if (parts.Count >= 4) break;
+            }
+            return parts.Count > 0 ? string.Join(". ", parts) : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Read the on-screen text of a UIParts list/grid row: child part at the
     /// given index, then all visible texts under its Control joined together.
+    /// Prefer ReadSelectedItemText when reading the focused row.
     /// </summary>
     public static string ReadListRowText(ManagedObject partsObj, int index)
     {
@@ -341,6 +465,240 @@ public static class FlowHelper
             return changed.Count > 0 ? string.Join(". ", changed) : newText;
         }
         catch { return newText; }
+    }
+
+    private static Method _platformMsgMethod;
+    private static bool _platformMsgCached;
+
+    /// <summary>
+    /// Resolve platform message tags before tag stripping: the Steam-store
+    /// confirmation dialog's whole message is "&lt;PLATMSG Arg0 = "65"&gt;",
+    /// which CleanTags would silently erase.
+    /// </summary>
+    public static string ResolvePlatformTags(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains("<PLATMSG")) return text;
+        try
+        {
+            if (!_platformMsgCached)
+            {
+                _platformMsgCached = true;
+                _platformMsgMethod = TDB.Get().FindType("app.MessageManager")
+                    ?.GetMethod("ExchangePlatformMessage(System.String)");
+            }
+            if (_platformMsgMethod == null) return text;
+
+            return Regex.Replace(text, @"<PLATMSG\s*([^>]*)>", match =>
+            {
+                try
+                {
+                    var resolved = _platformMsgMethod.InvokeBoxed(typeof(string), null,
+                        new object[] { match.Groups[1].Value }) as string;
+                    return resolved ?? "";
+                }
+                catch { return ""; }
+            });
+        }
+        catch { return text; }
+    }
+
+    // --- Spoken command vocabulary, per display language ---
+    // Indexed by digit 0-9 (numpad notation): 2=down, 6=forward...
+    private sealed class CommandWords
+    {
+        public string[] Directions;     // numpad 0-9
+        public System.Collections.Generic.Dictionary<string, string> Motions;
+        public System.Collections.Generic.Dictionary<string, string> Icons;
+        public System.Collections.Generic.Dictionary<string, string> Inputs;
+    }
+
+    private static readonly CommandWords WordsEn = new()
+    {
+        Directions = new[] { "neutral", "down-back", "down", "down-forward", "back",
+            "neutral", "forward", "up-back", "up", "up-forward" },
+        Motions = new()
+        {
+            { "236", "quarter circle forward" }, { "214", "quarter circle back" },
+            { "623", "forward, down, down-forward" }, { "421", "back, down, down-back" },
+            { "41236", "half circle forward" }, { "63214", "half circle back" },
+            { "236236", "double quarter circle forward" }, { "214214", "double quarter circle back" },
+            { "22", "down, down" }, { "44", "back, back" }, { "66", "forward, forward" },
+        },
+        Icons = new()
+        {
+            { "+", "plus" }, { "p", "punch" }, { "k", "kick" },
+            { "lp", "light punch" }, { "mp", "medium punch" }, { "hp", "heavy punch" },
+            { "lk", "light kick" }, { "mk", "medium kick" }, { "hk", "heavy kick" },
+            { "ls", "light attack" }, { "ms", "medium attack" }, { "hs", "heavy attack" },
+            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "throw" },
+            { "sm", "special move" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutral" },
+        },
+        Inputs = new()
+        {
+            { "BTL_LR_LSX", "left or right" }, { "BTL_UD_LSY", "up or down" },
+            { "BTL_PLUS_LS_U", "up" }, { "BTL_PLUS_LS_D", "down" },
+            { "BTL_PLUS_LS_L", "left" }, { "BTL_PLUS_LS_R", "right" },
+            { "BTL_LS_U", "up" }, { "BTL_LS_D", "down" }, { "BTL_LS_L", "left" }, { "BTL_LS_R", "right" },
+            { "BTL_X", "square" }, { "BTL_Y", "triangle" }, { "BTL_A", "cross" }, { "BTL_B", "circle" },
+            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+        },
+    };
+
+    private static readonly CommandWords WordsEs = new()
+    {
+        Directions = new[] { "neutral", "abajo-atrás", "abajo", "abajo-adelante", "atrás",
+            "neutral", "adelante", "arriba-atrás", "arriba", "arriba-adelante" },
+        Motions = new()
+        {
+            { "236", "cuarto de círculo adelante" }, { "214", "cuarto de círculo atrás" },
+            { "623", "adelante, abajo, abajo-adelante" }, { "421", "atrás, abajo, abajo-atrás" },
+            { "41236", "medio círculo adelante" }, { "63214", "medio círculo atrás" },
+            { "236236", "dos cuartos de círculo adelante" }, { "214214", "dos cuartos de círculo atrás" },
+            { "22", "abajo, abajo" }, { "44", "atrás, atrás" }, { "66", "adelante, adelante" },
+        },
+        Icons = new()
+        {
+            { "+", "más" }, { "p", "puño" }, { "k", "patada" },
+            { "lp", "puño ligero" }, { "mp", "puño medio" }, { "hp", "puño fuerte" },
+            { "lk", "patada ligera" }, { "mk", "patada media" }, { "hk", "patada fuerte" },
+            { "ls", "ataque ligero" }, { "ms", "ataque medio" }, { "hs", "ataque fuerte" },
+            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "agarre" },
+            { "sm", "golpe especial" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutral" },
+        },
+        Inputs = new()
+        {
+            { "BTL_LR_LSX", "izquierda o derecha" }, { "BTL_UD_LSY", "arriba o abajo" },
+            { "BTL_PLUS_LS_U", "arriba" }, { "BTL_PLUS_LS_D", "abajo" },
+            { "BTL_PLUS_LS_L", "izquierda" }, { "BTL_PLUS_LS_R", "derecha" },
+            { "BTL_LS_U", "arriba" }, { "BTL_LS_D", "abajo" }, { "BTL_LS_L", "izquierda" }, { "BTL_LS_R", "derecha" },
+            { "BTL_X", "cuadrado" }, { "BTL_Y", "triángulo" }, { "BTL_A", "equis" }, { "BTL_B", "círculo" },
+            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+        },
+    };
+
+    private static readonly CommandWords WordsPt = new()
+    {
+        Directions = new[] { "neutro", "baixo-trás", "baixo", "baixo-frente", "trás",
+            "neutro", "frente", "cima-trás", "cima", "cima-frente" },
+        Motions = new()
+        {
+            { "236", "quarto de círculo para frente" }, { "214", "quarto de círculo para trás" },
+            { "623", "frente, baixo, baixo-frente" }, { "421", "trás, baixo, baixo-trás" },
+            { "41236", "meio círculo para frente" }, { "63214", "meio círculo para trás" },
+            { "236236", "dois quartos de círculo para frente" }, { "214214", "dois quartos de círculo para trás" },
+            { "22", "baixo, baixo" }, { "44", "trás, trás" }, { "66", "frente, frente" },
+        },
+        Icons = new()
+        {
+            { "+", "mais" }, { "p", "soco" }, { "k", "chute" },
+            { "lp", "soco leve" }, { "mp", "soco médio" }, { "hp", "soco forte" },
+            { "lk", "chute leve" }, { "mk", "chute médio" }, { "hk", "chute forte" },
+            { "ls", "ataque leve" }, { "ms", "ataque médio" }, { "hs", "ataque forte" },
+            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "arremesso" },
+            { "sm", "golpe especial" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutro" },
+        },
+        Inputs = new()
+        {
+            { "BTL_LR_LSX", "esquerda ou direita" }, { "BTL_UD_LSY", "cima ou baixo" },
+            { "BTL_PLUS_LS_U", "cima" }, { "BTL_PLUS_LS_D", "baixo" },
+            { "BTL_PLUS_LS_L", "esquerda" }, { "BTL_PLUS_LS_R", "direita" },
+            { "BTL_LS_U", "cima" }, { "BTL_LS_D", "baixo" }, { "BTL_LS_L", "esquerda" }, { "BTL_LS_R", "direita" },
+            { "BTL_X", "quadrado" }, { "BTL_Y", "triângulo" }, { "BTL_A", "xis" }, { "BTL_B", "círculo" },
+            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+        },
+    };
+
+    // Display language option (app.Option TypeId DispLanguage = 611); value is
+    // the index in the language list: 1=English, 5=Spanish, 8=Portuguese (BR),
+    // 13=Latin American Spanish
+    private const int DISP_LANGUAGE_TYPE_ID = 611;
+    private static CommandWords _words = WordsEn;
+    private static long _wordsCheckedTick;
+    private static ManagedObject _optionManager;
+
+    private static CommandWords CurrentWords()
+    {
+        long now = System.Environment.TickCount64;
+        if (now - _wordsCheckedTick < 10000) return _words;
+        _wordsCheckedTick = now;
+
+        try
+        {
+            _optionManager ??= API.GetManagedSingleton("app.OptionManager");
+            var result = Call(_optionManager, "GetOptionValue", DISP_LANGUAGE_TYPE_ID);
+            int lang = result != null ? Convert.ToInt32(result) : -1;
+            var words = lang switch
+            {
+                5 or 13 => WordsEs,
+                8 => WordsPt,
+                _ => WordsEn,
+            };
+            if (words != _words)
+                API.LogInfo($"[SF6Access] Command vocabulary switched (display language value={lang})");
+            _words = words;
+        }
+        catch { }
+        return _words;
+    }
+
+    private static string SpeakMotion(string digits, CommandWords words)
+    {
+        if (words.Motions.TryGetValue(digits, out var known)) return known;
+
+        var parts = new System.Collections.Generic.List<string>();
+        foreach (char c in digits)
+        {
+            int d = c - '0';
+            if (d >= 0 && d <= 9) parts.Add(words.Directions[d]);
+        }
+        return parts.Count > 0 ? string.Join(", ", parts) : digits;
+    }
+
+    /// <summary>
+    /// Replace inline input tags with readable names instead of erasing them:
+    /// tutorials and combo trials embed commands as &lt;INPT id="BTL_X"&gt;,
+    /// &lt;CMD _236&gt; (numpad motion) and &lt;ICON p&gt; tags.
+    /// Formatting tags (COLOR etc.) still vanish via CleanTags.
+    /// </summary>
+    public static string SpeakableIcons(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains('<')) return text;
+        try
+        {
+            var words = CurrentWords();
+            return Regex.Replace(text, @"<(INPT|ICON|KEY|PAD|CMD)\b([^>]*)>", match =>
+            {
+                string attrs = match.Groups[2].Value;
+
+                // id="BTL_X" attribute form (INPT tags)
+                var idMatch = Regex.Match(attrs, @"id\s*=\s*""([^""]+)""", RegexOptions.IgnoreCase);
+                string token = idMatch.Success
+                    ? idMatch.Groups[1].Value
+                    : attrs.Replace("\"", "").Trim();
+                if (string.IsNullOrEmpty(token)) return " ";
+
+                if (words.Inputs.TryGetValue(token, out var inputName))
+                    return $" {inputName} ";
+
+                // Motion in numpad notation: "_236", "236"
+                string motion = token.TrimStart('_');
+                if (motion.Length > 0 && Regex.IsMatch(motion, @"^\d+$"))
+                    return $" {SpeakMotion(motion, words)} ";
+
+                if (words.Icons.TryGetValue(token.ToLowerInvariant(), out var iconName))
+                    return $" {iconName} ";
+
+                // PS button glyphs: "BtnR1" → "R1"
+                if (token.StartsWith("Btn", StringComparison.OrdinalIgnoreCase))
+                    return " " + token.Substring(3) + " ";
+
+                return " " + token.Replace("BTL_", "").Replace('_', ' ') + " ";
+            }, RegexOptions.IgnoreCase);
+        }
+        catch { return text; }
     }
 
     public static string CleanTags(string text)

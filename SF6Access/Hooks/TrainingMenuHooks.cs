@@ -27,6 +27,12 @@ public class TrainingMenuHooks
     private static int _lastPrimary = -1;
     private static int _lastSecondary = -1;
     private static string _lastValueName;
+    private static string _lastSectionName;
+    private static int _lastSliderValue = int.MinValue;
+
+    // app.training.ItemType slider variants (SLIDER, SLIDER_GUIDE, SLIDER_VITAL_1P/2P,
+    // SLIDER_DRIVE, SLIDER_SA_1P/2P) — their value is numeric, not a message Guid
+    private static readonly int[] SliderItemTypes = { 2, 10, 11, 12, 13, 14, 15 };
 
     public static bool IsInTrainingMenu => _isActive;
 
@@ -72,6 +78,7 @@ public class TrainingMenuHooks
         _lastPrimary = -1;
         _lastSecondary = -1;
         _lastValueName = null;
+        _lastSectionName = null;
         _isActive = true;
         API.LogInfo("[SF6Access] Training menu opened");
 
@@ -108,6 +115,25 @@ public class TrainingMenuHooks
 
     private static void PollValueChange()
     {
+        // Slider rows (drive gauge, vitality...): the value is a number on the
+        // ViewData, not a message Guid — left/right changed nothing audible
+        var viewData = FindViewData();
+        if (viewData != null && IsSliderRow(viewData))
+        {
+            int sliderValue = FlowHelper.ReadIntField(viewData, "SliderValue", int.MinValue);
+            if (sliderValue != int.MinValue && sliderValue != _lastSliderValue)
+            {
+                bool firstSlider = _lastSliderValue == int.MinValue;
+                _lastSliderValue = sliderValue;
+                if (!firstSlider)
+                {
+                    API.LogInfo($"[SF6Access] Training slider changed: {sliderValue}");
+                    ScreenReaderService.Speak(sliderValue.ToString());
+                }
+            }
+            return;
+        }
+
         var data = FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
         if (data == null) return;
 
@@ -123,64 +149,91 @@ public class TrainingMenuHooks
         ScreenReaderService.Speak(name);
     }
 
+    private static bool IsSliderRow(ManagedObject viewData)
+    {
+        var rowData = FlowHelper.GetObjectField(viewData, "Data");
+        int itemType = FlowHelper.ReadIntField(rowData, "_Type", -1);
+        return System.Array.IndexOf(SliderItemTypes, itemType) >= 0;
+    }
+
     private static void AnnounceCurrentItem(bool tabChanged)
     {
         var data = FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
         if (data == null) return;
 
-        string name = FlowHelper.ResolveGuidField(data, "_MessageID");
-        string sub = FlowHelper.ResolveGuidField(data, "_SubMessageID");
-        string guide = FlowHelper.ResolveGuidField(data, "_GuideMessage")
-                    ?? FlowHelper.ResolveGuidField(data, "_GuideMessageID");
+        // For spin rows CurrentMenuData is the selected VALUE child; the row's
+        // own data (label + tooltip) lives in the flow param's _ViewDataList.
+        // CurrentParentData is the TAB, not the row.
+        var viewData = FindViewData();
+        var sectionData = FlowHelper.GetObjectField(viewData, "ParentData");
+        var rowData = FlowHelper.GetObjectField(viewData, "Data");
 
-        // Row label: for spin rows CurrentMenuData is the value child and the
-        // parent holds the actual option name ("Recovery behavior" etc.)
-        string parentName = null;
-        var parentData = FlowHelper.Call(_manager, "get_CurrentParentData") as ManagedObject;
-        if (parentData != null)
-            parentName = FlowHelper.ResolveGuidField(parentData, "_MessageID");
+        string value = FlowHelper.ResolveGuidField(data, "_MessageID");
+        _lastValueName = value;
 
-        _lastValueName = name;
+        string label = FlowHelper.ResolveGuidField(rowData, "_MessageID");
+        string sub = FlowHelper.ResolveGuidField(rowData ?? data, "_SubMessageID");
+        string guide = FlowHelper.ResolveGuidField(rowData ?? data, "_GuideMessage")
+                    ?? FlowHelper.ResolveGuidField(rowData ?? data, "_GuideMessageID");
 
-        string announcement = name;
-        if (!string.IsNullOrEmpty(parentName) && parentName != name)
-            announcement = string.IsNullOrEmpty(announcement) ? parentName : $"{parentName}. {announcement}";
-        if (!string.IsNullOrEmpty(sub) && sub != name)
-            announcement = string.IsNullOrEmpty(announcement) ? sub : $"{announcement} {sub}";
-        if (!string.IsNullOrEmpty(guide) && guide != announcement)
-            announcement = string.IsNullOrEmpty(announcement) ? guide : $"{announcement}. {guide}";
-
-        if (string.IsNullOrEmpty(announcement)) return;
-
-        // Prepend the localized tab title when switching tabs
-        if (tabChanged)
+        // Section/tab header ("Dummy settings", "Special settings"...):
+        // announce whenever it changes, not only on tab switches
+        string section = FlowHelper.ResolveGuidField(sectionData, "_MessageID");
+        if (string.IsNullOrEmpty(section))
         {
-            string tabTitle = ReadTabTitle(_lastPrimary);
-            if (!string.IsNullOrEmpty(tabTitle) && !announcement.StartsWith(tabTitle))
-                announcement = $"{tabTitle}. {announcement}";
+            var parentData = FlowHelper.Call(_manager, "get_CurrentParentData") as ManagedObject;
+            section = FlowHelper.ResolveGuidField(parentData, "_MessageID");
         }
 
+        var parts = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrEmpty(section) && (tabChanged || section != _lastSectionName))
+            parts.Add(section);
+        _lastSectionName = section;
+
+        if (!string.IsNullOrEmpty(label))
+            parts.Add(label);
+        if (!string.IsNullOrEmpty(value) && value != label)
+            parts.Add(value);
+
+        // Slider rows carry a numeric value (drive gauge, vitality...)
+        _lastSliderValue = int.MinValue;
+        if (viewData != null && IsSliderRow(viewData))
+        {
+            int sliderValue = FlowHelper.ReadIntField(viewData, "SliderValue", int.MinValue);
+            _lastSliderValue = sliderValue;
+            if (sliderValue != int.MinValue)
+                parts.Add(sliderValue.ToString());
+        }
+
+        if (!string.IsNullOrEmpty(sub) && sub != label && sub != value)
+            parts.Add(sub);
+        if (!string.IsNullOrEmpty(guide) && guide != label)
+            parts.Add(guide);
+
+        if (parts.Count == 0) return;
+
+        string announcement = string.Join(". ", parts);
         API.LogInfo($"[SF6Access] Training menu [{_lastPrimary},{_lastSecondary}]: {announcement}");
         ScreenReaderService.Speak(announcement);
     }
 
-    /// <summary>Localized tab title from the flow param's primary tab list.</summary>
-    private static string ReadTabTitle(int tabIndex)
+    /// <summary>The focused row's ViewData entry (Index == SecondaryIndex).</summary>
+    private static ManagedObject FindViewData()
     {
         try
         {
             var param = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
-            if (param == null) return null;
+            var list = FlowHelper.GetObjectField(param, "_ViewDataList");
+            if (list == null) return null;
 
-            var tabList = FlowHelper.GetObjectField(param, "_PrimaryTabList");
-            string title = FlowHelper.ReadListRowText(tabList, tabIndex);
-            if (!string.IsNullOrEmpty(title)) return title;
-
-            // Fallback: Nth visible text under the tab list control
-            var control = FlowHelper.GetObjectField(tabList, "Control")
-                ?? FlowHelper.Call(tabList, "get_Control") as ManagedObject;
-            var texts = GuiTextReader.ReadControlTexts(control);
-            if (tabIndex >= 0 && tabIndex < texts.Count) return texts[tabIndex].Text;
+            int count = FlowHelper.GetListCount(list);
+            for (int i = 0; i < count; i++)
+            {
+                var vd = FlowHelper.GetListItem(list, i);
+                if (vd == null) continue;
+                if (FlowHelper.ReadIntField(vd, "Index") != _lastSecondary) continue;
+                return vd;
+            }
         }
         catch { }
         return null;
@@ -193,5 +246,6 @@ public class TrainingMenuHooks
         _lastPrimary = -1;
         _lastSecondary = -1;
         _lastValueName = null;
+        _lastSectionName = null;
     }
 }

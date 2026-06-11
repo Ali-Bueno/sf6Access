@@ -149,41 +149,59 @@ public class MainMenuHooks
             if (OptionMenuHooks.IsInOptionMenu)
                 return;
 
-            // Suppress while dedicated menu hooks handle announcements
+            // Suppress while dedicated menu hooks handle announcements.
+            // GroupFocus only suppresses while it actually announces rows —
+            // a silently-active tracker must not mute this generic reader
+            // (Battle Hub room muted the avatar battle menu)
             if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
-                CustomRoomHooks.IsInCustomRoomTop || GroupFocusHooks.IsActive)
+                CustomRoomHooks.IsInCustomRoomTop || GroupFocusHooks.ShouldSuppressFocus)
+            {
+                // Timestamped trace of real navigation presses — measures how
+                // far behind them the poll-based announcers run
+                API.LogInfo($"[SF6Access] Focus (suppressed): {rawName}");
                 return;
+            }
 
             // Grid menu items (item0, item1, c_item_00, etc.) - resolve via FlowParam
             if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d{2,})$"))
             {
-                // Other screens (gallery, guides...) reuse these item names; the
-                // stale start-menu FlowParam made them silent — read generically
-                if (!FlowTrackerHooks.IsFlowActive("UIStartMenu"))
-                {
-                    string itemText = TryResolveItemText(selectedItem, rawName);
-                    if (!string.IsNullOrEmpty(itemText) && GameStateTracker.HasChanged("focus_item", itemText))
-                    {
-                        API.LogInfo($"[SF6Access] Grid (generic): {itemText}");
-                        ScreenReaderService.Speak(itemText);
-                        FocusValueHooks.Track(selectedItem);
-                    }
-                    return;
-                }
-
-                // MenuItemSelectionChanged handles this when FlowParam is active
-                // But some tabs (Fighting Ground) don't fire MenuItemSelectionChanged,
-                // so we try FlowParam here as backup
-                if (_flowParam != null)
+                // Start menu grid: resolve via FlowParam (MenuItemSelectionChanged
+                // doesn't fire for some tabs, e.g. Fighting Ground).
+                // The start menu stays ACTIVE underneath CFN/shop/tips screens,
+                // so only trust its resolution when the focused item's on-screen
+                // text actually matches it — otherwise this is another screen's
+                // grid reusing the same item names. The probe reads only the
+                // first text: a full subtree walk per focus event added lag.
+                if (_flowParam != null && FlowTrackerHooks.IsFlowActive("UIStartMenu"))
                 {
                     string resolved = GetStartMenuAnnouncement();
-                    if (!string.IsNullOrEmpty(resolved) && GameStateTracker.HasChanged("menu_item", resolved))
+                    if (!string.IsNullOrEmpty(resolved))
                     {
-                        API.LogInfo($"[SF6Access] Grid: {resolved}");
-                        ScreenReaderService.Speak(resolved);
+                        string firstText = GuiTextReader.ReadFirstControlText(selectedItem)?.Trim();
+                        bool belongsToStartMenu = string.IsNullOrEmpty(firstText) ||
+                            resolved.Contains(firstText, StringComparison.OrdinalIgnoreCase);
+
+                        if (belongsToStartMenu)
+                        {
+                            if (GameStateTracker.HasChanged("menu_item", resolved))
+                            {
+                                API.LogInfo($"[SF6Access] Grid: {resolved}");
+                                ScreenReaderService.Speak(resolved);
+                            }
+                            return;
+                        }
                     }
                 }
-                // If _flowParam is null, MenuItemSelectionChanged will handle it
+
+                // Other screens (gallery, tips, CFN, shop...) reuse these item
+                // names — read the focused item's on-screen text instead
+                string itemText = TryResolveItemText(selectedItem, rawName);
+                if (!string.IsNullOrEmpty(itemText) && GameStateTracker.HasChanged("focus_item", itemText))
+                {
+                    API.LogInfo($"[SF6Access] Grid (generic): {itemText}");
+                    ScreenReaderService.Speak(itemText);
+                    FocusValueHooks.Track(selectedItem);
+                }
                 return;
             }
 
@@ -220,12 +238,20 @@ public class MainMenuHooks
                 if (string.IsNullOrEmpty(btnLabel))
                     btnLabel = btnIdx == 0 ? "Yes" : "No";
 
-                if (GameStateTracker.HasChanged("focus_item", rawName))
+                // Key on text too: list rows can share one control name
+                if (GameStateTracker.HasChanged("focus_item", $"{rawName}|{btnLabel}"))
                 {
                     API.LogInfo($"[SF6Access] Item button [{rawName}]: {btnLabel}");
                     ScreenReaderService.Speak(btnLabel);
                     FocusValueHooks.Track(selectedItem);
                 }
+                return;
+            }
+
+            // Events banner in the multi menu: announce the focused event
+            if (rawName.Contains("nnounce") || rawName.Contains("banner", StringComparison.OrdinalIgnoreCase))
+            {
+                EventBannerHooks.AnnounceCurrent();
                 return;
             }
 
@@ -270,7 +296,9 @@ public class MainMenuHooks
                     announcement = $"{announcement}. {tabDesc}";
             }
 
-            if (GameStateTracker.HasChanged("focus_item", rawName))
+            // Key on text too: repeated control names (search form rows etc.)
+            // would otherwise announce only the first row
+            if (GameStateTracker.HasChanged("focus_item", $"{rawName}|{announcement}"))
             {
                 API.LogInfo($"[SF6Access] Focus: {announcement}");
                 ScreenReaderService.Speak(announcement);

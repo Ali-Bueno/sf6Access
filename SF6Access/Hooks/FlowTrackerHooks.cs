@@ -94,6 +94,8 @@ public class FlowTrackerHooks
         { "UIFlowCustomRoom", "Custom Room" },
         // World Tour
         { "UIFlowWorldTour", "World Tour" },
+        // Boot title screen ("press any button" renders as an image)
+        { "UIFlowTitle", "Title screen. Press any button" },
     };
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
@@ -290,6 +292,9 @@ public class FlowTrackerHooks
     private static void OnFlowStarted(string flowName)
     {
         API.LogInfo($"[SF6Access] Flow started: {flowName}");
+
+        // F8 auto-dump mode: capture every new screen without pressing F9
+        ObjectDumper.QueueAutoDump(flowName);
 
         // Check if we have an announcement for this flow
         string announcement = FindAnnouncement(flowName);

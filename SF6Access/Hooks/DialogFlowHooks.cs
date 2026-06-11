@@ -16,9 +16,11 @@ namespace SF6Access.Hooks;
 public class DialogFlowHooks
 {
     private const string TYPE_PREFIX = "app.UIFlowDialog.";
+    private const string ITEM_PREVIEW_PREFIX = "app.UIFlowItemPreview";
+    private static readonly string[] WatchedPrefixes = { TYPE_PREFIX, ITEM_PREVIEW_PREFIX };
 
     private static int _pollCounter;
-    private const int POLL_INTERVAL = 10;
+    private const int POLL_INTERVAL = 5;
 
     private static string _lastAnnounced;
     private static int _lastButtonIndex = -2;
@@ -37,8 +39,12 @@ public class DialogFlowHooks
     {
         if (++_pollCounter % POLL_INTERVAL != 0) return;
 
-        var param = FlowHelper.FindFlowParamByPrefix(TYPE_PREFIX, out string foundType);
-        if (param == null)
+        // Single pass over the flow handles for both watched prefixes
+        var found = FlowHelper.FindFirstFlowParamsByPrefixes(WatchedPrefixes);
+
+        PollItemPreview(found.TryGetValue(ITEM_PREVIEW_PREFIX, out var preview) ? preview.param : null);
+
+        if (!found.TryGetValue(TYPE_PREFIX, out var dialog))
         {
             _lastAnnounced = null;
             _lastButtonIndex = -2;
@@ -47,14 +53,50 @@ public class DialogFlowHooks
         }
 
         IsDialogActive = true;
-        AnnounceDialogText(param, foundType);
-        PollButtonSelection(param);
+        AnnounceDialogText(dialog.param, dialog.typeName);
+        PollButtonSelection(dialog.param);
+    }
+
+    private static string _lastItemPreview;
+
+    /// <summary>
+    /// Item-received popups (claiming rewards etc.): app.UIFlowItemPreview
+    /// params carry a UIPartsItemPreview with title/description texts.
+    /// </summary>
+    private static void PollItemPreview(ManagedObject param)
+    {
+        try
+        {
+            if (param == null)
+            {
+                _lastItemPreview = null;
+                return;
+            }
+
+            var preview = FlowHelper.GetObjectField(param, "Preview");
+            string title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(preview, "TitleText"));
+            string desc = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(preview, "DescriptionText"));
+
+            string text = !string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(desc)
+                ? $"{title}. {desc}"
+                : title ?? desc;
+            if (string.IsNullOrEmpty(text) || text == _lastItemPreview) return;
+            _lastItemPreview = text;
+
+            API.LogInfo($"[SF6Access] Item preview: {text}");
+            ScreenReaderService.Speak(text);
+        }
+        catch { }
     }
 
     private static void AnnounceDialogText(ManagedObject param, string foundType)
     {
-        string title = FlowHelper.CleanTags(FlowHelper.ReadStringField(param, "TitleMessage"));
-        string message = FlowHelper.CleanTags(FlowHelper.ReadStringField(param, "Message"));
+        // Resolve platform tags first: the Steam-store dialog's whole message
+        // is a <PLATMSG> tag that plain tag stripping erased ("Confirmation")
+        string title = FlowHelper.CleanTags(FlowHelper.ResolvePlatformTags(
+            FlowHelper.ReadStringField(param, "TitleMessage")));
+        string message = FlowHelper.CleanTags(FlowHelper.ResolvePlatformTags(
+            FlowHelper.ReadStringField(param, "Message")));
 
         // Tips/help windows keep their text in via.gui.Text components instead
         if (string.IsNullOrEmpty(title))
@@ -128,7 +170,9 @@ public class DialogFlowHooks
             _lastButtonIndex = idx;
             if (first) return; // dialog text announcement covers the initial state
 
-            string label = FlowHelper.ReadListRowText(list, idx);
+            // The actually-selected button's on-screen text (localized)
+            string label = FlowHelper.ReadSelectedItemText(list)
+                ?? FlowHelper.ReadListRowText(list, idx);
 
             // Fallback: the param's button label array
             if (string.IsNullOrEmpty(label))

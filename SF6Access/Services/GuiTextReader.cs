@@ -26,7 +26,8 @@ public static class GuiTextReader
     {
         public string Owner;   // GameObject name of the owning GUI component
         public string Name;    // PlayObject name of the text element
-        public string Text;    // Displayed message
+        public string Text;    // Displayed message (tags stripped)
+        public string Raw;     // Unstripped message — reveals inline icon tags in dumps
         public bool Visible;
     }
 
@@ -129,6 +130,20 @@ public static class GuiTextReader
         return results;
     }
 
+    /// <summary>First non-empty text under a control — cheap probe that stops
+    /// walking as soon as something is found.</summary>
+    public static string ReadFirstControlText(ManagedObject control)
+    {
+        CacheTypes();
+        if (control == null || _textRuntimeType == null || _controlRuntimeType == null)
+            return null;
+
+        var results = new List<GuiText>();
+        try { WalkControl(control, null, visibleOnly: true, results, 0, resolveMessageIds: true, maxTexts: 1); }
+        catch { }
+        return results.Count > 0 ? results[0].Text : null;
+    }
+
     /// <summary>Join the texts under a control into a single announcement string.</summary>
     public static string ReadControlTextJoined(ManagedObject control, bool visibleOnly = true)
     {
@@ -143,6 +158,202 @@ public static class GuiTextReader
             sb.Append(t.Text.Trim());
         }
         return sb.Length > 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>
+    /// Find the view controls of enabled GUI components whose GameObject name
+    /// contains the filter. Cache the result and re-walk only these subtrees —
+    /// scanning the whole scene every poll is too expensive.
+    /// </summary>
+    public static List<(string owner, ManagedObject view)> FindGuiViews(string ownerContains)
+    {
+        var results = new List<(string, ManagedObject)>();
+        CacheTypes();
+        if (_guiRuntimeType == null || _findComponentsMethod == null) return results;
+
+        try
+        {
+            var sceneMgr = API.GetNativeSingleton("via.SceneManager");
+            var scene = (sceneMgr as IObject)?.Call("get_CurrentScene") as IObject;
+            if (scene == null) return results;
+
+            var guis = _findComponentsMethod.InvokeBoxed(typeof(object), scene,
+                new object[] { _guiRuntimeType }) as ManagedObject;
+            if (guis == null) return results;
+
+            int count = FlowHelper.GetListCount(guis);
+            for (int i = 0; i < count; i++)
+            {
+                var gui = FlowHelper.GetListItem(guis, i);
+                if (gui == null) continue;
+                try
+                {
+                    var enabled = FlowHelper.Call(gui, "get_Enabled");
+                    if (enabled is bool en && !en) continue;
+
+                    var gameObject = FlowHelper.Call(gui, "get_GameObject") as ManagedObject;
+                    string owner = FlowHelper.Call(gameObject, "get_Name") as string;
+                    if (owner == null || !owner.Contains(ownerContains, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var view = FlowHelper.Call(gui, "get_View") as ManagedObject;
+                    if (view != null) results.Add((owner, view));
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return results;
+    }
+
+    /// <summary>
+    /// Collect the PlayState strings of a control and its descendants
+    /// (combo trial recipe rows keep their step state in nested controls).
+    /// </summary>
+    public static void ReadPlayStates(ManagedObject control, List<string> results, int depth = 0)
+    {
+        CacheTypes();
+        if (control == null || depth > 3 || results.Count >= 40) return;
+
+        try
+        {
+            string state = FlowHelper.Call(control, "get_PlayState") as string;
+            if (!string.IsNullOrEmpty(state)) results.Add(state);
+
+            var children = GetChildren(control, _controlRuntimeType);
+            int count = FlowHelper.GetListCount(children);
+            for (int i = 0; i < count && results.Count < 40; i++)
+            {
+                var child = FlowHelper.GetListItem(children, i);
+                ReadPlayStates(child, results, depth + 1);
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Raw texts under a control sorted by on-screen position (top-to-bottom,
+    /// then left-to-right). GUI child order does NOT always match display
+    /// order: combo trial recipe rows enumerate bottom-to-top in some trials.
+    /// Falls back to tree order when no element reports a position.
+    /// </summary>
+    public static List<string> ReadControlTextsByPosition(ManagedObject control, bool visibleOnly,
+        out bool positionsResolved)
+    {
+        positionsResolved = false;
+        var entries = new List<(float y, float x, string raw)>();
+        CacheTypes();
+        if (control == null || _textRuntimeType == null || _controlRuntimeType == null)
+            return new List<string>();
+
+        try { WalkTextsWithPosition(control, 0f, 0f, visibleOnly, entries, 0); } catch { }
+
+        foreach (var e in entries)
+        {
+            if (e.y != 0f || e.x != 0f) { positionsResolved = true; break; }
+        }
+        if (positionsResolved)
+            entries.Sort((a, b) => a.y != b.y ? a.y.CompareTo(b.y) : a.x.CompareTo(b.x));
+
+        var result = new List<string>();
+        foreach (var e in entries) result.Add(e.raw);
+        return result;
+    }
+
+    private static void WalkTextsWithPosition(ManagedObject control, float baseX, float baseY,
+        bool visibleOnly, List<(float y, float x, string raw)> results, int depth)
+    {
+        if (control == null || depth > MAX_DEPTH || results.Count >= MAX_TEXTS) return;
+
+        var texts = GetChildren(control, _textRuntimeType);
+        int textCount = FlowHelper.GetListCount(texts);
+        for (int i = 0; i < textCount && results.Count < MAX_TEXTS; i++)
+        {
+            var textObj = FlowHelper.GetListItem(texts, i);
+            if (textObj == null) continue;
+            try
+            {
+                if (visibleOnly)
+                {
+                    var vis = FlowHelper.Call(textObj, "get_Visible");
+                    if (vis is bool vb && !vb) continue;
+                }
+                string message = FlowHelper.Call(textObj, "get_Message") as string;
+                if (string.IsNullOrWhiteSpace(message)) continue;
+
+                var (x, y) = ReadLocalPosition(textObj);
+                results.Add((baseY + y, baseX + x, message));
+            }
+            catch { }
+        }
+
+        var children = GetChildren(control, _controlRuntimeType);
+        int childCount = FlowHelper.GetListCount(children);
+        for (int i = 0; i < childCount && results.Count < MAX_TEXTS; i++)
+        {
+            var child = FlowHelper.GetListItem(children, i);
+            if (child == null) continue;
+            try
+            {
+                if (visibleOnly)
+                {
+                    var vis = FlowHelper.Call(child, "get_Visible");
+                    if (vis is bool vb && !vb) continue;
+                }
+                var (x, y) = ReadLocalPosition(child);
+                WalkTextsWithPosition(child, baseX + x, baseY + y, visibleOnly, results, depth + 1);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>Local position of a via.gui transform object, (0,0) on failure.</summary>
+    private static (float x, float y) ReadLocalPosition(ManagedObject transformObj)
+    {
+        try
+        {
+            var pos = FlowHelper.Call(transformObj, "get_Position");
+            if (pos != null)
+                return (ReadVecComponent(pos, "x"), ReadVecComponent(pos, "y"));
+        }
+        catch { }
+        return (0f, 0f);
+    }
+
+    private static float ReadVecComponent(object pos, string name)
+    {
+        try
+        {
+            if (pos is IObject po)
+            {
+                var v = po.Call("get_" + name);
+                if (v != null) return Convert.ToSingle(v);
+            }
+        }
+        catch { }
+        try
+        {
+            // Vector structs come back as REFrameworkNET.ValueType — read the
+            // component as a direct field when no getter is exposed
+            if (pos is REFrameworkNET.ValueType vt)
+            {
+                var field = vt.GetTypeDefinition()?.GetField(name);
+                if (field != null)
+                    return Convert.ToSingle(field.GetDataBoxed(typeof(float), vt.GetAddress(), false));
+            }
+        }
+        catch { }
+        return 0f;
+    }
+
+    /// <summary>Collect visible texts under a cached GUI view control.</summary>
+    public static List<GuiText> ReadViewTexts(ManagedObject view, string owner)
+    {
+        var results = new List<GuiText>();
+        CacheTypes();
+        if (view == null) return results;
+        try { WalkControl(view, owner, visibleOnly: true, results, 0); } catch { }
+        return results;
     }
 
     /// <summary>Collect texts only from GUI components whose GameObject name contains the filter.</summary>
@@ -161,14 +372,14 @@ public static class GuiTextReader
     }
 
     private static void WalkControl(ManagedObject control, string owner, bool visibleOnly,
-        List<GuiText> results, int depth, bool resolveMessageIds = false)
+        List<GuiText> results, int depth, bool resolveMessageIds = false, int maxTexts = MAX_TEXTS)
     {
-        if (control == null || depth > MAX_DEPTH || results.Count >= MAX_TEXTS) return;
+        if (control == null || depth > MAX_DEPTH || results.Count >= maxTexts) return;
 
         // Text elements directly under this control
         var texts = GetChildren(control, _textRuntimeType);
         int textCount = FlowHelper.GetListCount(texts);
-        for (int i = 0; i < textCount && results.Count < MAX_TEXTS; i++)
+        for (int i = 0; i < textCount && results.Count < maxTexts; i++)
         {
             var textObj = FlowHelper.GetListItem(texts, i);
             if (textObj == null) continue;
@@ -196,6 +407,7 @@ public static class GuiTextReader
                     Owner = owner,
                     Name = FlowHelper.Call(textObj, "get_Name") as string,
                     Text = FlowHelper.CleanTags(message),
+                    Raw = message,
                     Visible = visible
                 });
             }
@@ -205,7 +417,7 @@ public static class GuiTextReader
         // Recurse into child controls
         var children = GetChildren(control, _controlRuntimeType);
         int childCount = FlowHelper.GetListCount(children);
-        for (int i = 0; i < childCount && results.Count < MAX_TEXTS; i++)
+        for (int i = 0; i < childCount && results.Count < maxTexts; i++)
         {
             var child = FlowHelper.GetListItem(children, i);
             if (child == null) continue;
@@ -217,7 +429,7 @@ public static class GuiTextReader
                     var vis = FlowHelper.Call(child, "get_Visible");
                     if (vis is bool vb && !vb) continue;
                 }
-                WalkControl(child, owner, visibleOnly, results, depth + 1, resolveMessageIds);
+                WalkControl(child, owner, visibleOnly, results, depth + 1, resolveMessageIds, maxTexts);
             }
             catch { }
         }
