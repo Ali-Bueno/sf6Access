@@ -26,6 +26,17 @@ public class FlowTrackerHooks
     /// <summary>Current active game context (most recent interesting flow)</summary>
     public static string CurrentContext { get; private set; }
 
+    /// <summary>True when an active flow's type name contains the given fragment (polled every ~0.5s).</summary>
+    public static bool IsFlowActive(string nameContains)
+    {
+        foreach (var flow in _activeFlows)
+        {
+            if (flow.Contains(nameContains, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     // Map flow type names to readable announcements
     private static readonly Dictionary<string, string> FlowAnnouncements = new()
     {
@@ -67,6 +78,13 @@ public class FlowTrackerHooks
         { "UIFlowReplay", "Replay" },
         // Profile
         { "UIFlowProfile", "Profile" },
+        { "UICFNFightersProfile", "Profile" },
+        // Rewards (fighting pass)
+        { "UIFlowReward", "Rewards" },
+        // Avatar status menu (equip / moves)
+        { "UIStatusMenu", "Status Menu" },
+        // Character guides
+        { "UI11413", "Character Guides" },
         // Fighting Ground main
         { "UIFlowFGMainMenu", "Fighting Ground" },
         // Results
@@ -245,36 +263,23 @@ public class FlowTrackerHooks
                     continue;
                 }
 
-                int lastDot = name.LastIndexOf('.');
-                return (lastDot >= 0 && lastDot < name.Length - 1)
-                    ? name.Substring(lastDot + 1)
-                    : name;
+                // Full type name: short names made distinct flows indistinguishable
+                return name;
             }
             catch { }
         }
 
-        // Fallback: use the Param type to identify the flow
+        // Fallback: identify the flow by its Param's FULL type name — short
+        // names collapsed distinct flows into "Param"/"UIFlowParam" in the log,
+        // which made new menus impossible to identify from session logs
         try
         {
             var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
             if (param != null)
             {
-                var td = param.GetTypeDefinition();
-                string name = td?.FullName;
+                string name = param.GetTypeDefinition()?.FullName;
                 if (!string.IsNullOrEmpty(name) && name != "app.UIFlowParamBase")
-                {
-                    // Extract flow name from param type (e.g. "app.UIStartMenu.FlowParam" -> "UIStartMenu")
-                    int lastDot = name.LastIndexOf('.');
-                    string shortName = (lastDot >= 0) ? name.Substring(lastDot + 1) : name;
-                    // Remove ".FlowParam", ".Param" suffixes
-                    if (shortName.EndsWith("Param")) shortName = shortName.Replace("FlowParam", "").Replace("Param", "");
-                    if (shortName.Length > 0) return shortName;
-
-                    // Try parent namespace
-                    string ns = (lastDot > 0) ? name.Substring(0, lastDot) : "";
-                    int prevDot = ns.LastIndexOf('.');
-                    return (prevDot >= 0) ? ns.Substring(prevDot + 1) : ns;
-                }
+                    return name;
             }
         }
         catch { }

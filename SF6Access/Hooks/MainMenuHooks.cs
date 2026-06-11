@@ -157,6 +157,20 @@ public class MainMenuHooks
             // Grid menu items (item0, item1, c_item_00, etc.) - resolve via FlowParam
             if (Regex.IsMatch(rawName, @"^(item\d+|c_item_\d{2,})$"))
             {
+                // Other screens (gallery, guides...) reuse these item names; the
+                // stale start-menu FlowParam made them silent — read generically
+                if (!FlowTrackerHooks.IsFlowActive("UIStartMenu"))
+                {
+                    string itemText = TryResolveItemText(selectedItem, rawName);
+                    if (!string.IsNullOrEmpty(itemText) && GameStateTracker.HasChanged("focus_item", itemText))
+                    {
+                        API.LogInfo($"[SF6Access] Grid (generic): {itemText}");
+                        ScreenReaderService.Speak(itemText);
+                        FocusValueHooks.Track(selectedItem);
+                    }
+                    return;
+                }
+
                 // MenuItemSelectionChanged handles this when FlowParam is active
                 // But some tabs (Fighting Ground) don't fire MenuItemSelectionChanged,
                 // so we try FlowParam here as backup
@@ -172,6 +186,11 @@ public class MainMenuHooks
                 // If _flowParam is null, MenuItemSelectionChanged will handle it
                 return;
             }
+
+            // Message box buttons are announced by DialogFlowHooks polling
+            // (FocusChanged doesn't fire for dialogs in every context)
+            if (DialogFlowHooks.IsDialogActive && Regex.IsMatch(rawName, @"^c_item_\d$"))
+                return;
 
             // c_item_N: used by dialog buttons AND by generic menu lists (custom rooms etc.)
             // Read the item's actual on-screen text; Yes/No only as a last resort

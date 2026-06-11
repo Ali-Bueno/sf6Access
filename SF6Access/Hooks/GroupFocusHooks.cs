@@ -15,13 +15,20 @@ namespace SF6Access.Hooks;
 /// </summary>
 public class GroupFocusHooks
 {
-    private static readonly string[] WatchPrefixes = { "app.UIFlowCustomRoom", "app.UIFlowAvatarArcade" };
+    private static readonly string[] WatchPrefixes =
+    {
+        "app.UIFlowCustomRoom", "app.UIFlowAvatarArcade",
+        "app.gallery.UIFlowGallery",      // gallery top / illustration screens
+        "app.UIFlowReward",               // rewards (fighting pass) menu
+        "app.UICFNFightersProfileTop",    // fighter profile menu
+        "app.esports.UI11413",            // character guides item list
+    };
 
     // Types with dedicated hooks — skipped here to avoid double announcements
     private static readonly string[] ExcludedTypes = { "app.UIFlowCustomRoomTop.Param" };
 
     private static readonly string[] GroupFieldTypes = { "app.UIPartsGroup", "app.UIPartsGroupScroll" };
-    private static readonly string[] ListFieldTypes = { "app.UIPartsScrollList", "app.UIPartsSimpleList" };
+    private static readonly string[] ListFieldTypes = { "app.UIPartsScrollList", "app.UIPartsSimpleList", "app.UIPartsScrollGrid" };
 
     private sealed class TrackedField
     {
@@ -49,7 +56,8 @@ public class GroupFocusHooks
     // on screens whose item labels are images (avatar arcade menu)
     private static string _lastGuideText;
 
-    public static bool IsActive => _activeType != null;
+    // Only suppress other hooks when this one can actually announce something
+    public static bool IsActive => _activeType != null && _fields.Count > 0;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -208,6 +216,15 @@ public class GroupFocusHooks
                     ? FlowHelper.DiffSegments(previousText, text)
                     : text;
 
+                // A group row can wrap a whole button strip ("Create room. Reset
+                // to defaults"): if another tracked list's focused row is one of
+                // the segments, announce only that focused button
+                if (indexChanged && announcement.Contains(". "))
+                {
+                    string specific = FindFocusedSegment(f, announcement);
+                    if (specific != null) announcement = specific;
+                }
+
                 // Skip when another tracker just announced the same row
                 if (announcement == _lastAnnouncement &&
                     _pollCounter - _lastAnnouncementFrame < DEDUPE_FRAMES)
@@ -220,6 +237,44 @@ public class GroupFocusHooks
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// When a multi-segment row announcement contains the focused row text of
+    /// another tracked list (e.g. a button strip with its own SimpleList),
+    /// return that more specific text; null when no refinement applies.
+    /// </summary>
+    private static string FindFocusedSegment(TrackedField current, string announcement)
+    {
+        var segments = announcement.Split(new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2) return null;
+
+        foreach (var other in _fields)
+        {
+            if (other == current || !other.IsList) continue;
+            try
+            {
+                var obj = FlowHelper.GetObjectField(_param, other.FieldName);
+                if (obj == null) continue;
+
+                int idx = FlowHelper.CallInt(obj, "get_SelectedIndex");
+                if (idx < 0) continue;
+
+                var child = GetChildAt(obj, idx);
+                var control = FlowHelper.GetObjectField(child, "Control")
+                    ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+                string text = JoinTexts(GuiTextReader.ReadControlTexts(control));
+                if (string.IsNullOrEmpty(text)) continue;
+
+                foreach (var seg in segments)
+                {
+                    if (seg.Trim() == text.Trim())
+                        return text;
+                }
+            }
+            catch { }
+        }
+        return null;
     }
 
     private static string ReadRowText(ManagedObject obj, int idx)

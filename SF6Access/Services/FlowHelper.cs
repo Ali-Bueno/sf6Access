@@ -237,6 +237,26 @@ public static class FlowHelper
         return Call(list, IsArray(list) ? "Get" : "get_Item", index) as ManagedObject;
     }
 
+    /// <summary>
+    /// Read the on-screen text of a UIParts list/grid row: child part at the
+    /// given index, then all visible texts under its Control joined together.
+    /// </summary>
+    public static string ReadListRowText(ManagedObject partsObj, int index)
+    {
+        if (partsObj == null || index < 0) return null;
+        try
+        {
+            var children = GetObjectField(partsObj, "_Children");
+            var child = GetListItem(children, index);
+            if (child == null) return null;
+
+            var control = GetObjectField(child, "Control")
+                ?? Call(child, "get_Control") as ManagedObject;
+            return GuiTextReader.ReadControlTextJoined(control);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Read displayed text from a via.gui.Text (or similar) component.</summary>
     public static string ReadGuiText(ManagedObject textObj)
     {

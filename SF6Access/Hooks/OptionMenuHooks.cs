@@ -206,18 +206,20 @@ public class OptionMenuHooks
 
         try
         {
-            string label = null;
-            try
-            {
-                label = (_lastFocusedSetting as IObject)?.Call("GetValueMessage", _lastSubListIndex) as string;
-                label = CleanTags(label);
-            }
-            catch { }
+            // Read the focused row's on-screen text FIRST: SelectedIndex follows
+            // the list's display order, which does NOT match ValueMessageList
+            // order (user picked Portuguese when the announced row said Spanish)
+            string label = ReadSubListRowText(_lastSubListIndex);
 
-            // Read the focused row's on-screen text (matches game language and
-            // the list's real display order — the hardcoded table did not)
             if (string.IsNullOrEmpty(label))
-                label = ReadSubListRowText(_lastSubListIndex);
+            {
+                try
+                {
+                    label = (_lastFocusedSetting as IObject)?.Call("GetValueMessage", _lastSubListIndex) as string;
+                    label = CleanTags(label);
+                }
+                catch { }
+            }
 
             // Last resort for language options: known language names table
             if (string.IsNullOrEmpty(label) && _lastFocusedTypeId > 0)
