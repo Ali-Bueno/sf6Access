@@ -94,8 +94,9 @@ public class FlowTrackerHooks
         { "UIFlowCustomRoom", "Custom Room" },
         // World Tour
         { "UIFlowWorldTour", "World Tour" },
-        // Boot title screen ("press any button" renders as an image)
-        { "UIFlowTitle", "Title screen. Press any button" },
+        // Boot title screen (the prompt renders as an image; despite the
+        // game saying "any button", only these inputs actually advance)
+        { "UIFlowTitle", "Title screen. Press X on keyboard, A on Xbox controller, or Cross on PlayStation controller" },
     };
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
