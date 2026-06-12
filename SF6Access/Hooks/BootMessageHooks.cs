@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using REFrameworkNET;
@@ -20,8 +21,15 @@ public class BootMessageHooks
 {
     private const string CONSENT_TYPE = "app.UIFlowFirstBootConsentDialog.Param";
     private const string WARNING_TYPE = "app.UIFlowWarningMessage.Param";
+    private const string ACCOUNT_TYPE = "app.UIFlowFighterAccountCreate.Param";
 
-    private static readonly string[] WatchedTypes = { CONSENT_TYPE, WARNING_TYPE };
+    private static readonly string[] WatchedTypes = { CONSENT_TYPE, WARNING_TYPE, ACCOUNT_TYPE };
+
+    // GUI owners that are chrome or already read by other hooks — excluded
+    // from generic scene scans (InputGuide alone changes between screens and
+    // would re-trigger a full re-announcement)
+    private static readonly string[] IgnoredOwners =
+        { "InputGuide", "Resident_Cmn", "Ticker", "OnlineBannerUI", "GameGuideWidget", "MessageBox" };
 
     private static int _pollCounter;
     private const int POLL_INTERVAL = 60;
@@ -31,6 +39,8 @@ public class BootMessageHooks
 
     private static bool _bootPhaseOver;
     private static string _lastBootText;
+    private static bool _languageListAnnounced;
+    private static string _lastAccountText;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -49,6 +59,7 @@ public class BootMessageHooks
         CheckFlow(found, WARNING_TYPE, ReadWarningText);
 
         PollBootScreens();
+        PollAccountCreate(found);
     }
 
     /// <summary>
@@ -67,21 +78,125 @@ public class BootMessageHooks
             return;
         }
 
+        // Dialogs and consent screens already have dedicated readers — the
+        // generic scan would only duplicate them
+        if (FlowTrackerHooks.IsFlowActive("UIFlowDialog") ||
+            FlowTrackerHooks.IsFlowActive("UIFlowFirstBootConsentDialog"))
+            return;
+
+        // The first-boot language list re-renders its visible window on every
+        // cursor move; read the screen once on entry, then let the focus
+        // announcements cover navigation
+        bool languageList = FlowTrackerHooks.IsFlowActive("UIFlowFirstBootOptionSetting");
+        if (!languageList) _languageListAnnounced = false;
+        else if (_languageListAnnounced) return;
+
         try
         {
-            var texts = GuiTextReader.ReadSceneTexts(visibleOnly: true);
-            var sb = new StringBuilder();
-            foreach (var t in texts)
-                Append(sb, t.Text);
-
-            string text = sb.ToString().Trim();
+            string text = ReadFilteredSceneText();
             if (string.IsNullOrEmpty(text) || text == _lastBootText) return;
+
+            // The language list registers its flow one poll later than its
+            // first scan — the gate above misses that window. Same leading
+            // segment (screen title) = same screen, just scrolled: skip.
+            if (!string.IsNullOrEmpty(_lastBootText) &&
+                FirstSegment(text) == FirstSegment(_lastBootText))
+            {
+                _lastBootText = text;
+                return;
+            }
+
             _lastBootText = text;
+            if (languageList) _languageListAnnounced = true;
 
             API.LogInfo($"[SF6Access] Boot screen: {Truncate(text, 200)}");
             ScreenReaderService.Speak(text, interrupt: false);
         }
         catch { }
+    }
+
+    private static string FirstSegment(string text)
+    {
+        int dot = text.IndexOf(". ", StringComparison.Ordinal);
+        return dot > 0 ? text.Substring(0, dot) : text;
+    }
+
+    /// <summary>
+    /// While the Capcom ID account screen is open, read its explanatory text
+    /// when it appears. The text loads several seconds after the flow starts
+    /// (after server communication), so a one-shot read at flow start misses
+    /// it. This screen's texts render via MessageId with an empty Message
+    /// string, so the scene-wide scan sees nothing — walk the screen's own
+    /// GUI tree (reached from its button list) with MessageId resolution.
+    /// </summary>
+    private static void PollAccountCreate(Dictionary<string, ManagedObject> found)
+    {
+        if (!found.TryGetValue(ACCOUNT_TYPE, out var param))
+        {
+            _lastAccountText = null;
+            return;
+        }
+
+        try
+        {
+            var list = FlowHelper.GetObjectField(param, "mListTopButton");
+            var root = GuiRootOf(FlowHelper.GetObjectField(list, "_List"));
+            if (root == null) return;
+
+            var texts = GuiTextReader.ReadControlTexts(root, visibleOnly: true);
+            var sb = new StringBuilder();
+            foreach (var t in texts)
+                Append(sb, t.Text);
+
+            string text = sb.ToString().Trim();
+            if (string.IsNullOrEmpty(text) || text == _lastAccountText) return;
+
+            // Only announce what was not already read (buttons stay on screen
+            // while secondary texts appear)
+            string announcement = FlowHelper.DiffSegments(_lastAccountText, text);
+            _lastAccountText = text;
+            if (string.IsNullOrWhiteSpace(announcement)) return;
+
+            API.LogInfo($"[SF6Access] Account create screen: {Truncate(announcement, 200)}");
+            ScreenReaderService.Speak(announcement, interrupt: false);
+        }
+        catch { }
+    }
+
+    /// <summary>Climb the via.gui parent chain to the root control of the screen.</summary>
+    private static ManagedObject GuiRootOf(ManagedObject playObject)
+    {
+        var current = playObject;
+        for (int i = 0; i < 12 && current != null; i++)
+        {
+            var parent = FlowHelper.Call(current, "get_Parent") as ManagedObject;
+            if (parent == null) break;
+            current = parent;
+        }
+        return current;
+    }
+
+    private static string ReadFilteredSceneText()
+    {
+        var texts = GuiTextReader.ReadSceneTexts(visibleOnly: true);
+        var sb = new StringBuilder();
+        foreach (var t in texts)
+        {
+            if (IsIgnoredOwner(t.Owner)) continue;
+            Append(sb, t.Text);
+        }
+        return sb.ToString().Trim();
+    }
+
+    private static bool IsIgnoredOwner(string owner)
+    {
+        if (string.IsNullOrEmpty(owner)) return false;
+        foreach (var ignored in IgnoredOwners)
+        {
+            if (owner.Contains(ignored, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static void CheckFlow(Dictionary<string, ManagedObject> found, string type,

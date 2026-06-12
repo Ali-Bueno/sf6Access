@@ -35,9 +35,31 @@ public class ArcadeHooks
     private static string _lastDialog;
     private static string _lastWinMessage;
 
+    // Set by the SetMessage hook; the next frame reads the freshly-stored
+    // OldName/OldDialog Guids from the Param (game thread — don't resolve
+    // localized messages inside the hook itself)
+    private static volatile bool _setMessagePending;
+
     [PluginEntryPoint]
     public static void Initialize()
     {
+        // The GUI text poll missed lines whose via.gui.Text did not refresh
+        // (the final line of the Battle Hub intro demo). SetMessage is called
+        // by the game for every subtitle line and also stores both Guids in
+        // OldName/OldDialog, so hooking it catches them all.
+        var paramTd = TDB.Get().FindType(SUBTITLE_PARAM);
+        var setMessage = paramTd?.GetMethod("SetMessage");
+        if (setMessage != null)
+        {
+            var hook = setMessage.AddHook(false);
+            hook.AddPost((ref ulong retval) => _setMessagePending = true);
+            API.LogInfo("[SF6Access] UIFlowDemoSubtibles.Param.SetMessage hook installed");
+        }
+        else
+        {
+            API.LogError("[SF6Access] UIFlowDemoSubtibles.Param.SetMessage not found");
+        }
+
         API.LogInfo("[SF6Access] ArcadeHooks initialized");
     }
 
@@ -45,6 +67,14 @@ public class ArcadeHooks
     public static void OnUpdate()
     {
         _pollCounter++;
+
+        if (_setMessagePending)
+        {
+            _setMessagePending = false;
+            if (_subtitleParam == null)
+                FlowHelper.FindFlowParams(WatchedTypes).TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
+            AnnounceFromStoredGuids();
+        }
 
         if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
@@ -74,6 +104,17 @@ public class ArcadeHooks
         if (_subtitleParam != null) PollSubtitles();
         if (_comicSubtitleParam != null) PollComicSubtitles();
         if (_winMessageParam != null) PollWinMessage();
+    }
+
+    private static void AnnounceFromStoredGuids()
+    {
+        if (_subtitleParam == null) return;
+        try
+        {
+            AnnounceDialog(FlowHelper.ResolveGuidField(_subtitleParam, "OldDialog"),
+                FlowHelper.ResolveGuidField(_subtitleParam, "OldName"));
+        }
+        catch { }
     }
 
     private static void PollSubtitles()

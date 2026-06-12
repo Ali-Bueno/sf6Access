@@ -25,15 +25,31 @@ public static class ObjectDumper
     private static bool _isDumping;
 
     // F8 auto-dump: every new flow param type that appears gets its fields and
-    // the on-screen texts appended to one session file — no F9 per menu needed
-    private static bool _autoDumpEnabled;
+    // the on-screen texts appended to one session file — no F9 per menu needed.
+    // On by default so end users always have a dump to send when they hit an
+    // inaccessible menu; F8 turns it off.
+    private static bool _autoDumpEnabled = true;
     private static string _autoDumpPath;
     private static int _frameCount;
     private static readonly HashSet<string> _autoDumped = new();
     private static readonly Queue<(string typeName, int dueFrame)> _autoDumpQueue = new();
 
-    private static readonly string DumpDir =
-        @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data";
+    /// <summary>reframework/data under the running game's folder, created on demand.</summary>
+    public static string DumpDir
+    {
+        get
+        {
+            if (_dumpDir == null)
+            {
+                string gameRoot = Path.GetDirectoryName(Environment.ProcessPath)
+                    ?? Directory.GetCurrentDirectory();
+                _dumpDir = Path.Combine(gameRoot, "reframework", "data");
+            }
+            Directory.CreateDirectory(_dumpDir);
+            return _dumpDir;
+        }
+    }
+    private static string _dumpDir;
 
     [Callback(typeof(UpdateBehavior), CallbackType.Pre)]
     public static void OnUpdate()

@@ -59,10 +59,8 @@ public class AvatarCreateHooks
     // ---- Guid cache ----
     private static readonly Dictionary<string, string> _guidCache = new();
 
-    private static readonly string DumpPath = Path.Combine(
-        @"D:\games\steam\steamapps\common\Street Fighter 6\reframework\data",
-        "sf6access_avatar_dump.txt"
-    );
+    private static string DumpPath =>
+        Path.Combine(Services.ObjectDumper.DumpDir, "sf6access_avatar_dump.txt");
 
     private static readonly string[] MainCategoryNames =
     {
