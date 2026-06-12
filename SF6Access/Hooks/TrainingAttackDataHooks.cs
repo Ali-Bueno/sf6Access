@@ -25,7 +25,14 @@ public class TrainingAttackDataHooks
     // freezes pause the counters for well over a second mid-combo
     private const int QUIET_FRAMES = 100;
 
+    // The HUD also replays FADE_OUT while RESETTING the counter at combo
+    // start (which announced the very first hit as a finished combo), so a
+    // fade only counts as the end after the numbers stay put this long
+    private const int END_CONFIRM_FRAMES = 40;
+
     // app.UIPartsHitCount.ANIM_STATE: FADE_IN, DEFAULT, COUNT_UP, FADE_OUT
+    private const int ANIM_STATE_FADE_IN = 0;
+    private const int ANIM_STATE_COUNT_UP = 2;
     private const int ANIM_STATE_FADE_OUT = 3;
 
     private static ManagedObject _manager;
@@ -39,7 +46,7 @@ public class TrainingAttackDataHooks
     // HUD hit-counter state (set from hooks, consumed by the poll)
     private static bool _comboActive;
     private static int _hudCount;
-    private static bool _hudEndPending;
+    private static int _hudEndFrame = -1; // frame the counter faded, -1 = no end pending
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -70,6 +77,7 @@ public class TrainingAttackDataHooks
                     {
                         _hudCount = count;
                         _comboActive = true;
+                        _hudEndFrame = -1; // the counter is alive — that fade was a reset
                     }
                     return PreHookResult.Continue;
                 });
@@ -82,10 +90,17 @@ public class TrainingAttackDataHooks
                 var hook = anim.AddHook(false);
                 hook.AddPre(args =>
                 {
-                    if ((int)(long)args[2] == ANIM_STATE_FADE_OUT && _comboActive)
+                    int state = (int)(long)args[2];
+                    if (state == ANIM_STATE_FADE_OUT && _comboActive)
                     {
                         _comboActive = false;
-                        _hudEndPending = true;
+                        _hudEndFrame = _pollCounter;
+                    }
+                    else if (state == ANIM_STATE_FADE_IN || state == ANIM_STATE_COUNT_UP)
+                    {
+                        // Counter (re)shown — the combo is running, not ending
+                        _comboActive = true;
+                        _hudEndFrame = -1;
                     }
                     return PreHookResult.Continue;
                 });
@@ -102,7 +117,7 @@ public class TrainingAttackDataHooks
                     if (_comboActive)
                     {
                         _comboActive = false;
-                        _hudEndPending = true;
+                        _hudEndFrame = _pollCounter;
                     }
                 });
                 API.LogInfo("[SF6Access] UIPartsHitCount.HideCount hook installed");
@@ -131,7 +146,7 @@ public class TrainingAttackDataHooks
             _lastDamage = -1;
             _dirty = false;
             _comboActive = false;
-            _hudEndPending = false;
+            _hudEndFrame = -1;
             API.LogInfo("[SF6Access] Training attack data watcher active");
             return;
         }
@@ -159,33 +174,36 @@ public class TrainingAttackDataHooks
 
             bool first = _lastCount == -1 && _lastDamage == -1;
 
-            // HUD counter faded out — the combo really ended. Announce only
-            // when the HUD count matches our tracked player's data (the
-            // counter exists per side); on a mismatch leave _dirty set so the
-            // quiet-frames fallback picks it up
-            if (_hudEndPending)
-            {
-                _hudEndPending = false;
-                if (count > 0 && count == _hudCount)
-                {
-                    _lastCount = count;
-                    _lastDamage = damage;
-                    _lastChangeFrame = _pollCounter;
-                    _dirty = false;
-                    if (!TrainingMenuHooks.IsInTrainingMenu)
-                        AnnounceCombo(count, damage);
-                    return;
-                }
-                API.LogInfo($"[SF6Access] HUD combo end mismatch: hud={_hudCount}, data={count}");
-            }
-
             if (count != _lastCount || damage != _lastDamage)
             {
                 _lastCount = count;
                 _lastDamage = damage;
                 _lastChangeFrame = _pollCounter;
                 if (!first) _dirty = true; // a combo is in progress
+                // Numbers moved after a fade — it wasn't the end (or they
+                // were still settling); restart the confirmation window
+                if (_hudEndFrame >= 0) _hudEndFrame = _pollCounter;
                 return;
+            }
+
+            // HUD counter faded and the numbers stayed put — the combo really
+            // ended. Announce only when the HUD count matches our tracked
+            // player's data (the counter exists per side); on a mismatch leave
+            // _dirty set so the quiet-frames fallback picks it up
+            if (_hudEndFrame >= 0)
+            {
+                if (_pollCounter - _hudEndFrame < END_CONFIRM_FRAMES) return;
+                _hudEndFrame = -1;
+                if (_dirty && count > 0 && count == _hudCount)
+                {
+                    _dirty = false;
+                    _lastChangeFrame = _pollCounter;
+                    if (!TrainingMenuHooks.IsInTrainingMenu)
+                        AnnounceCombo(count, damage);
+                    return;
+                }
+                if (_dirty)
+                    API.LogInfo($"[SF6Access] HUD combo end mismatch: hud={_hudCount}, data={count}");
             }
 
             // Quiet-frames fallback: silent while the HUD counter is still up
