@@ -46,6 +46,8 @@ public class OptionMenuHooks
                 _lastPolledValue = -1;
                 _lastSubListIndex = -1;
                 _lastFocusedAddr = 0;
+                _lastFocusedUnit = null;
+                _lastUnitText = null;
                 _optionMenuParam = null;
 
                 // The display language can only change through this menu —
@@ -64,6 +66,14 @@ public class OptionMenuHooks
     private static int _lastPolledValue = -1;
     private static ManagedObject _optionManager;
     private static ManagedObject _lastFocusedSetting;
+
+    // Focused UIPartsOptionUnit for the on-screen value fallback: some options
+    // (accessibility toggles among others) don't reflect changes through
+    // OptionManager.GetOptionValue, but their displayed text does change
+    private static ManagedObject _lastFocusedUnit;
+    private static string _lastUnitText;
+    private static int _frameCounter;
+    private const int UNIT_TEXT_POLL_INTERVAL = 10;
 
     // Sub-list (language selection etc.) tracking
     private static bool _subListChanged;
@@ -183,6 +193,158 @@ public class OptionMenuHooks
 
         // Poll for value changes on the focused option
         PollValueChange();
+
+        // Fallback: announce on-screen value text changes the OptionManager
+        // poll missed (accessibility toggles, options without a TypeId value)
+        if (++_frameCounter % UNIT_TEXT_POLL_INTERVAL == 0)
+            PollUnitTextChange();
+    }
+
+    /// <summary>
+    /// Re-read the focused option row's displayed text and announce only the
+    /// changed segment. Catches every input mechanism (toggle, spin, slider)
+    /// regardless of how the value is stored.
+    /// </summary>
+    private static void PollUnitTextChange()
+    {
+        if (!_isInOptionMenu || _lastFocusedUnit == null) return;
+
+        string text;
+        try { text = ReadUnitText(_lastFocusedUnit); }
+        catch { _lastFocusedUnit = null; return; }
+
+        if (string.IsNullOrEmpty(text)) return;
+
+        string previous = _lastUnitText;
+        if (text == previous) return;
+        _lastUnitText = text;
+        if (previous == null) return; // First read after focusing this unit
+
+        string announcement = FlowHelper.DiffSegments(previous, text);
+        if (string.IsNullOrEmpty(announcement)) return;
+
+        API.LogInfo($"[SF6Access] Option unit text changed: {announcement}");
+        ScreenReaderService.Speak(announcement);
+    }
+
+    private static string ReadUnitText(ManagedObject optUnit)
+    {
+        var control = FlowHelper.GetObjectField(optUnit, "Control")
+            ?? FlowHelper.Call(optUnit, "get_Control") as ManagedObject;
+        return GuiTextReader.ReadControlTextJoined(control);
+    }
+
+    // app.Option.UnitInputType values
+    private const int INPUT_SPIN_TEXT = 4;
+    private const int INPUT_SPIN_ONOFF = 5;
+    private const int INPUT_SPIN_NUM = 6;
+    private const int INPUT_SLIDER = 7;
+
+    /// <summary>
+    /// The focused row's displayed value, from the widget its InputType says is
+    /// LIVE. Row widgets are pooled across option screens, so the other value
+    /// widgets keep stale texts from previous screens (a toggle row reused from
+    /// the sound screen still had "20" in its numeric spin text) — reading by
+    /// type is the only way to avoid announcing another screen's value.
+    /// Buttons/sub-screen rows return null (no value).
+    /// </summary>
+    private static string ReadUnitValueText(ManagedObject optUnit)
+    {
+        int inputType = -1;
+        var result = FlowHelper.Call(optUnit, "get_InputType");
+        if (result != null)
+        {
+            try { inputType = Convert.ToInt32(result); } catch { }
+        }
+        if (inputType < 0)
+            inputType = FlowHelper.ReadIntField(optUnit, "InputType");
+
+        switch (inputType)
+        {
+            case INPUT_SPIN_TEXT:
+            case INPUT_SPIN_ONOFF:
+            {
+                string msg = ReadSpinTextValue(optUnit);
+                if (string.IsNullOrEmpty(msg))
+                    API.LogInfo($"[SF6Access] Option value empty for inputType={inputType} (spin text)");
+                return msg;
+            }
+            case INPUT_SPIN_NUM:
+            {
+                var spin = FlowHelper.GetObjectField(optUnit, "ItemParts_SpinText")
+                    ?? FlowHelper.Call(optUnit, "get_ItemParts_SpinText") as ManagedObject;
+                return FlowHelper.ReadGuiText(FlowHelper.GetObjectField(spin, "_numText"));
+            }
+            case INPUT_SLIDER:
+            {
+                var sliderText = FlowHelper.GetObjectField(optUnit, "SliderValueText")
+                    ?? FlowHelper.Call(optUnit, "get_SliderValueText") as ManagedObject;
+                return FlowHelper.ReadGuiText(sliderText);
+            }
+            default:
+                return ReadUnitValueByPartType(optUnit, inputType);
+        }
+    }
+
+    /// <summary>
+    /// Value of a SpinText/SpinText_OnOff row. GetFocusMessage is an interface
+    /// method that may not dispatch on the concrete IL2CPP type, so fall back
+    /// to the UIPartsTextList's real fields: _text (on-screen via.gui.Text)
+    /// and _textList[_selectIndex].
+    /// </summary>
+    private static string ReadSpinTextValue(ManagedObject optUnit)
+    {
+        var textList = FlowHelper.GetObjectField(optUnit, "SpinTextList")
+            ?? FlowHelper.Call(optUnit, "get_SpinTextList") as ManagedObject;
+        if (textList == null) return null;
+
+        string msg = CleanTags(FlowHelper.Call(textList, "GetFocusMessage") as string);
+        if (!string.IsNullOrEmpty(msg)) return msg;
+
+        msg = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(textList, "_text"));
+        if (!string.IsNullOrEmpty(msg)) return msg;
+
+        int idx = FlowHelper.ReadIntField(textList, "_selectIndex");
+        var items = FlowHelper.GetObjectField(textList, "_textList");
+        if (idx >= 0 && items != null)
+        {
+            msg = CleanTags(FlowHelper.Call(items, "get_Item", idx) as string);
+            if (!string.IsNullOrEmpty(msg)) return msg;
+        }
+        return null;
+    }
+
+    // UIPartsOptionUnit.ItemPartsType values
+    private const int PART_SPIN = 1;
+    private const int PART_SLIDER = 2;
+
+    /// <summary>
+    /// Last resort when InputType can't be read (interface getter not
+    /// dispatched and no backing field): coarse widget type from ItemPartType
+    /// (Button=0, Spin=1, Slider=2). For Spin rows only the SpinTextList path
+    /// is tried — _numText is skipped because on a pooled toggle row it keeps
+    /// a stale number from another screen.
+    /// </summary>
+    private static string ReadUnitValueByPartType(ManagedObject optUnit, int inputType)
+    {
+        int partType = -1;
+        var result = FlowHelper.Call(optUnit, "get_ItemPartType");
+        if (result != null)
+        {
+            try { partType = Convert.ToInt32(result); } catch { }
+        }
+
+        if (inputType < 0)
+            API.LogInfo($"[SF6Access] Option InputType unresolved, ItemPartType={partType}");
+        if (partType == PART_SPIN)
+            return ReadSpinTextValue(optUnit);
+        if (partType == PART_SLIDER)
+        {
+            var sliderText = FlowHelper.GetObjectField(optUnit, "SliderValueText")
+                ?? FlowHelper.Call(optUnit, "get_SliderValueText") as ManagedObject;
+            return FlowHelper.ReadGuiText(sliderText);
+        }
+        return null;
     }
 
     // Language names by via.Language enum value for fallback
@@ -321,6 +483,12 @@ public class OptionMenuHooks
                 var optUnit = ManagedObject.ToManagedObject(addr);
                 if (optUnit == null) continue;
 
+                // Rapid up/down can batch SwitchFocus events from several rows
+                // (and stale refreshes of the previous row) into one frame —
+                // event order alone announced the row ABOVE the real cursor.
+                // Trust only the unit that still holds focus right now.
+                if (IsUnitFocused(optUnit) == false) continue;
+
                 ManagedObject setting = null;
                 try { setting = (optUnit as IObject)?.Call("get_Setting") as ManagedObject; }
                 catch { }
@@ -359,6 +527,19 @@ public class OptionMenuHooks
                     }
                 }
 
+                // Fallback so up/down navigation announces "Title. Value.
+                // Description": read the value from the row's OWN value widget.
+                // Walking the whole control subtree instead mixed in leftover
+                // texts from pooled rows of other screens ("20. Hit Sound
+                // Volume. On. Change Flag").
+                if (string.IsNullOrEmpty(valueLabel))
+                {
+                    try { valueLabel = ReadUnitValueText(optUnit); } catch { }
+                }
+
+                string unitText = null;
+                try { unitText = ReadUnitText(optUnit); } catch { }
+
                 // Detect tab change from TypeId ranges (100s = General, 200s = Interface, etc.)
                 string tabPrefix = null;
                 if (typeId >= 100)
@@ -389,6 +570,8 @@ public class OptionMenuHooks
                     _lastAnnouncement = announcement;
                     _lastFocusedAddr = addr;
                     _lastFocusedSetting = setting;
+                    _lastFocusedUnit = optUnit;
+                    _lastUnitText = unitText; // already read above
                     _lastFocusedTypeId = (dataType == 1) ? typeId : -1;
                     _lastFocusedEventType = GetIntField(setting, _eventTypeField);
                     _lastPolledValue = (dataType == 1 && typeId > 0) ? GetOptionValue(typeId) : -1;
@@ -406,6 +589,21 @@ public class OptionMenuHooks
         {
             _pendingAddrs.Clear();
         }
+    }
+
+    /// <summary>
+    /// UIPartsItem.IsFocus of the option row. Returns null when the getter
+    /// doesn't dispatch (keeps the previous event-order behavior as fallback).
+    /// </summary>
+    private static bool? IsUnitFocused(ManagedObject optUnit)
+    {
+        try
+        {
+            var result = (optUnit as IObject)?.Call("get_IsFocus");
+            if (result != null) return Convert.ToBoolean(result);
+        }
+        catch { }
+        return null;
     }
 
     private static void PollValueChange()
@@ -438,6 +636,9 @@ public class OptionMenuHooks
             if (string.IsNullOrEmpty(valueLabel)) return;
 
             _lastAnnouncement = null;
+            // Resync the on-screen text snapshot so the unit-text fallback
+            // doesn't re-announce this same change
+            _lastUnitText = null;
             API.LogInfo($"[SF6Access] Value changed: {valueLabel}");
             ScreenReaderService.Speak(valueLabel);
         }

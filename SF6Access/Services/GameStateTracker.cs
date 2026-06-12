@@ -4,14 +4,25 @@ namespace SF6Access.Services;
 
 public static class GameStateTracker
 {
-    private static readonly Dictionary<string, string> _trackedStates = new();
+    private static readonly Dictionary<string, (string Value, long Tick)> _trackedStates = new();
+
+    // A remembered value goes stale after this long: reopening a menu whose
+    // only option matches the last announced text must read it again
+    // (single-option menus were silent on every visit after the first)
+    private const long EXPIRY_MS = 2500;
 
     public static bool HasChanged(string key, string currentValue)
     {
-        if (_trackedStates.TryGetValue(key, out var previousValue) && previousValue == currentValue)
-            return false;
+        long now = System.Environment.TickCount64;
 
-        _trackedStates[key] = currentValue;
+        if (_trackedStates.TryGetValue(key, out var previous) &&
+            previous.Value == currentValue &&
+            now - previous.Tick < EXPIRY_MS)
+        {
+            return false;
+        }
+
+        _trackedStates[key] = (currentValue, now);
         return true;
     }
 

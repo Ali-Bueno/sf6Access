@@ -39,9 +39,21 @@ public class MatchingSettingHooks
 
     private static ManagedObject _param;
     private static ManagedObject _tabList;
-    private static readonly ManagedObject[] _groups = new ManagedObject[2];
-    private static readonly int[] _lastFocusIdx = { -2, -2 };
-    private static readonly string[] _lastFocusText = new string[2];
+
+    // Row groups of every settings tab — only the matchmaking tab was tracked
+    // before, leaving the battle and profile tabs silent. partsField == null
+    // means the group lives directly on the Param.
+    private static readonly (string partsField, string groupField)[] GroupSources =
+    {
+        (null, "Group"),
+        ("MatchingSettingMatching", "mGroup"),
+        ("MatchingSettingBattle", "mGroup"),
+        ("MatchingSettingBattle", "mSimpleList"),
+        ("FighterProfileSetting", "mGroup"),
+        ("FighterProfileSetting", "mTopList"),
+    };
+    private static readonly int[] _lastFocusIdx = new int[GroupSources.Length];
+    private static readonly string[] _lastFocusText = new string[GroupSources.Length];
     private static readonly Dictionary<string, ManagedObject> _valueTexts = new();
     private static readonly Dictionary<string, string> _lastValues = new();
     private static int _lastTabIdx = -1;
@@ -66,10 +78,16 @@ public class MatchingSettingHooks
             return;
         }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0 && FlowHelper.FindFlowParam(PARAM_TYPE) == null)
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            Reset();
-            return;
+            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
+            if (current == null)
+            {
+                Reset();
+                return;
+            }
+            if (changed)
+                TryActivate(); // menu was recreated — re-bind param and child caches
         }
 
         if (_pollCounter % POLL_READ_INTERVAL == 0)
@@ -86,18 +104,26 @@ public class MatchingSettingHooks
     /// </summary>
     private static void PollGroupFocus()
     {
-        for (int g = 0; g < _groups.Length; g++)
+        for (int g = 0; g < GroupSources.Length; g++)
         {
-            if (_groups[g] == null) continue;
+            // Re-resolve each tick: tab parts initialize after the Param appears
+            var group = ResolveGroup(g);
+            if (group == null) continue;
 
-            int idx = FlowHelper.ReadIntField(_groups[g], "_FocusIndex");
+            int idx = FlowHelper.ReadIntField(group, "_FocusIndex");
             if (idx < 0) continue;
 
             string text = null;
             try
             {
-                var children = FlowHelper.GetObjectField(_groups[g], "_Children");
-                var child = FlowHelper.GetListItem(children, idx);
+                // GetFocusChild is authoritative — _Children order can be
+                // reversed relative to the focus index
+                var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject;
+                if (child == null)
+                {
+                    var children = FlowHelper.GetObjectField(group, "_Children");
+                    child = FlowHelper.GetListItem(children, idx);
+                }
                 var control = FlowHelper.GetObjectField(child, "Control")
                     ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
                 text = GuiTextReader.ReadControlTextJoined(control);
@@ -125,6 +151,13 @@ public class MatchingSettingHooks
         }
     }
 
+    private static ManagedObject ResolveGroup(int index)
+    {
+        var (partsField, groupField) = GroupSources[index];
+        var owner = partsField == null ? _param : FlowHelper.GetObjectField(_param, partsField);
+        return FlowHelper.GetObjectField(owner, groupField);
+    }
+
     private static void TryActivate()
     {
         var param = FlowHelper.FindFlowParam(PARAM_TYPE);
@@ -133,12 +166,11 @@ public class MatchingSettingHooks
         _param = param;
         _tabList = FlowHelper.GetObjectField(param, "TabList");
 
-        // Top-level group + the matchmaking tab's inner row group
-        _groups[0] = FlowHelper.GetObjectField(param, "Group");
-        var matchingParts = FlowHelper.GetObjectField(param, "MatchingSettingMatching");
-        _groups[1] = FlowHelper.GetObjectField(matchingParts, "mGroup");
-        _lastFocusIdx[0] = -2;
-        _lastFocusIdx[1] = -2;
+        for (int g = 0; g < GroupSources.Length; g++)
+        {
+            _lastFocusIdx[g] = -2;
+            _lastFocusText[g] = null;
+        }
 
         _lastTabIdx = -1;
         _valueTexts.Clear();
@@ -227,12 +259,11 @@ public class MatchingSettingHooks
         _isActive = false;
         _param = null;
         _tabList = null;
-        _groups[0] = null;
-        _groups[1] = null;
-        _lastFocusIdx[0] = -2;
-        _lastFocusIdx[1] = -2;
-        _lastFocusText[0] = null;
-        _lastFocusText[1] = null;
+        for (int g = 0; g < GroupSources.Length; g++)
+        {
+            _lastFocusIdx[g] = -2;
+            _lastFocusText[g] = null;
+        }
         _valueTexts.Clear();
         _lastValues.Clear();
         _lastTabIdx = -1;

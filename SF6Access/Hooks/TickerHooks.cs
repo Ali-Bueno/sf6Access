@@ -17,6 +17,7 @@ public class TickerHooks
     private static int _pollCounter;
     private const int POLL_INTERVAL = 30;
 
+    private static ManagedObject _tickerParam;
     private static ManagedObject _tickerText;
     private static ManagedObject _tickerControl;
     private static string _lastText;
@@ -32,12 +33,19 @@ public class TickerHooks
     {
         if (++_pollCounter % POLL_INTERVAL != 0) return;
 
-        if (_tickerText == null)
+        // Track the live param: the game recreates it across scene changes and
+        // the cached Text component would silently read a dead object forever
+        _tickerParam = FlowHelper.TrackFlowParam(PARAM_TYPE, _tickerParam, out bool changed);
+        if (_tickerParam == null)
         {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param == null) return;
+            _tickerText = null;
+            _tickerControl = null;
+            return;
+        }
 
-            var ticker = FlowHelper.GetObjectField(param, "Ticker");
+        if (changed || _tickerText == null)
+        {
+            var ticker = FlowHelper.GetObjectField(_tickerParam, "Ticker");
             _tickerText = FlowHelper.GetObjectField(ticker, "Text")
                 ?? FlowHelper.Call(ticker, "get_Text") as ManagedObject;
             _tickerControl = FlowHelper.GetObjectField(ticker, "Control")
@@ -45,7 +53,7 @@ public class TickerHooks
 
             if (_tickerText != null)
                 API.LogInfo($"[SF6Access] Ticker found (control={_tickerControl != null})");
-            return;
+            if (_tickerText == null) return;
         }
 
         string text;

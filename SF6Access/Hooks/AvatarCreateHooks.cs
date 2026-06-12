@@ -151,7 +151,8 @@ public class AvatarCreateHooks
                 if (typeName.Contains("UIFlowUI61000.Param"))
                 {
                     foundMain = true;
-                    if (_avatarParam == null)
+                    // Re-bind when the instance changed (recreated on re-entry)
+                    if (FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_avatarParam))
                     {
                         _avatarParam = param;
                         _isActive = true;
@@ -167,10 +168,13 @@ public class AvatarCreateHooks
                 }
             }
 
-            // Update child flow
+            // Update child flow — compare the INSTANCE too: re-entering the
+            // same sub-menu (hair, face...) recreates a param of the same type
+            // and the old one would keep being read (silent menu)
             if (foundMain)
             {
-                if (firstChildType != _lastChildFlowType)
+                if (firstChildType != _lastChildFlowType ||
+                    FlowHelper.AddressOf(firstChildParam) != FlowHelper.AddressOf(_childFlowParam))
                 {
                     _childFlowParam = firstChildParam;
                     _lastChildFlowType = firstChildType;

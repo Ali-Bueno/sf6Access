@@ -239,6 +239,27 @@ public static class FlowHelper
         return found;
     }
 
+    /// <summary>
+    /// Track the live instance of a flow Param across menu re-entries: re-find
+    /// it in _Handles and report when the instance changed. The game recreates
+    /// Params when a menu is reopened, while our ManagedObject reference pins
+    /// the old (dead) one — every child object cached from it must be re-cached
+    /// when this reports a change. Returns null when the flow ended.
+    /// </summary>
+    public static ManagedObject TrackFlowParam(string typeFullName, ManagedObject cached, out bool instanceChanged)
+    {
+        var current = FindFlowParam(typeFullName);
+        instanceChanged = current != null && (cached == null || AddressOf(current) != AddressOf(cached));
+        return current;
+    }
+
+    /// <summary>Object address, 0 when unavailable (object freed or null).</summary>
+    public static ulong AddressOf(ManagedObject obj)
+    {
+        try { return obj?.GetAddress() ?? 0; }
+        catch { return 0; }
+    }
+
     /// <summary>Read an object field, trying the plain name and the auto-property backing field.</summary>
     public static ManagedObject GetObjectField(ManagedObject obj, string name)
     {

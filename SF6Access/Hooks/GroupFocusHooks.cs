@@ -35,6 +35,7 @@ public class GroupFocusHooks
         "app.UICFNDetailedMenu",          // CFN player context menu (view replays...)
         "app.UIFlowDailyTournament",      // tournaments
         "app.UIFlowServerSelect",         // server list
+        "app.esports.UIFlowResultMenu",   // post-match menu (rematch / leave...)
     };
 
     // Types with dedicated hooks — skipped here to avoid double announcements
@@ -83,6 +84,48 @@ public class GroupFocusHooks
     public static bool ShouldSuppressFocus =>
         IsActive && _pollCounter - _lastAnnouncementFrame < SUPPRESS_WINDOW_FRAMES;
 
+    // Focus events suppressed by ShouldSuppressFocus are queued here: if this
+    // hook doesn't announce a row shortly after, the focused item's text is
+    // read anyway. Without this, CFN rows outside the tracked fields stayed
+    // silent during the suppression window ("sometimes reads, sometimes not")
+    private static ManagedObject _fallbackItem;
+    private static string _fallbackName;
+    private static int _fallbackFrame;
+    private const int FALLBACK_DELAY_FRAMES = 15;
+
+    public static void QueueFocusFallback(ManagedObject selectedItem, string rawName)
+    {
+        _fallbackItem = selectedItem;
+        _fallbackName = rawName;
+        _fallbackFrame = _pollCounter;
+    }
+
+    private static void ProcessFocusFallback()
+    {
+        if (_fallbackItem == null || _pollCounter - _fallbackFrame < FALLBACK_DELAY_FRAMES)
+            return;
+
+        var item = _fallbackItem;
+        string name = _fallbackName;
+        _fallbackItem = null;
+        _fallbackName = null;
+
+        // A row announcement at or after the focus event already covered it
+        if (_lastAnnouncementFrame >= _fallbackFrame) return;
+
+        try
+        {
+            string text = JoinTexts(GuiTextReader.ReadControlTexts(item));
+            if (string.IsNullOrEmpty(text)) return;
+            if (!GameStateTracker.HasChanged("focus_item", $"{name}|{text}")) return;
+
+            _lastAnnouncementFrame = _pollCounter;
+            API.LogInfo($"[SF6Access] GroupFocus fallback [{name}]: {text}");
+            ScreenReaderService.Speak(text);
+        }
+        catch { }
+    }
+
     [PluginEntryPoint]
     public static void Initialize()
     {
@@ -102,6 +145,8 @@ public class GroupFocusHooks
 
         if (_param != null && _pollCounter % POLL_READ_INTERVAL == 0)
             PollFields();
+
+        ProcessFocusFallback();
     }
 
     private static void RefreshActiveParam()

@@ -22,6 +22,20 @@ public class FGMenuHooks
         ReadCurrentFGItem();
     }
 
+    /// <summary>
+    /// Capture the live Param from a hook's `this` argument. When the menu is
+    /// re-entered the game creates a NEW Param — clear the dedupe state so the
+    /// first item is announced again (it stayed silent when the cursor landed
+    /// on the same item as last time).
+    /// </summary>
+    private static void CaptureParam(ulong thisAddr)
+    {
+        var param = ManagedObject.ToManagedObject(thisAddr);
+        if (param != null && FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_fgParam))
+            _lastAnnounced = null;
+        _fgParam = param;
+    }
+
     [PluginEntryPoint]
     public static void Initialize()
     {
@@ -40,7 +54,7 @@ public class FGMenuHooks
             hook.AddPre(args =>
             {
                 // Capture the Param instance (args[1] = this)
-                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                CaptureParam(args[1]);
                 return PreHookResult.Continue;
             });
             hook.AddPost((ref ulong retval) =>
@@ -57,7 +71,7 @@ public class FGMenuHooks
             var hook = setSubPos.AddHook(false);
             hook.AddPre(args =>
             {
-                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                CaptureParam(args[1]);
                 return PreHookResult.Continue;
             });
             hook.AddPost((ref ulong retval) =>
@@ -75,7 +89,7 @@ public class FGMenuHooks
             var hook = method.AddHook(false);
             hook.AddPre(args =>
             {
-                _fgParam = ManagedObject.ToManagedObject(args[1]);
+                CaptureParam(args[1]);
                 return PreHookResult.Continue;
             });
             hook.AddPost((ref ulong retval) =>

@@ -43,15 +43,26 @@ public class EmulatorPauseHooks
             return;
         }
 
+        // Re-bind when the game recreated the Param (stale instance → silent)
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        {
+            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
+            if (current == null)
+            {
+                Reset();
+                return;
+            }
+            if (changed)
+            {
+                _param = current;
+                _lastIndex = -2;
+            }
+        }
+
         if (_pollCounter % POLL_READ_INTERVAL != 0) return;
 
         int idx = FlowHelper.ReadIntField(_param, "outSelectedIndex");
-        if (idx < 0)
-        {
-            // Param gone or invalid — confirm against the handle list
-            if (FlowHelper.FindFlowParam(PARAM_TYPE) == null) Reset();
-            return;
-        }
+        if (idx < 0) return;
         if (idx == _lastIndex) return;
         _lastIndex = idx;
 

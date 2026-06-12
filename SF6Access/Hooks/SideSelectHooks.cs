@@ -16,13 +16,12 @@ namespace SF6Access.Hooks;
 /// </summary>
 public class SideSelectHooks
 {
+    private const string PARAM_TYPE = "app.UIFlowSideSelect.Param";
+
     private static bool _isActive;
     private static int _pollCounter;
     private const int POLL_SEARCH_INTERVAL = 60;
     private const int POLL_READ_INTERVAL = 5;
-
-    private static Field _handlesField;
-    private static bool _tdbCached;
 
     private static ManagedObject _p1Param;
     private static ManagedObject _p2Param;
@@ -73,62 +72,52 @@ public class SideSelectHooks
             return;
         }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0 && !IsStillActive())
+        // Re-bind when the game recreated the Params (stale instances read
+        // dead memory → side select goes silent on re-entry)
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            Reset();
-            return;
+            var (p1, p2) = FindParams();
+            if (p1 == null && p2 == null)
+            {
+                Reset();
+                return;
+            }
+            if (FlowHelper.AddressOf(p1) != FlowHelper.AddressOf(_p1Param) ||
+                FlowHelper.AddressOf(p2) != FlowHelper.AddressOf(_p2Param))
+                Bind(p1, p2);
         }
 
         if (_pollCounter % POLL_READ_INTERVAL == 0)
             PollState();
     }
 
-    private static void CacheTDB()
-    {
-        if (_tdbCached) return;
-        _tdbCached = true;
-        _handlesField = TDB.Get().FindType("app.UIFlowManager")?.GetField("_Handles");
-    }
-
     private static void TryFindParam()
     {
-        CacheTDB();
-        if (_handlesField == null) return;
+        var (p1, p2) = FindParams();
+        if (p1 == null && p2 == null) return;
+        Bind(p1, p2);
+    }
 
-        var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-        if (flowMgr == null) return;
-
-        var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-        if (handles == null) return;
-
-        var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-        var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-        if (countMethod == null || getItemMethod == null) return;
-
-        int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-
-        for (int i = 0; i < count && i < 30; i++)
+    private static (ManagedObject p1, ManagedObject p2) FindParams()
+    {
+        ManagedObject p1 = null, p2 = null;
+        foreach (var (_, param) in FlowHelper.FindFlowParamsByPrefix(PARAM_TYPE))
         {
-            try
-            {
-                var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                if (handle == null) continue;
-                var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                if (param?.GetTypeDefinition()?.FullName != "app.UIFlowSideSelect.Param") continue;
-
-                int userIndex = ReadIntField(param, "UserIndex");
-                if (userIndex == 0) _p1Param = param;
-                else if (userIndex == 1) _p2Param = param;
-            }
-            catch { }
+            int userIndex = ReadIntField(param, "UserIndex");
+            if (userIndex == 0) p1 ??= param;
+            else if (userIndex == 1) p2 ??= param;
         }
+        return (p1, p2);
+    }
 
-        if (_p1Param == null && _p2Param == null) return;
-
+    private static void Bind(ManagedObject p1, ManagedObject p2)
+    {
+        _p1Param = p1;
+        _p2Param = p2;
         _isActive = true;
         _lastPadState = "";
         _lastAnnouncement = "";
-        API.LogInfo($"[SF6Access] SideSelect found (P1={_p1Param != null}, P2={_p2Param != null})");
+        API.LogInfo($"[SF6Access] SideSelect found (P1={p1 != null}, P2={p2 != null})");
         PollState();
     }
 
@@ -250,35 +239,6 @@ public class SideSelectHooks
     {
         try { return (arr as IObject)?.Call("Get", index) as ManagedObject; }
         catch { return null; }
-    }
-
-    private static bool IsStillActive()
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return false;
-            var handles = _handlesField?.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return false;
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return false;
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param?.GetTypeDefinition()?.FullName == "app.UIFlowSideSelect.Param")
-                        return true;
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return false;
     }
 
     private static void Reset()

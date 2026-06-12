@@ -29,6 +29,8 @@ public class TrainingMenuHooks
     private static string _lastValueName;
     private static string _lastSectionName;
     private static int _lastSliderValue = int.MinValue;
+    private static string _lastRowText;
+    private static ManagedObject _flowParam; // cached UIFlowTrainingMenu.Param
 
     // app.training.ItemType slider variants (SLIDER, SLIDER_GUIDE, SLIDER_VITAL_1P/2P,
     // SLIDER_DRIVE, SLIDER_SA_1P/2P) — their value is numeric, not a message Guid
@@ -53,6 +55,9 @@ public class TrainingMenuHooks
             TryActivate();
             return;
         }
+
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+            _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
 
         if (_pollCounter % POLL_READ_INTERVAL != 0) return;
 
@@ -79,6 +84,8 @@ public class TrainingMenuHooks
         _lastSecondary = -1;
         _lastValueName = null;
         _lastSectionName = null;
+        _lastRowText = null;
+        _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
         _isActive = true;
         API.LogInfo("[SF6Access] Training menu opened");
 
@@ -121,32 +128,76 @@ public class TrainingMenuHooks
         if (viewData != null && IsSliderRow(viewData))
         {
             int sliderValue = FlowHelper.ReadIntField(viewData, "SliderValue", int.MinValue);
-            if (sliderValue != int.MinValue && sliderValue != _lastSliderValue)
+            if (sliderValue != int.MinValue)
             {
-                bool firstSlider = _lastSliderValue == int.MinValue;
-                _lastSliderValue = sliderValue;
-                if (!firstSlider)
+                if (sliderValue != _lastSliderValue)
                 {
-                    API.LogInfo($"[SF6Access] Training slider changed: {sliderValue}");
-                    ScreenReaderService.Speak(sliderValue.ToString());
+                    bool firstSlider = _lastSliderValue == int.MinValue;
+                    _lastSliderValue = sliderValue;
+                    if (!firstSlider)
+                    {
+                        API.LogInfo($"[SF6Access] Training slider changed: {sliderValue}");
+                        ScreenReaderService.Speak(sliderValue.ToString());
+                        _lastRowText = ReadFocusedRowText();
+                    }
                 }
+                return;
             }
-            return;
+            // SliderValue unreadable — fall through to the on-screen text poll
         }
 
         var data = FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
-        if (data == null) return;
-
-        string name = FlowHelper.ResolveGuidField(data, "_MessageID");
-        if (string.IsNullOrEmpty(name) || _lastValueName == null || name == _lastValueName)
+        string name = data != null ? FlowHelper.ResolveGuidField(data, "_MessageID") : null;
+        if (!string.IsNullOrEmpty(name) && _lastValueName != null && name != _lastValueName)
         {
-            if (!string.IsNullOrEmpty(name) && _lastValueName == null) _lastValueName = name;
+            _lastValueName = name;
+            API.LogInfo($"[SF6Access] Training value changed: {name}");
+            ScreenReaderService.Speak(name);
+            _lastRowText = ReadFocusedRowText();
             return;
         }
+        if (!string.IsNullOrEmpty(name) && _lastValueName == null) _lastValueName = name;
 
-        _lastValueName = name;
-        API.LogInfo($"[SF6Access] Training value changed: {name}");
-        ScreenReaderService.Speak(name);
+        // Fallback for rows whose value is neither a slider field nor a message
+        // change (drive/SA gauge percentages, per-character unique stocks...):
+        // announce what changed in the focused row's on-screen text
+        PollRowTextChange();
+    }
+
+    /// <summary>
+    /// Detect left/right value edits by re-reading the focused row's GUI text
+    /// and announcing only the changed segment.
+    /// </summary>
+    private static void PollRowTextChange()
+    {
+        string text = ReadFocusedRowText();
+        if (string.IsNullOrEmpty(text)) return;
+
+        string previous = _lastRowText;
+        if (text == previous) return;
+        _lastRowText = text;
+        if (previous == null) return; // First read after a focus change
+
+        string announcement = FlowHelper.DiffSegments(previous, text);
+        if (string.IsNullOrEmpty(announcement)) return;
+
+        API.LogInfo($"[SF6Access] Training row text changed: {announcement}");
+        ScreenReaderService.Speak(announcement);
+    }
+
+    /// <summary>On-screen text of the focused row in the menu's secondary list.</summary>
+    private static string ReadFocusedRowText()
+    {
+        try
+        {
+            var param = _flowParam ??= FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
+            var list = FlowHelper.GetObjectField(param, "_SecondaryList");
+            var child = FlowHelper.Call(list, "GetFocusChild") as ManagedObject;
+            var control = FlowHelper.GetObjectField(child, "Control")
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+            return GuiTextReader.ReadControlTextJoined(control);
+        }
+        catch { return null; }
     }
 
     private static bool IsSliderRow(ManagedObject viewData)
@@ -210,6 +261,10 @@ public class TrainingMenuHooks
         if (!string.IsNullOrEmpty(guide) && guide != label)
             parts.Add(guide);
 
+        // Snapshot the row's on-screen text so the value-edit poll only
+        // reacts to later changes on this same row
+        _lastRowText = ReadFocusedRowText();
+
         if (parts.Count == 0) return;
 
         string announcement = string.Join(". ", parts);
@@ -222,7 +277,7 @@ public class TrainingMenuHooks
     {
         try
         {
-            var param = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
+            var param = _flowParam ??= FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
             var list = FlowHelper.GetObjectField(param, "_ViewDataList");
             if (list == null) return null;
 
@@ -247,5 +302,7 @@ public class TrainingMenuHooks
         _lastSecondary = -1;
         _lastValueName = null;
         _lastSectionName = null;
+        _lastRowText = null;
+        _flowParam = null;
     }
 }

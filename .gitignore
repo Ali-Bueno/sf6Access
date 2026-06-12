@@ -8,6 +8,9 @@ sf6 code/
 # References (external DLLs)
 references/
 
+# Release packages (binaries)
+release/
+
 # IDE
 .vs/
 *.user

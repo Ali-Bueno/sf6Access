@@ -159,6 +159,16 @@ public class MainMenuHooks
                 // Timestamped trace of real navigation presses — measures how
                 // far behind them the poll-based announcers run
                 API.LogInfo($"[SF6Access] Focus (suppressed): {rawName}");
+
+                // GroupFocus suppression is a heuristic window, not a guarantee
+                // that it can read this row: queue the focused item so it gets
+                // announced anyway if no row announcement follows
+                if (GroupFocusHooks.ShouldSuppressFocus &&
+                    !KeyConfigHooks.IsInKeyConfig && !NewsHooks.IsInNewsMenu &&
+                    !CustomRoomHooks.IsInCustomRoomTop)
+                {
+                    GroupFocusHooks.QueueFocusFallback(selectedItem, rawName);
+                }
                 return;
             }
 

@@ -201,46 +201,15 @@ public class FighterSettingHooks
 
     private static bool RefreshActiveParam()
     {
-        if (_activeParam != null && ReadBoolField(_activeParam, "mIsActive"))
-            return true;
-
+        // Always re-scan _Handles: trusting the cached param's mIsActive kept
+        // this hook bound to a dead Param after leaving and re-entering arcade
+        // (second visit to the same menu announced nothing).
         var newActive = FindActiveParam(out int playerIndex);
-        if (newActive != null)
-        {
+        if (newActive == null) return false;
+
+        if (_activeParam == null || newActive.GetAddress() != _activeParam.GetAddress())
             ActivateWith(newActive, playerIndex);
-            return true;
-        }
-
-        return ExistsInHandles();
-    }
-
-    private static bool ExistsInHandles()
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return false;
-            var handles = _handlesField?.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return false;
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return false;
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-            for (int i = 0; i < count && i < 50; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param?.GetTypeDefinition()?.FullName == "app.UIFlowUI10505.Param")
-                        return true;
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return false;
+        return true;
     }
 
     private static void ActivateWith(ManagedObject param, int playerIndex)

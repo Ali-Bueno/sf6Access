@@ -70,10 +70,16 @@ public class KeyConfigHooks
             return;
         }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0 && FlowHelper.FindFlowParam(PARAM_TYPE) == null)
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            Reset();
-            return;
+            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
+            if (current == null)
+            {
+                Reset();
+                return;
+            }
+            if (changed)
+                TryActivate(); // menu was recreated — re-bind param and child caches
         }
 
         if (_pollCounter % POLL_READ_INTERVAL == 0)

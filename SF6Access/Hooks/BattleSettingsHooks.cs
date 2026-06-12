@@ -16,6 +16,9 @@ namespace SF6Access.Hooks;
 /// </summary>
 public class BattleSettingsHooks
 {
+    private const string RULE_PARAM_TYPE = "app.menu.UIFlowVersusRuleMain.Param";
+    private const string COMMENTATOR_PARAM_TYPE = "app.UIFlowCommentatorSelect.Param";
+
     private static ManagedObject _ruleParam;
     private static bool _isActive;
     private static int _pollCounter;
@@ -23,7 +26,6 @@ public class BattleSettingsHooks
     private const int POLL_READ_INTERVAL = 5;
 
     // TDB cache
-    private static Field _handlesField;
     private static Method _msgGetMethod;
     private static bool _tdbCached;
 
@@ -109,15 +111,19 @@ public class BattleSettingsHooks
             return;
         }
 
-        // Check if still active
+        // Check if still active; re-bind when the game recreated the Param
+        // (stale instance reads dead memory → menu goes silent on re-entry)
         if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            if (!IsParamStillActive())
+            var current = FlowHelper.TrackFlowParam(RULE_PARAM_TYPE, _ruleParam, out bool changed);
+            if (current == null)
             {
                 API.LogInfo("[SF6Access] Battle settings ended");
                 Reset();
                 return;
             }
+            if (changed)
+                ActivateWith(current);
         }
 
         // Poll for value changes and commentator select
@@ -149,23 +155,26 @@ public class BattleSettingsHooks
     {
         if (_tdbCached) return;
         _tdbCached = true;
-        var flowMgrTd = TDB.Get().FindType("app.UIFlowManager");
-        _handlesField = flowMgrTd?.GetField("_Handles");
         _msgGetMethod = TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
     }
 
     private static void TryFindRuleParam()
     {
         CacheTDB();
-        if (_handlesField == null) return;
 
-        var result = FindParamByType("app.menu.UIFlowVersusRuleMain.Param");
+        var result = FlowHelper.FindFlowParam(RULE_PARAM_TYPE);
         if (result == null) return;
 
-        _ruleParam = result;
+        ActivateWith(result);
+    }
+
+    private static void ActivateWith(ManagedObject param)
+    {
+        _ruleParam = param;
         _isActive = true;
         _focusedSettingIndex = -1;
         _lastSpinValue = "";
+        _labelCache.Clear();
 
         // Cache the arrays from the Param
         _tateList = GetField(_ruleParam, "tateList");
@@ -173,71 +182,6 @@ public class BattleSettingsHooks
         _settingTypeArr = GetField(_ruleParam, "ArrSettingType");
 
         API.LogInfo($"[SF6Access] VersusRule param found (tateList={_tateList != null}, messData={_messDataArr != null}, settingType={_settingTypeArr != null})");
-    }
-
-    private static ManagedObject FindParamByType(string targetType)
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return null;
-
-            var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return null;
-
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return null;
-
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    string fullName = param?.GetTypeDefinition()?.FullName;
-                    if (fullName == targetType)
-                        return param;
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    private static bool IsParamStillActive()
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return false;
-
-            var handles = _handlesField?.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return false;
-
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return false;
-
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param?.GetTypeDefinition()?.FullName == "app.menu.UIFlowVersusRuleMain.Param")
-                        return true;
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return false;
     }
 
     // --- Setting Item Navigation ---
@@ -392,7 +336,7 @@ public class BattleSettingsHooks
         if (_commentatorSelectParam == null)
         {
             if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            _commentatorSelectParam = FindParamByType("app.UIFlowCommentatorSelect.Param");
+            _commentatorSelectParam = FlowHelper.FindFlowParam(COMMENTATOR_PARAM_TYPE);
             if (_commentatorSelectParam != null)
             {
                 _lastCommentatorName = "";
@@ -404,52 +348,24 @@ public class BattleSettingsHooks
 
         if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            if (!IsCommentatorStillActive())
+            var current = FlowHelper.TrackFlowParam(COMMENTATOR_PARAM_TYPE, _commentatorSelectParam, out bool changed);
+            if (current == null || changed)
             {
-                _commentatorSelectParam = null;
+                _commentatorSelectParam = current;
                 _lastCommentatorName = "";
                 _lastSelectState = -1;
-                return;
+                if (current == null) return;
             }
         }
 
         ReadCommentatorTitle();
     }
 
-    private static bool IsCommentatorStillActive()
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return false;
-            var handles = _handlesField?.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return false;
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return false;
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param?.GetTypeDefinition()?.FullName?.Contains("CommentatorSelect") == true)
-                        return true;
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return false;
-    }
-
     private static void ReadCommentatorTitle()
     {
         if (_commentatorSelectParam == null)
         {
-            _commentatorSelectParam = FindParamByType("app.UIFlowCommentatorSelect.Param");
+            _commentatorSelectParam = FlowHelper.FindFlowParam(COMMENTATOR_PARAM_TYPE);
             if (_commentatorSelectParam == null) return;
         }
 

@@ -62,11 +62,16 @@ public class StatusMenuHooks
             return;
         }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0 &&
-            FlowHelper.FindFlowParam(STATUS_PARAM_TYPE) == null)
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            Reset();
-            return;
+            var current = FlowHelper.TrackFlowParam(STATUS_PARAM_TYPE, _statusParam, out bool changed);
+            if (current == null)
+            {
+                Reset();
+                return;
+            }
+            if (changed)
+                TryActivate(); // menu was recreated — re-bind params
         }
 
         if (_pollCounter % POLL_READ_INTERVAL == 0)
@@ -97,9 +102,10 @@ public class StatusMenuHooks
     {
         AnnounceTabChange();
 
-        // The equip child param may appear after the menu opens
-        if (_equipParam == null && _pollCounter % POLL_SEARCH_INTERVAL == 0)
-            _equipParam = FlowHelper.FindFlowParam(EQUIP_PARAM_TYPE);
+        // The equip child param may appear after the menu opens, and is
+        // recreated when its sub-screen is reopened — track the live instance
+        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+            _equipParam = FlowHelper.TrackFlowParam(EQUIP_PARAM_TYPE, _equipParam, out bool _equipChanged);
 
         if (_equipParam == null) return;
 

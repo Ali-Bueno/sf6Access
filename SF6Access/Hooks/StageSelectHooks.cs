@@ -18,7 +18,6 @@ public class StageSelectHooks
     private const int POLL_SEARCH_INTERVAL = 60;
 
     // Cached TDB lookups
-    private static Field _handlesField;
     private static bool _tdbCached;
     private static bool _fieldsLogged;
 
@@ -61,10 +60,12 @@ public class StageSelectHooks
 
         try
         {
-            // Check if still active periodically
+            // Check if still active periodically; re-bind when the game
+            // recreated the Param (stale instance → silent on re-entry)
             if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
             {
-                if (!IsParamStillActive())
+                var current = FindStageParam();
+                if (current == null)
                 {
                     API.LogInfo("[SF6Access] Stage select ended");
                     _isActive = false;
@@ -72,6 +73,8 @@ public class StageSelectHooks
                     _lastStageName = "";
                     return;
                 }
+                if (FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_stageParam))
+                    BindParam(current);
             }
 
             // Poll for stage name changes every few frames
@@ -90,62 +93,36 @@ public class StageSelectHooks
     {
         if (_tdbCached) return;
         _tdbCached = true;
-
-        var flowMgrTd = TDB.Get().FindType("app.UIFlowManager");
-        _handlesField = flowMgrTd?.GetField("_Handles");
         _msgGetMethod = TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
     }
 
     private static void TryFindStageParam()
     {
         CacheTDB();
-        if (_handlesField == null) return;
+        var current = FindStageParam();
+        if (current != null)
+            BindParam(current);
+    }
 
-        try
+    private static ManagedObject FindStageParam()
+    {
+        var found = FlowHelper.FindFlowParams(StageParamTypes);
+        foreach (var matchType in StageParamTypes)
         {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return;
-
-            var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return;
-
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return;
-
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param == null) continue;
-
-                    var td = param.GetTypeDefinition();
-                    string fullName = td?.FullName ?? "";
-
-                    foreach (var matchType in StageParamTypes)
-                    {
-                        if (fullName == matchType)
-                        {
-                            _stageParam = param;
-                            _isActive = true;
-                            _lastStageName = "";
-                            _fieldsLogged = false;
-                            API.LogInfo($"[SF6Access] Stage select param found: {fullName}");
-                            LogParamFields(param);
-                            return;
-                        }
-                    }
-                }
-                catch { }
-            }
+            if (found.TryGetValue(matchType, out var param) && param != null)
+                return param;
         }
-        catch { }
+        return null;
+    }
+
+    private static void BindParam(ManagedObject param)
+    {
+        _stageParam = param;
+        _isActive = true;
+        _lastStageName = "";
+        _fieldsLogged = false;
+        API.LogInfo($"[SF6Access] Stage select param found: {param.GetTypeDefinition()?.FullName}");
+        LogParamFields(param);
     }
 
     private static void LogParamFields(ManagedObject param)
@@ -322,42 +299,4 @@ public class StageSelectHooks
         return null;
     }
 
-    private static bool IsParamStillActive()
-    {
-        try
-        {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return false;
-
-            var handles = _handlesField?.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
-            if (handles == null) return false;
-
-            var countMethod = handles.GetTypeDefinition()?.GetMethod("get_Count");
-            var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
-            if (countMethod == null || getItemMethod == null) return false;
-
-            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
-
-            for (int i = 0; i < count && i < 30; i++)
-            {
-                try
-                {
-                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
-                    if (handle == null) continue;
-
-                    var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
-                    if (param == null) continue;
-
-                    string fullName = param.GetTypeDefinition()?.FullName ?? "";
-                    foreach (var matchType in StageParamTypes)
-                    {
-                        if (fullName == matchType) return true;
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return false;
-    }
 }
