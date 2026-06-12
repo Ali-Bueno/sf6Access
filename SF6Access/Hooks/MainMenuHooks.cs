@@ -154,7 +154,10 @@ public class MainMenuHooks
             // a silently-active tracker must not mute this generic reader
             // (Battle Hub room muted the avatar battle menu)
             if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
-                CustomRoomHooks.IsInCustomRoomTop || GroupFocusHooks.ShouldSuppressFocus)
+                CustomRoomHooks.IsInCustomRoomTop ||
+                MatchingFighterSettingHooks.IsInFighterSetting ||
+                DeathMatchSettingHooks.IsInDeathMatchSetting ||
+                GroupFocusHooks.ShouldSuppressFocus)
             {
                 // Timestamped trace of real navigation presses — measures how
                 // far behind them the poll-based announcers run
@@ -165,7 +168,9 @@ public class MainMenuHooks
                 // announced anyway if no row announcement follows
                 if (GroupFocusHooks.ShouldSuppressFocus &&
                     !KeyConfigHooks.IsInKeyConfig && !NewsHooks.IsInNewsMenu &&
-                    !CustomRoomHooks.IsInCustomRoomTop)
+                    !CustomRoomHooks.IsInCustomRoomTop &&
+                    !MatchingFighterSettingHooks.IsInFighterSetting &&
+                    !DeathMatchSettingHooks.IsInDeathMatchSetting)
                 {
                     GroupFocusHooks.QueueFocusFallback(selectedItem, rawName);
                 }

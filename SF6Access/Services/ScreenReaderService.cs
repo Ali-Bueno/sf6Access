@@ -52,10 +52,12 @@ public static class ScreenReaderService
     public static long LastInterruptTick { get; private set; }
 
     // Several hooks can resolve the same on-screen text (focused item subtree
-    // walk + guide text poll) — drop identical announcements fired back-to-back
+    // walk + guide text poll) — drop identical announcements fired back-to-back.
+    // Keep the window SHORT: real double-fires land within a frame or two,
+    // while 600ms also swallowed rows the user re-visited by navigating fast
     private static string _lastText;
     private static long _lastTextTick;
-    private const long DUPLICATE_WINDOW_MS = 600;
+    private const long DUPLICATE_WINDOW_MS = 250;
 
     public static void Speak(string text, bool interrupt = true)
     {

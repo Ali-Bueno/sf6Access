@@ -26,9 +26,9 @@ public static class ObjectDumper
 
     // F8 auto-dump: every new flow param type that appears gets its fields and
     // the on-screen texts appended to one session file — no F9 per menu needed.
-    // On by default so end users always have a dump to send when they hit an
-    // inaccessible menu; F8 turns it off.
-    private static bool _autoDumpEnabled = true;
+    // Off by default (the per-screen capture slows the game down); F8 turns it
+    // on when a tester needs to capture an inaccessible menu.
+    private static bool _autoDumpEnabled = false;
     private static string _autoDumpPath;
     private static int _frameCount;
     private static readonly HashSet<string> _autoDumped = new();

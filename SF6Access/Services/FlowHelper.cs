@@ -283,6 +283,20 @@ public static class FlowHelper
         return fallback;
     }
 
+    public static float ReadFloatField(ManagedObject obj, string name, float fallback = float.NaN)
+    {
+        if (obj == null) return fallback;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField(name) ?? td?.GetField($"<{name}>k__BackingField");
+            if (field != null)
+                return Convert.ToSingle(field.GetDataBoxed(typeof(float), obj.GetAddress(), false));
+        }
+        catch { }
+        return fallback;
+    }
+
     public static string ReadStringField(ManagedObject obj, string name)
     {
         if (obj == null) return null;
@@ -363,23 +377,97 @@ public static class FlowHelper
             var item = Call(listObj, "get_SelectedItem") as ManagedObject;
             if (item == null) return null;
 
-            string text = GuiTextReader.ReadControlTextJoined(item);
+            string text = FormatRowTexts(GuiTextReader.ReadControlTexts(item), 6);
             if (!string.IsNullOrEmpty(text)) return text;
 
             // Some grids render labels as images and keep the text hidden
             // (master select panels) — fall back to the first hidden texts
-            var hidden = GuiTextReader.ReadControlTexts(item, visibleOnly: false);
-            var parts = new System.Collections.Generic.List<string>();
-            foreach (var t in hidden)
-            {
-                if (string.IsNullOrWhiteSpace(t.Text)) continue;
-                parts.Add(t.Text.Trim());
-                if (parts.Count >= 4) break;
-            }
-            return parts.Count > 0 ? string.Join(". ", parts) : null;
+            return FormatRowTexts(GuiTextReader.ReadControlTexts(item, visibleOnly: false), 4);
         }
         catch { return null; }
     }
+
+    /// <summary>
+    /// Join row texts for announcement: drops duplicate segments (custom room
+    /// tables show "Looking for a fight!" twice) and reorders known row kinds —
+    /// room table tiles put the booth number and mode before the rule string,
+    /// replay rows put players and win/loss before the timestamp (tree order
+    /// read only "18:35. 11/6/2026. 0" with the segment cap).
+    /// </summary>
+    public static string FormatRowTexts(
+        System.Collections.Generic.List<GuiTextReader.GuiText> texts, int maxSegments)
+    {
+        if (texts == null || texts.Count == 0) return null;
+
+        bool isTableTile = false, isReplayRow = false, isCharaRow = false;
+        foreach (var t in texts)
+        {
+            if (t.Name == "e_txt_num") isTableTile = true;
+            else if (t.Name == "e_result_") isReplayRow = true;
+            else if (t.Name == "e_txt_chara") isCharaRow = true;
+        }
+
+        if (isTableTile || isReplayRow || isCharaRow)
+        {
+            // Stable sort: keep tree order within the same rank
+            var indexed = new System.Collections.Generic.List<(int rank, int order, GuiTextReader.GuiText text)>();
+            for (int i = 0; i < texts.Count; i++)
+            {
+                int rank = isReplayRow ? ReplayElementRank(texts[i].Name)
+                    : isCharaRow ? CharaElementRank(texts[i].Name)
+                    : TableElementRank(texts[i].Name);
+                if (rank < 0) continue;
+                indexed.Add((rank, i, texts[i]));
+            }
+            indexed.Sort((a, b) => a.rank != b.rank ? a.rank.CompareTo(b.rank) : a.order.CompareTo(b.order));
+
+            texts = new System.Collections.Generic.List<GuiTextReader.GuiText>();
+            foreach (var entry in indexed) texts.Add(entry.text);
+
+            // These rows carry more meaningful segments than a generic row
+            if (maxSegments < 10) maxSegments = 10;
+        }
+
+        var parts = new System.Collections.Generic.List<string>();
+        foreach (var t in texts)
+        {
+            if (string.IsNullOrWhiteSpace(t.Text)) continue;
+            string trimmed = t.Text.Trim();
+            if (parts.Contains(trimmed)) continue;
+            parts.Add(trimmed);
+            if (parts.Count >= maxSegments) break;
+        }
+        return parts.Count > 0 ? string.Join(". ", parts) : null;
+    }
+
+    private static int TableElementRank(string name) => name switch
+    {
+        "e_txt_num" => 0,   // booth number
+        "e_txt_mode" => 1,  // 1v1 / training
+        "e_txt_rule" => 3,  // rounds/timer/wins string
+        _ => 2,             // player names, statuses
+    };
+
+    private static int ReplayElementRank(string name) => name switch
+    {
+        "e_text_fid_num_" => 0, // player name (with their LP and result below)
+        "e_text_lp_num" => 0,
+        "e_result_" => 0,       // win/loss
+        "e_time" => 1,
+        "e_day" => 1,
+        "e_play_num" => -1,     // bare view count reads as a stray "0" — drop
+        _ => 2,
+    };
+
+    // Character-specific training settings rows (character, skill name, values)
+    private static int CharaElementRank(string name) => name switch
+    {
+        "e_txt_chara" => 0,     // RYU
+        "e_txt_name" => 1,      // Denjin Charge
+        "e_txt_0" => 2,         // current / default value
+        "e_text_value" => -1,   // gauge segments, dozens of bare "0"s — drop
+        _ => 3,
+    };
 
     /// <summary>
     /// Read the on-screen text of a UIParts list/grid row: child part at the
@@ -444,6 +532,39 @@ public static class FlowHelper
         }
         catch { }
         return null;
+    }
+
+    private static readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<int, string>> _enumNameCache = new();
+
+    /// <summary>Constant name for an enum value, resolved from the TDB (e.g.
+    /// app.InputAssign.Digital.Id 8 → "BTL_Y"). Null when unknown.</summary>
+    public static string ResolveEnumName(string enumTypeName, int value)
+    {
+        try
+        {
+            if (!_enumNameCache.TryGetValue(enumTypeName, out var map))
+            {
+                map = new System.Collections.Generic.Dictionary<int, string>();
+                _enumNameCache[enumTypeName] = map;
+
+                var fields = TDB.Get().FindType(enumTypeName)?.GetFields();
+                if (fields != null)
+                {
+                    foreach (var f in fields)
+                    {
+                        if (f.Name == "value__") continue;
+                        try
+                        {
+                            var raw = f.GetDataBoxed(typeof(int), 0, false);
+                            if (raw != null) map[Convert.ToInt32(raw)] = f.Name;
+                        }
+                        catch { }
+                    }
+                }
+            }
+            return map.TryGetValue(value, out var name) ? name : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>Resolve a Guid stored in a field of the given object.</summary>
@@ -562,7 +683,10 @@ public static class FlowHelper
             { "BTL_LS_U", "up" }, { "BTL_LS_D", "down" }, { "BTL_LS_L", "left" }, { "BTL_LS_R", "right" },
             { "BTL_X", "square" }, { "BTL_Y", "triangle" }, { "BTL_A", "cross" }, { "BTL_B", "circle" },
             { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
+            { "BTL_U", "up" }, { "BTL_D", "down" }, { "BTL_L", "left" }, { "BTL_R", "right" },
+            { "UIDecide", "confirm" }, { "UICancel", "cancel" },
+            { "MouseL", "left click" }, { "MouseR", "right click" },
         },
     };
 
@@ -595,7 +719,10 @@ public static class FlowHelper
             { "BTL_LS_U", "arriba" }, { "BTL_LS_D", "abajo" }, { "BTL_LS_L", "izquierda" }, { "BTL_LS_R", "derecha" },
             { "BTL_X", "cuadrado" }, { "BTL_Y", "triángulo" }, { "BTL_A", "equis" }, { "BTL_B", "círculo" },
             { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
+            { "BTL_U", "arriba" }, { "BTL_D", "abajo" }, { "BTL_L", "izquierda" }, { "BTL_R", "derecha" },
+            { "UIDecide", "confirmar" }, { "UICancel", "cancelar" },
+            { "MouseL", "clic izquierdo" }, { "MouseR", "clic derecho" },
         },
     };
 
@@ -628,7 +755,10 @@ public static class FlowHelper
             { "BTL_LS_U", "cima" }, { "BTL_LS_D", "baixo" }, { "BTL_LS_L", "esquerda" }, { "BTL_LS_R", "direita" },
             { "BTL_X", "quadrado" }, { "BTL_Y", "triângulo" }, { "BTL_A", "xis" }, { "BTL_B", "círculo" },
             { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" },
+            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
+            { "BTL_U", "cima" }, { "BTL_D", "baixo" }, { "BTL_L", "esquerda" }, { "BTL_R", "direita" },
+            { "UIDecide", "confirmar" }, { "UICancel", "cancelar" },
+            { "MouseL", "clique esquerdo" }, { "MouseR", "clique direito" },
         },
     };
 
@@ -701,25 +831,50 @@ public static class FlowHelper
                     : attrs.Replace("\"", "").Trim();
                 if (string.IsNullOrEmpty(token)) return " ";
 
-                if (words.Inputs.TryGetValue(token, out var inputName))
-                    return $" {inputName} ";
-
-                // Motion in numpad notation: "_236", "236"
-                string motion = token.TrimStart('_');
-                if (motion.Length > 0 && Regex.IsMatch(motion, @"^\d+$"))
-                    return $" {SpeakMotion(motion, words)} ";
-
-                if (words.Icons.TryGetValue(token.ToLowerInvariant(), out var iconName))
-                    return $" {iconName} ";
-
-                // PS button glyphs: "BtnR1" → "R1"
-                if (token.StartsWith("Btn", StringComparison.OrdinalIgnoreCase))
-                    return " " + token.Substring(3) + " ";
-
-                return " " + token.Replace("BTL_", "").Replace('_', ' ') + " ";
+                return " " + SpeakToken(token, words) + " ";
             }, RegexOptions.IgnoreCase);
         }
         catch { return text; }
+    }
+
+    /// <summary>Spoken name for an input/icon token ("BTL_Y" → "triangle"),
+    /// in the current display language.</summary>
+    public static string SpeakInputToken(string token)
+    {
+        if (string.IsNullOrEmpty(token)) return null;
+        try { return SpeakToken(token, CurrentWords()); }
+        catch { return token; }
+    }
+
+    private static string SpeakToken(string token, CommandWords words)
+    {
+        if (words.Inputs.TryGetValue(token, out var inputName))
+            return inputName;
+
+        // Motion in numpad notation: "_236", "236"
+        string motion = token.TrimStart('_');
+        if (motion.Length > 0 && Regex.IsMatch(motion, @"^\d+$"))
+            return SpeakMotion(motion, words);
+
+        if (words.Icons.TryGetValue(token.ToLowerInvariant(), out var iconName))
+            return iconName;
+
+        // PS button glyphs: "BtnR1" → "R1"
+        if (token.StartsWith("Btn", StringComparison.OrdinalIgnoreCase))
+            return token.Substring(3);
+
+        // Keyboard glyphs: "KeyR" → "R"
+        if (token.StartsWith("Key", StringComparison.OrdinalIgnoreCase) && token.Length > 3)
+            return token.Substring(3);
+
+        // Menu-local input ids: "UITrainingOptionX" → "X"
+        foreach (var prefix in new[] { "UITrainingOption", "ShortCutButton" })
+        {
+            if (token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && token.Length > prefix.Length)
+                return token.Substring(prefix.Length);
+        }
+
+        return token.Replace("BTL_", "").Replace('_', ' ');
     }
 
     public static string CleanTags(string text)

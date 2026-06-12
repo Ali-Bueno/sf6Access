@@ -91,8 +91,12 @@ public class GuideTextHooks
                 bool elementSpoken = ScreenReaderService.LastInterruptTick >= gui.PendingSince - 300;
                 if (!elementSpoken && now - gui.PendingSince < PENDING_DELAY_MS) continue;
 
-                API.LogInfo($"[SF6Access] Guide [{gui.Owner}]: {gui.PendingText}");
-                ScreenReaderService.Speak(gui.PendingText, interrupt: false);
+                // Training menu tooltips repeat the row's guide with bare
+                // glyph gaps ("Ative um espaço com .") — fill in the buttons
+                string announcement = TrainingMenuHooks.FillGuideIcons(gui.PendingText);
+
+                API.LogInfo($"[SF6Access] Guide [{gui.Owner}]: {announcement}");
+                ScreenReaderService.Speak(announcement, interrupt: false);
                 gui.PendingText = null;
             }
             catch { }

@@ -41,19 +41,18 @@ public class MatchingSettingHooks
     private static ManagedObject _tabList;
 
     // Row groups of every settings tab — only the matchmaking tab was tracked
-    // before, leaving the battle and profile tabs silent. partsField == null
-    // means the group lives directly on the Param.
-    private static readonly (string partsField, string groupField)[] GroupSources =
-    {
-        (null, "Group"),
-        ("MatchingSettingMatching", "mGroup"),
-        ("MatchingSettingBattle", "mGroup"),
-        ("MatchingSettingBattle", "mSimpleList"),
-        ("FighterProfileSetting", "mGroup"),
-        ("FighterProfileSetting", "mTopList"),
-    };
-    private static readonly int[] _lastFocusIdx = new int[GroupSources.Length];
-    private static readonly string[] _lastFocusText = new string[GroupSources.Length];
+    // before, leaving the battle and profile tabs silent. The Param's own
+    // Group wraps whole tab panels: the poller's segment cap skips those and
+    // the nested groups read the actual row.
+    private static readonly GroupFocusPoller FocusPoller = new(
+        "MatchingSetting", announceFirst: false,
+        new GroupFocusPoller.Source(null, "Group"),
+        new GroupFocusPoller.Source("MatchingSettingMatching", "mGroup"),
+        new GroupFocusPoller.Source("MatchingSettingBattle", "mGroup"),
+        new GroupFocusPoller.Source("MatchingSettingBattle", "mSimpleList"),
+        new GroupFocusPoller.Source("FighterProfileSetting", "mGroup"),
+        new GroupFocusPoller.Source("FighterProfileSetting", "mTopList"));
+
     private static readonly Dictionary<string, ManagedObject> _valueTexts = new();
     private static readonly Dictionary<string, string> _lastValues = new();
     private static int _lastTabIdx = -1;
@@ -93,69 +92,9 @@ public class MatchingSettingHooks
         if (_pollCounter % POLL_READ_INTERVAL == 0)
         {
             PollTab();
-            PollGroupFocus();
+            FocusPoller.Poll(_param);
             PollValueChanges();
         }
-    }
-
-    /// <summary>
-    /// Announce the focused row by reading its child parts' GUI texts.
-    /// Re-announces when the row's text changes in place (left/right value edits).
-    /// </summary>
-    private static void PollGroupFocus()
-    {
-        for (int g = 0; g < GroupSources.Length; g++)
-        {
-            // Re-resolve each tick: tab parts initialize after the Param appears
-            var group = ResolveGroup(g);
-            if (group == null) continue;
-
-            int idx = FlowHelper.ReadIntField(group, "_FocusIndex");
-            if (idx < 0) continue;
-
-            string text = null;
-            try
-            {
-                // GetFocusChild is authoritative — _Children order can be
-                // reversed relative to the focus index
-                var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject;
-                if (child == null)
-                {
-                    var children = FlowHelper.GetObjectField(group, "_Children");
-                    child = FlowHelper.GetListItem(children, idx);
-                }
-                var control = FlowHelper.GetObjectField(child, "Control")
-                    ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
-                text = GuiTextReader.ReadControlTextJoined(control);
-            }
-            catch { }
-
-            bool first = _lastFocusIdx[g] == -2;
-            bool indexChanged = idx != _lastFocusIdx[g];
-            bool textChanged = !string.IsNullOrEmpty(text) && text != _lastFocusText[g];
-            string previousText = _lastFocusText[g];
-
-            _lastFocusIdx[g] = idx;
-            if (!string.IsNullOrEmpty(text)) _lastFocusText[g] = text;
-
-            if (first || string.IsNullOrEmpty(text)) continue;
-            if (!indexChanged && !textChanged) continue;
-
-            // Same row, value edited with left/right: announce only the new value
-            string announcement = !indexChanged
-                ? FlowHelper.DiffSegments(previousText, text)
-                : text;
-
-            API.LogInfo($"[SF6Access] MatchingSetting focus [g{g},{idx}]: {announcement}");
-            ScreenReaderService.Speak(announcement);
-        }
-    }
-
-    private static ManagedObject ResolveGroup(int index)
-    {
-        var (partsField, groupField) = GroupSources[index];
-        var owner = partsField == null ? _param : FlowHelper.GetObjectField(_param, partsField);
-        return FlowHelper.GetObjectField(owner, groupField);
     }
 
     private static void TryActivate()
@@ -166,12 +105,7 @@ public class MatchingSettingHooks
         _param = param;
         _tabList = FlowHelper.GetObjectField(param, "TabList");
 
-        for (int g = 0; g < GroupSources.Length; g++)
-        {
-            _lastFocusIdx[g] = -2;
-            _lastFocusText[g] = null;
-        }
-
+        FocusPoller.Reset();
         _lastTabIdx = -1;
         _valueTexts.Clear();
         _lastValues.Clear();
@@ -259,11 +193,7 @@ public class MatchingSettingHooks
         _isActive = false;
         _param = null;
         _tabList = null;
-        for (int g = 0; g < GroupSources.Length; g++)
-        {
-            _lastFocusIdx[g] = -2;
-            _lastFocusText[g] = null;
-        }
+        FocusPoller.Reset();
         _valueTexts.Clear();
         _lastValues.Clear();
         _lastTabIdx = -1;

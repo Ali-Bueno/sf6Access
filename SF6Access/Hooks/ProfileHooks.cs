@@ -54,7 +54,7 @@ public class ProfileHooks
         var setuped = FlowHelper.Call(param, "get_IsSetuped");
         if (setuped is bool b && !b) return;
 
-        string text = ReadPanelTexts(param);
+        string text = ReadPanelTexts(param, typeName);
         if (string.IsNullOrEmpty(text)) return;
 
         // Announce on tab change or when the panel content changes
@@ -66,8 +66,13 @@ public class ProfileHooks
         ScreenReaderService.Speak(text, interrupt: false);
     }
 
-    /// <summary>Read all via.gui.Text fields declared on the param type.</summary>
-    private static string ReadPanelTexts(ManagedObject param)
+    /// <summary>
+    /// Read all via.gui.Text fields declared on the param type. The labels on
+    /// screen are rendered as images, so each value is prefixed with a label
+    /// derived from its field name (_LeaguePointText → "League Point") —
+    /// bare numbers like "10060" were meaningless otherwise.
+    /// </summary>
+    private static string ReadPanelTexts(ManagedObject param, string typeName)
     {
         var parts = new List<string>();
         try
@@ -87,7 +92,9 @@ public class ProfileHooks
                             var textObj = param.GetField(field.Name) as ManagedObject;
                             string text = FlowHelper.ReadGuiText(textObj);
                             if (string.IsNullOrWhiteSpace(text)) continue;
-                            parts.Add(text.Trim());
+
+                            string label = HumanizeFieldName(field.Name);
+                            parts.Add(label != null ? $"{label}: {text.Trim()}" : text.Trim());
                             if (parts.Count >= MAX_TEXTS) break;
                         }
                         catch { }
@@ -95,8 +102,46 @@ public class ProfileHooks
                 }
                 td = td.ParentType;
             }
+
+            // The play tab also shows the favorite modes with their hours —
+            // they only exist as GUI texts, paired num + mode name
+            if (typeName.Contains("TabPlay"))
+                AppendFavoriteModes(parts);
         }
         catch { }
         return parts.Count > 0 ? string.Join(". ", parts) : null;
+    }
+
+    /// <summary>"_LeaguePointText" → "League Point"; null when nothing remains.</summary>
+    private static string HumanizeFieldName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        name = name.TrimStart('_');
+        if (name.EndsWith("Text")) name = name.Substring(0, name.Length - 4);
+        if (name.Length == 0) return null;
+        return System.Text.RegularExpressions.Regex.Replace(name, "(?<=[a-z0-9])(?=[A-Z])", " ");
+    }
+
+    private static void AppendFavoriteModes(List<string> parts)
+    {
+        try
+        {
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews("CFNFighterProfileChildPlayTab"))
+            {
+                string pendingTime = null;
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                {
+                    if (t.Name == "e_text_favorite_mode_num")
+                        pendingTime = t.Text?.Trim();
+                    else if (t.Name == "e_text_favorite_mode" && pendingTime != null)
+                    {
+                        parts.Add($"{t.Text?.Trim()} {pendingTime}");
+                        pendingTime = null;
+                    }
+                }
+                break;
+            }
+        }
+        catch { }
     }
 }

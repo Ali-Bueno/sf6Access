@@ -27,6 +27,10 @@ public class TrainingReversalHooks
     private static readonly Dictionary<string, int> _lastFocus = new();
     private static int _lastTabIndex = -2;
 
+    // Set on entry and tab change: the next readable focused row announces
+    // even without a focus change (the initial row was never read otherwise)
+    private static bool _pendingRowAnnounce;
+
     [PluginEntryPoint]
     public static void Initialize()
     {
@@ -49,6 +53,7 @@ public class TrainingReversalHooks
                 _isActive = true;
                 _lastFocus.Clear();
                 _lastTabIndex = -2;
+                _pendingRowAnnounce = true;
                 API.LogInfo($"[SF6Access] Reversal menu active ({_params.Count} params)");
             }
             else if (!active && _isActive)
@@ -78,7 +83,11 @@ public class TrainingReversalHooks
 
         bool first = _lastTabIndex == -2;
         _lastTabIndex = tab;
-        if (first) return;
+
+        // A new tab shows a new list: read its focused row too, even when
+        // that list's focus index didn't move
+        _lastFocus.Clear();
+        _pendingRowAnnounce = true;
 
         string title = null;
         try
@@ -92,7 +101,7 @@ public class TrainingReversalHooks
             ? FlowHelper.CleanTags(title)
             : $"Tab {tab + 1}";
         API.LogInfo($"[SF6Access] Reversal tab [{tab}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        ScreenReaderService.Speak(announcement, interrupt: !first);
     }
 
     /// <summary>Move rows of one category list.</summary>
@@ -105,9 +114,25 @@ public class TrainingReversalHooks
         if (focus < 0) return;
 
         bool first = !_lastFocus.TryGetValue(typeName, out int last);
-        if (!first && focus == last) return;
+        bool changed = first || focus != last;
         _lastFocus[typeName] = focus;
-        if (first) return;
+
+        // Entry / tab change: read the visible list's current row once. Only
+        // the shown category's param has mIsActive set — without this check
+        // every category list would announce its row.
+        if (_pendingRowAnnounce && FlowHelper.ReadBoolField(param, "mIsActive"))
+        {
+            string row = ReadSkillName(param, focus) ?? ReadRowText(param);
+            if (!string.IsNullOrEmpty(row))
+            {
+                _pendingRowAnnounce = false;
+                API.LogInfo($"[SF6Access] Reversal row (initial) [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
+                ScreenReaderService.Speak(row, interrupt: false);
+            }
+            return;
+        }
+
+        if (!changed || first) return;
 
         string announcement = ReadSkillName(param, focus) ?? ReadRowText(param);
         if (string.IsNullOrEmpty(announcement)) return;

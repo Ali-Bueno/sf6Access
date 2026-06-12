@@ -60,11 +60,23 @@ public class GroupFocusHooks
     private static int _pollCounter;
     private const int POLL_SEARCH_INTERVAL = 60;
     private const int POLL_READ_INTERVAL = 5;
-    private const int MAX_ROW_TEXTS = 3;
+    // 6, not 3: friend-list rows carry name, title, label and two time texts —
+    // the active-hours value was cut off at three segments
+    private const int MAX_ROW_TEXTS = 6;
 
-    private static string _activeType;
-    private static ManagedObject _param;
-    private static readonly List<TrackedField> _fields = new();
+    private sealed class TrackedParam
+    {
+        public string TypeName;
+        public ManagedObject Param;
+        public ulong Address;
+        public readonly List<TrackedField> Fields = new();
+    }
+
+    // Track SEVERAL active params at once: tab lists often live on a parent
+    // param (tournament menu) while the content rows live on per-tab params
+    // that come and go — tracking only the newest one muted the tab switches
+    private const int MAX_TRACKED_PARAMS = 4;
+    private static readonly List<TrackedParam> _params = new();
 
     // Dedupe: several trackers can resolve the same row (shop GoodsGroup and
     // GoodsListGroup both wrap the goods list) — remember recent texts, not
@@ -72,10 +84,20 @@ public class GroupFocusHooks
     private static string _lastAnnouncement;
     private static int _lastAnnouncementFrame;
     private static readonly Dictionary<string, int> _recentAnnouncements = new();
-    private const int DEDUPE_FRAMES = 40;
+    // Multi-tracker duplicates land within one or two 5-frame polls — a longer
+    // window also muted rows the user re-visited by navigating fast
+    private const int DEDUPE_FRAMES = 15;
 
     // Only suppress other hooks when this one can actually announce something
-    public static bool IsActive => _activeType != null && _fields.Count > 0;
+    public static bool IsActive
+    {
+        get
+        {
+            foreach (var tp in _params)
+                if (tp.Fields.Count > 0) return true;
+            return false;
+        }
+    }
 
     // Suppress FocusChanged only while this hook is actually announcing rows.
     // A silently-active tracker (Battle Hub room while navigating the avatar
@@ -139,90 +161,82 @@ public class GroupFocusHooks
 
         // Search faster while idle: a 60-frame interval made pause menus
         // wait up to a second before their first announcement
-        int searchInterval = _activeType == null ? 20 : POLL_SEARCH_INTERVAL;
+        int searchInterval = _params.Count == 0 ? 20 : POLL_SEARCH_INTERVAL;
         if (_pollCounter % searchInterval == 0)
-            RefreshActiveParam();
+            RefreshActiveParams();
 
-        if (_param != null && _pollCounter % POLL_READ_INTERVAL == 0)
+        if (_params.Count > 0 && _pollCounter % POLL_READ_INTERVAL == 0)
             PollFields();
 
         ProcessFocusFallback();
     }
 
-    private static void RefreshActiveParam()
+    private static void RefreshActiveParams()
     {
-        string foundType = null;
-        ManagedObject foundParam = null;
-
-        // Prefer the newest matching param that actually has trackable fields:
-        // gallery keeps a fieldless Main.Param alive next to the screen params.
         // Single handle pass keeps global newest-first order — per-prefix
         // iteration made the lingering avatar arcade param outrank the newer
-        // master menu param.
+        // master menu param. Newest handle comes FIRST (verified via F9 dump).
         var candidates = new List<(string typeName, ManagedObject param)>();
         foreach (var (typeName, param) in FlowHelper.FindFlowParamsMatchingPrefixes(WatchPrefixes))
         {
             if (System.Array.IndexOf(ExcludedTypes, typeName) >= 0) continue;
             candidates.Add((typeName, param));
+            if (candidates.Count >= MAX_TRACKED_PARAMS) break;
         }
 
-        // Newest handle comes FIRST in _Handles (verified via F9 dump)
+        // Drop params that disappeared from the handle list
+        for (int i = _params.Count - 1; i >= 0; i--)
+        {
+            bool present = false;
+            foreach (var (unused, param) in candidates)
+            {
+                if (FlowHelper.AddressOf(param) == _params[i].Address) { present = true; break; }
+            }
+            if (!present)
+            {
+                API.LogInfo($"[SF6Access] GroupFocus ended: {_params[i].TypeName}");
+                _params.RemoveAt(i);
+            }
+        }
+
+        // Add newly appeared params, keep state of the ones already tracked
         foreach (var (typeName, param) in candidates)
         {
-            if (typeName == _activeType || CountTrackableFields(param) > 0)
+            ulong addr = FlowHelper.AddressOf(param);
+            TrackedParam existing = null;
+            foreach (var tp in _params)
             {
-                foundType = typeName;
-                foundParam = param;
-                break;
+                if (tp.Address == addr) { existing = tp; break; }
             }
-        }
-        if (foundParam == null && candidates.Count > 0)
-            (foundType, foundParam) = candidates[0];
-
-        if (foundParam == null)
-        {
-            if (_activeType != null)
+            if (existing != null)
             {
-                API.LogInfo($"[SF6Access] GroupFocus ended: {_activeType}");
-                _activeType = null;
-                _param = null;
-                _fields.Clear();
-                _lastAnnouncement = null;
-                _recentAnnouncements.Clear();
+                existing.Param = param;
+                // Fields may appear after the screen finishes initializing
+                if (existing.Fields.Count == 0) DiscoverFields(existing);
+                continue;
             }
-            return;
+
+            var entry = new TrackedParam { TypeName = typeName, Param = param, Address = addr };
+            DiscoverFields(entry);
+            _params.Add(entry);
+            API.LogInfo($"[SF6Access] GroupFocus active: {typeName} ({entry.Fields.Count} fields)");
         }
 
-        if (foundType == _activeType)
+        if (_params.Count == 0)
         {
-            _param = foundParam;
-            // Fields may appear after the screen finishes initializing
-            if (_fields.Count == 0) DiscoverFields(foundParam);
-            return;
+            _lastAnnouncement = null;
+            _recentAnnouncements.Clear();
         }
-
-        _activeType = foundType;
-        _param = foundParam;
-        _fields.Clear();
-        DiscoverFields(foundParam);
-        API.LogInfo($"[SF6Access] GroupFocus active: {foundType} ({_fields.Count} fields)");
     }
 
     /// <summary>Find UIPartsGroup/list fields on the param type (walking parent types).</summary>
-    private static void DiscoverFields(ManagedObject param)
+    private static void DiscoverFields(TrackedParam entry)
     {
-        foreach (var (fieldType, cleanName, isList) in GetTrackableFields(param))
+        foreach (var (fieldType, cleanName, isList) in GetTrackableFields(entry.Param))
         {
-            _fields.Add(new TrackedField { FieldName = cleanName, IsList = isList });
+            entry.Fields.Add(new TrackedField { FieldName = cleanName, IsList = isList });
             API.LogInfo($"[SF6Access] GroupFocus tracking {fieldType} '{cleanName}'");
         }
-    }
-
-    private static int CountTrackableFields(ManagedObject param)
-    {
-        int count = 0;
-        foreach (var unused in GetTrackableFields(param)) count++;
-        return count;
     }
 
     private static List<(string fieldType, string cleanName, bool isList)> GetTrackableFields(ManagedObject param)
@@ -275,12 +289,18 @@ public class GroupFocusHooks
 
     private static void PollFields()
     {
-        foreach (var f in _fields)
+        foreach (var tp in _params)
+            PollParamFields(tp);
+    }
+
+    private static void PollParamFields(TrackedParam tp)
+    {
+        foreach (var f in tp.Fields)
         {
             try
             {
                 // Re-read the object each tick: it may be created after the param appears
-                var obj = FlowHelper.GetObjectField(_param, f.FieldName);
+                var obj = FlowHelper.GetObjectField(tp.Param, f.FieldName);
                 if (obj == null) continue;
 
                 int idx = f.IsList
@@ -306,7 +326,17 @@ public class GroupFocusHooks
                 f.LastPath = path;
                 if (!string.IsNullOrEmpty(text)) f.LastText = text;
 
-                if (first || string.IsNullOrEmpty(text)) continue;
+                if (string.IsNullOrEmpty(text)) continue;
+                if (first)
+                {
+                    // Announce the initially-focused row (queued, after the
+                    // screen title) — single-row lists and one-option menus
+                    // were never read otherwise. Only the field that actually
+                    // holds focus, or the room screen would read all 7 fields.
+                    if (!IsPartsFocused(obj)) continue;
+                    AnnounceRow(f, idx, text, interrupt: false);
+                    continue;
+                }
                 if (!rowChanged && !textChanged) continue;
 
                 // Same row, value edited: announce only what changed.
@@ -325,20 +355,52 @@ public class GroupFocusHooks
                     if (specific != null) announcement = specific;
                 }
 
-                // Skip when any tracker recently announced the same text
-                if (_recentAnnouncements.TryGetValue(announcement, out int lastFrame) &&
-                    _pollCounter - lastFrame < DEDUPE_FRAMES)
-                    continue;
-                _recentAnnouncements[announcement] = _pollCounter;
-                if (_recentAnnouncements.Count > 32) PruneRecentAnnouncements();
-                _lastAnnouncement = announcement;
-                _lastAnnouncementFrame = _pollCounter;
+                bool announced = AnnounceRow(f, idx, announcement, interrupt: true);
 
-                API.LogInfo($"[SF6Access] GroupFocus [{f.FieldName},{idx}]: {announcement}");
-                ScreenReaderService.Speak(announcement);
+                // Switching tab must re-read the content row even when its text
+                // is unchanged (single-option lists were silent when returning
+                // to their tab) — make the other fields announce again
+                if (announced && rowChanged && f.FieldName.Contains("Tab"))
+                    ResetOtherFields(tp, f);
             }
             catch { }
         }
+    }
+
+    /// <summary>Dedupe, log and speak a row announcement. False when suppressed.</summary>
+    private static bool AnnounceRow(TrackedField f, int idx, string announcement, bool interrupt)
+    {
+        // Skip when any tracker recently announced the same text
+        if (_recentAnnouncements.TryGetValue(announcement, out int lastFrame) &&
+            _pollCounter - lastFrame < DEDUPE_FRAMES)
+            return false;
+        _recentAnnouncements[announcement] = _pollCounter;
+        if (_recentAnnouncements.Count > 32) PruneRecentAnnouncements();
+        _lastAnnouncement = announcement;
+        _lastAnnouncementFrame = _pollCounter;
+
+        API.LogInfo($"[SF6Access] GroupFocus [{f.FieldName},{idx}]: {announcement}");
+        ScreenReaderService.Speak(announcement, interrupt);
+        return true;
+    }
+
+    private static void ResetOtherFields(TrackedParam tp, TrackedField current)
+    {
+        foreach (var other in tp.Fields)
+        {
+            if (other == current || other.FieldName.Contains("Tab")) continue;
+            other.LastIndex = -2;
+            other.LastText = null;
+            other.LastPath = null;
+        }
+    }
+
+    /// <summary>True when the UIParts group/list reports holding input focus.</summary>
+    private static bool IsPartsFocused(ManagedObject partsObj)
+    {
+        var result = FlowHelper.Call(partsObj, "get_IsFocus");
+        if (result is bool b) return b;
+        return FlowHelper.ReadBoolField(partsObj, "_IsFocus");
     }
 
     /// <summary>
@@ -351,12 +413,13 @@ public class GroupFocusHooks
         var segments = announcement.Split(new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length < 2) return null;
 
-        foreach (var other in _fields)
+        foreach (var tp in _params)
+        foreach (var other in tp.Fields)
         {
             if (other == current || !other.IsList) continue;
             try
             {
-                var obj = FlowHelper.GetObjectField(_param, other.FieldName);
+                var obj = FlowHelper.GetObjectField(tp.Param, other.FieldName);
                 if (obj == null) continue;
 
                 int idx = FlowHelper.CallInt(obj, "get_SelectedIndex");
@@ -377,6 +440,26 @@ public class GroupFocusHooks
                     if (seg.Trim() == text.Trim())
                         return text;
                 }
+
+                // Subset match: a group row can wrap a whole table panel (room
+                // booths) whose announcement repeats every segment of the other
+                // list's focused row — return just that row; the recent-
+                // announcement dedupe then drops the duplicate entirely
+                var rowSegs = text.Split(new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries);
+                if (rowSegs.Length >= 2)
+                {
+                    bool allContained = true;
+                    foreach (var rs in rowSegs)
+                    {
+                        bool found = false;
+                        foreach (var seg in segments)
+                        {
+                            if (seg.Trim() == rs.Trim()) { found = true; break; }
+                        }
+                        if (!found) { allContained = false; break; }
+                    }
+                    if (allContained) return text;
+                }
             }
             catch { }
         }
@@ -390,22 +473,53 @@ public class GroupFocusHooks
         focusPath = idx.ToString();
         var child = GetFocusedChild(obj, idx);
 
-        // Descend nested groups to the actually focused row
+        // Descend nested groups to the actually focused row. Remember the
+        // DEEPEST level that still holds win/loss texts — that is the full
+        // replay row; the list above it spans every row and the cells below
+        // it (player banner, time) read as meaningless fragments.
+        ManagedObject replayRowControl = null;
         int depth = 0;
         while (child != null && depth++ < 4)
         {
+            var levelControl = FlowHelper.GetObjectField(child, "Control")
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject
+                ?? child; // a descent step can land on a bare via.gui control
+
+            // A replay ROW holds one win/loss text per player (two); the list
+            // above it holds them for every row and a single player cell only
+            // one — keep the deepest control with at least two
+            if (CountReplayResults(levelControl) >= 2) replayRowControl = levelControl;
+
+            // List-type children track focus via SelectedIndex instead of
+            // _FocusIndex; mediator parts (app.UIPartsReplayList) expose ONLY
+            // GetFocusChild — descend by it even with no index, keying the
+            // focus path on the child's address so row moves are detected
             int subIdx = FlowHelper.ReadIntField(child, "_FocusIndex");
-            if (subIdx < 0) break;
-            var subChild = GetFocusedChild(child, subIdx);
+            if (subIdx < 0) subIdx = FlowHelper.CallInt(child, "get_SelectedIndex");
+
+            var subChild = subIdx >= 0
+                ? GetFocusedChild(child, subIdx)
+                : FlowHelper.Call(child, "GetFocusChild") as ManagedObject;
             if (subChild == null) break;
-            focusPath += ">" + subIdx;
+
+            focusPath += ">" + (subIdx >= 0
+                ? subIdx.ToString()
+                : FlowHelper.AddressOf(subChild).ToString("x"));
             child = subChild;
+        }
+
+        if (replayRowControl != null)
+        {
+            string rowText = FlowHelper.FormatRowTexts(
+                GuiTextReader.ReadControlTexts(replayRowControl), 10);
+            if (!string.IsNullOrEmpty(rowText)) return rowText;
         }
 
         if (child != null)
         {
             var control = FlowHelper.GetObjectField(child, "Control")
-                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject
+                ?? child;
             string text = JoinTexts(GuiTextReader.ReadControlTexts(control));
             if (!string.IsNullOrEmpty(text)) return text;
         }
@@ -415,12 +529,29 @@ public class GroupFocusHooks
         return null;
     }
 
+    private static int CountReplayResults(ManagedObject control)
+    {
+        if (control == null) return 0;
+        int count = 0;
+        try
+        {
+            foreach (var t in GuiTextReader.ReadControlTexts(control))
+            {
+                if (t.Name == "e_result_") count++;
+            }
+        }
+        catch { }
+        return count;
+    }
+
     /// <summary>Focused child of a UIPartsGroup: GetFocusChild is authoritative —
     /// _Children order can be REVERSED relative to the focus index (the trial
-    /// pause menu announced the wrong row).</summary>
+    /// pause menu announced the wrong row). Lists expose the focused row as
+    /// SelectedItem instead.</summary>
     private static ManagedObject GetFocusedChild(ManagedObject partsObj, int idx)
     {
-        var focused = FlowHelper.Call(partsObj, "GetFocusChild") as ManagedObject;
+        var focused = FlowHelper.Call(partsObj, "GetFocusChild") as ManagedObject
+            ?? FlowHelper.Call(partsObj, "get_SelectedItem") as ManagedObject;
         return focused ?? GetChildAt(partsObj, idx);
     }
 
@@ -430,15 +561,6 @@ public class GroupFocusHooks
         return FlowHelper.GetListItem(children, idx);
     }
 
-    private static string JoinTexts(List<GuiTextReader.GuiText> texts)
-    {
-        var parts = new List<string>();
-        foreach (var t in texts)
-        {
-            if (string.IsNullOrWhiteSpace(t.Text)) continue;
-            parts.Add(t.Text.Trim());
-            if (parts.Count >= MAX_ROW_TEXTS) break;
-        }
-        return parts.Count > 0 ? string.Join(". ", parts) : null;
-    }
+    private static string JoinTexts(List<GuiTextReader.GuiText> texts) =>
+        FlowHelper.FormatRowTexts(texts, MAX_ROW_TEXTS);
 }
