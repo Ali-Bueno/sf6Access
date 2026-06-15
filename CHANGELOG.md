@@ -13,10 +13,10 @@
 - Extreme Battle: the rule banner and the objective list are announced, with progress called out as each step changes.
 
 ### Online & rooms
-- Room search menu options are no longer swapped (Ver convites / Buscar salas, etc.).
-- Search-by-name and search-by-code dialogs are read: title, prompt, the name field, and the Cancelar / Buscar buttons; the typed text is announced and the buttons read every time you move to them.
+- Room search menu options are no longer swapped (View invitations / Search rooms, etc.).
+- Search-by-name and search-by-code dialogs are read: title, prompt, the name field, and the Cancel / Search buttons; the typed text is announced and the buttons read every time you move to them.
 - Notifications / mailbox list reads each message as you navigate.
-- Replay-info menu (after picking a replay) reads its options: view each player's details, add to favorites, Comentário on/off, and Assistir a replay.
+- Replay-info menu (after picking a replay) reads its options: view each player's details, add to favorites, commentary on/off, and watch replay.
 
 ### Rewards & misc
 - Cosmetic / reward unlock toasts are announced ("Obtained ...").
