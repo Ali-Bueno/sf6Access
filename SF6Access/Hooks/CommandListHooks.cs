@@ -27,6 +27,10 @@ public class CommandListHooks
 
     private static uint _lastSkillId;
     private static int _lastCategoryIdx = -1;
+    // Currently displayed control type: -1 unknown, 0 Classic, 1 Modern.
+    // The command list has an input-type tab; switching it changes which command
+    // notation each skill shows (Classic vs Modern), so re-announce on change.
+    private static int _lastInputType = -1;
 
     public static bool IsInCommandList => _isActive;
 
@@ -63,8 +67,38 @@ public class CommandListHooks
         if (_pollCounter % POLL_READ_INTERVAL == 0)
         {
             PollCategory();
+            PollInputType();
             PollSkill();
         }
+    }
+
+    /// <summary>Current control type displayed by the list: 1 Modern (casual), 0 Classic.</summary>
+    private static int GetInputType()
+    {
+        try
+        {
+            var raw = FlowHelper.Call(_param, "get_IsCasual");
+            if (raw is bool casual) return casual ? 1 : 0;
+        }
+        catch { }
+        return -1;
+    }
+
+    /// <summary>
+    /// Re-announce the focused move when the input-type tab is switched
+    /// (Classic ↔ Modern): the command notation changes even though the skill
+    /// does not, so the previously announced command would be stale.
+    /// </summary>
+    private static void PollInputType()
+    {
+        int type = GetInputType();
+        if (type < 0 || type == _lastInputType) return;
+
+        bool first = _lastInputType == -1;
+        _lastInputType = type;
+        if (first) return;
+
+        AnnounceSkill();
     }
 
     private static void TryActivate()
@@ -77,6 +111,7 @@ public class CommandListHooks
         _categoryTabList = FlowHelper.GetObjectField(param, "mCategoryTabList");
         _lastSkillId = 0;
         _lastCategoryIdx = -1;
+        _lastInputType = -1;
         _isActive = true;
 
         API.LogInfo($"[SF6Access] Command list active (detail={_detailWindow != null}, " +
@@ -172,12 +207,17 @@ public class CommandListHooks
     }
 
     /// <summary>
-    /// Resolve the command input text. Icon tags are kept as their inner names
+    /// Resolve the command input text for the control type the list is currently
+    /// showing. Each skill carries separate command Guids per control type:
+    /// NormalCommandMessage = Classic, CasualCommandMessage = Modern, and
+    /// CasualManualCommandMessage = Modern when the manual-command notation is
+    /// toggled on. Reading NormalCommandMessage unconditionally showed Classic
+    /// inputs even on Modern controls. Icon tags are kept as their inner names
     /// (e.g. "<ICON arrow_236>" becomes "arrow_236") until a proper mapping exists.
     /// </summary>
     private static string ResolveCommandText(ManagedObject skill)
     {
-        foreach (var field in new[] { "NormalCommandMessage", "CasualCommandMessage", "SupplementCommandMessage" })
+        foreach (var field in GetCommandFieldOrder())
         {
             try
             {
@@ -197,6 +237,31 @@ public class CommandListHooks
             catch { }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Command Guid fields to try, ordered by the control type the list is
+    /// currently showing. Modern (casual) prefers the manual notation when that
+    /// toggle is on; Classic uses the normal command. Other types are kept as
+    /// fallbacks so a move with only one notation still reads something.
+    /// </summary>
+    private static string[] GetCommandFieldOrder()
+    {
+        bool casual = GetInputType() == 1;
+        if (!casual)
+            return new[] { "NormalCommandMessage", "CasualCommandMessage", "SupplementCommandMessage" };
+
+        bool manual = false;
+        try
+        {
+            var raw = FlowHelper.Call(_param, "get_DispCasualManualCommand");
+            if (raw is bool b) manual = b;
+        }
+        catch { }
+
+        return manual
+            ? new[] { "CasualManualCommandMessage", "CasualCommandMessage", "NormalCommandMessage", "SupplementCommandMessage" }
+            : new[] { "CasualCommandMessage", "CasualManualCommandMessage", "NormalCommandMessage", "SupplementCommandMessage" };
     }
 
     private static string ResolveGuidRaw(REFrameworkNET.ValueType vt)
@@ -260,5 +325,6 @@ public class CommandListHooks
         _categoryTabList = null;
         _lastSkillId = 0;
         _lastCategoryIdx = -1;
+        _lastInputType = -1;
     }
 }
