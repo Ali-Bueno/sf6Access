@@ -309,8 +309,13 @@ public class MainMenuHooks
             string resolvedText = TryResolveItemText(selectedItem, rawName);
 
             // Generic menus (custom rooms, lobby forms): watch the focused control
-            // so value changes (spin left/right) are announced without a focus change
-            FocusValueHooks.Track(selectedItem);
+            // so value changes (spin left/right) are announced without a focus change.
+            // The arcade settings menu has its own data-driven value reader
+            // (ArcadeSettingHooks) — skip the generic watcher to avoid double-reads.
+            if (ArcadeSettingHooks.IsActive)
+                FocusValueHooks.Clear();
+            else
+                FocusValueHooks.Track(selectedItem);
 
             // Map known tab names to readable text
             string announcement = TabNames.TryGetValue(rawName, out var mapped) ? mapped

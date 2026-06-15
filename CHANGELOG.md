@@ -9,6 +9,9 @@
 - Reversal "Delay Settings" submenu (R) reads the frame value, announcing only the value as you change it with left/right.
 - CPU Level is read when a player is set to CPU (the control-type slot becomes CPU Level), announcing the value and updating it on left/right.
 
+### Arcade / Story
+- Game settings menu (Difficulty, Rounds, Stages, Bonus Stages): the value is now announced when changed with left/right, not only when moving up/down between rows.
+
 ## v0.3.0 — 15/06/2026
 
 ### Training
