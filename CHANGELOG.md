@@ -12,6 +12,9 @@
 ### Arcade / Story
 - Game settings menu (Difficulty, Rounds, Stages, Bonus Stages): the value is now announced when changed with left/right, not only when moving up/down between rows.
 
+### Online
+- "Opponent found! Accept the match?" confirmation screen (reached by pressing Back/Escape during ranked/casual matchmaking) is now read: the prompt plus the opponent's connection — type (WiFi / Cable) and signal strength (0-5) — and any name/rank text shown in the widget.
+
 ## v0.3.0 — 15/06/2026
 
 ### Training

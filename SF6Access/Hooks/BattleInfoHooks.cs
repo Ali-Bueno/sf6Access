@@ -53,24 +53,153 @@ public class BattleInfoHooks
 
     private static readonly Dictionary<string, string> _lastMatchingTexts = new();
 
+    // Opponent connection (WiFi/wired) announced once per match, at the moment
+    // the battle profiles first become available (matchmaking confirmed)
+    private static bool _connectionAnnounced;
+
+    // "Opponent found! Accept the match?" confirm screen (UIWidget_MatchingSelect):
+    // the opponent's signal bars + WiFi/wired icon are set via SetSignalStrength,
+    // while the prompt + opponent name + any LP/rank are via.gui.Texts in the
+    // widget's contents. Capture the widget instance + signal args in the hook,
+    // then walk the whole widget on a later update (off the hook thread). The
+    // texts can load a beat after the signal, so retry a few frames before
+    // giving up. Antenna.Loading = -1 is the not-yet-measured placeholder.
+    private static ManagedObject _signalWidget;
+    private static int _pendingAntenna = int.MinValue;
+    private static int _pendingInterface;
+    private static int _signalReadDelay;
+    private static int _signalRetries;
+    private const int SIGNAL_READ_DELAY_FRAMES = 2;
+    private static string _lastSignalText;
+
     [PluginEntryPoint]
     public static void Initialize()
     {
+        HookMatchingSelectSignal();
         API.LogInfo("[SF6Access] BattleInfoHooks initialized");
+    }
+
+    /// <summary>
+    /// Hook UIWidget_MatchingSelect.SetSignalStrength(Antenna, InterfaceType) —
+    /// fired when the "opponent found! Accept the match?" confirm screen shows
+    /// the opponent's connection quality (signal bars) and connection type
+    /// (WiFi/wired), both rendered as icons with no readable text.
+    /// </summary>
+    private static void HookMatchingSelectSignal()
+    {
+        try
+        {
+            var td = TDB.Get().FindType("app.UIWidget_MatchingSelect");
+            var method = td?.GetMethod("SetSignalStrength") ??
+                         td?.GetMethod("SetSignalStrength(app.network.api.Enum.Antenna, via.network.core.InterfaceType)");
+            if (method == null)
+            {
+                API.LogInfo("[SF6Access] UIWidget_MatchingSelect.SetSignalStrength not found, opponent connection skipped");
+                return;
+            }
+
+            var hook = method.AddHook(false);
+            hook.AddPre(args =>
+            {
+                try
+                {
+                    // args[1] = this (widget), args[2] = antenna, args[3] = interfaceType
+                    _signalWidget = ManagedObject.ToManagedObject(args[1]);
+                    _pendingAntenna = (int)(long)args[2];
+                    _pendingInterface = (int)(long)args[3];
+                    _signalReadDelay = SIGNAL_READ_DELAY_FRAMES;
+                    _signalRetries = 6;
+                }
+                catch { }
+                return PreHookResult.Continue;
+            });
+            API.LogInfo("[SF6Access] Matching opponent connection hook installed");
+        }
+        catch (System.Exception ex)
+        {
+            API.LogError($"[SF6Access] SetSignalStrength hook failed: {ex.Message}");
+        }
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void OnUpdate()
     {
+        if (_signalWidget != null && --_signalReadDelay <= 0) AnnounceOpponentWidget();
+
         _pollCounter++;
         if (_pollCounter % POLL_INTERVAL == 0)
         {
             PollVsScreen();
             PollRoundCounts();
             PollResultCounter();
+            PollMatchConnection();
         }
         if (_pollCounter % SCAN_INTERVAL == 0)
             PollMatchingNotices();
+    }
+
+    // ---- Opponent-found confirm screen connection ----
+
+    /// <summary>
+    /// Speak the whole "opponent found! Accept the match?" widget captured by the
+    /// SetSignalStrength hook: the prompt + opponent name + any LP/rank (via.gui
+    /// texts walked from the widget contents), then the decoded connection —
+    /// connection type (WiFi/wired) + signal bars (Antenna 0-5, Loading = -1
+    /// skipped). Retries a few frames while the texts/signal finish loading, then
+    /// announces once per distinct result (the setup calls repeat every frame).
+    /// </summary>
+    private static void AnnounceOpponentWidget()
+    {
+        var widget = _signalWidget;
+        int antenna = _pendingAntenna;
+
+        // Walk the widget's contents for all readable text (prompt, name, rank).
+        var textParts = new List<string>();
+        try
+        {
+            foreach (var field in new[] { "mCtrlContents", "mCtrlMatchiConfilm" })
+            {
+                var ctrl = FlowHelper.GetObjectField(widget, field);
+                foreach (var t in GuiTextReader.ReadControlTexts(ctrl))
+                {
+                    if (string.IsNullOrWhiteSpace(t.Text)) continue;
+                    string trimmed = t.Text.Trim();
+                    if (!textParts.Contains(trimmed)) textParts.Add(trimmed);
+                }
+            }
+        }
+        catch { }
+
+        // Wait for the texts and a measured signal to load before announcing.
+        bool ready = textParts.Count > 0 && antenna >= 0;
+        if (!ready && --_signalRetries > 0)
+        {
+            _signalReadDelay = SIGNAL_READ_DELAY_FRAMES;
+            return;
+        }
+        _signalWidget = null; // done with this show (succeeded or gave up)
+
+        try
+        {
+            var parts = new List<string>(textParts);
+            if (antenna >= 0)
+            {
+                var conn = new List<string>();
+                string type = InterfaceLabel(_pendingInterface);
+                if (type != null) conn.Add(type);
+                conn.Add($"signal {antenna} of 5");
+                parts.Add(string.Join(", ", conn));
+            }
+            if (parts.Count == 0) { _lastSignalText = null; return; }
+
+            string text = string.Join(". ", parts);
+            if (text == _lastSignalText) return;
+            _lastSignalText = text;
+
+            API.LogInfo($"[SF6Access] Opponent confirm: {text}");
+            ScreenReaderService.Speak(text, interrupt: false);
+        }
+        catch { }
     }
 
     // ---- VS screen ----
@@ -145,6 +274,10 @@ public class BattleInfoHooks
             // offline / casual play, where the league point struct stays zero.
             string rank = ReadRank(pd);
             if (!string.IsNullOrEmpty(rank)) bits.Add(rank);
+
+            // Connection type (WiFi / wired) per side, online only
+            string conn = ConnectionLabel(i);
+            if (!string.IsNullOrEmpty(conn)) bits.Add(conn);
 
             if (bits.Count == 0) return null; // player data not filled yet
             sides.Add(string.Join(" ", bits));
@@ -366,6 +499,97 @@ public class BattleInfoHooks
         catch { }
     }
 
+    // ---- Connection type (WiFi / wired) ----
+
+    // app.network.core.InterfaceType: 0 Unknown, 1 Wireless, 2 Wired
+    private static string InterfaceLabel(int type) => type switch
+    {
+        1 => "WiFi",
+        2 => "Cable",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Connection label for a battle side (team 0 = P1, 1 = P2) from the
+    /// fighter's online profile (FighterProfileDesc.InterfaceType). Source:
+    /// the current BattleDesc held by the commentator info holder, falling back
+    /// to the character-select flow's FighterDescArray. Null offline / when the
+    /// profile isn't a remote player yet.
+    /// </summary>
+    private static string ConnectionLabel(int team)
+    {
+        var profile = GetTeamProfile(team);
+        if (profile == null) return null;
+        try
+        {
+            int type = FlowHelper.ReadIntField(profile, "InterfaceType", -1);
+            if (type < 0)
+            {
+                var r = FlowHelper.Call(profile, "get_InterfaceType");
+                if (r != null) type = System.Convert.ToInt32(r);
+            }
+            return InterfaceLabel(type);
+        }
+        catch { return null; }
+    }
+
+    private static ManagedObject GetTeamProfile(int team)
+    {
+        // 1. Current battle's FighterDesc.Profile via the commentator holder
+        try
+        {
+            var holder = API.GetManagedSingleton("app.commentator.bCommentatorGlobalInfoHolder");
+            var battleDesc = FlowHelper.Call(holder, "get_CurrentBattleDesc") as ManagedObject;
+            var fighter = FlowHelper.Call(battleDesc, "getFighter", team, 0) as ManagedObject;
+            var profile = FlowHelper.Call(fighter, "get_Profile") as ManagedObject;
+            if (profile != null) return profile;
+        }
+        catch { }
+
+        // 2. Character-select flow's FighterDescArray[team].Profile
+        try
+        {
+            var flow = FlowHelper.FindFlowParam("app.UIFlowUI10501.FlowParam");
+            var arr = FlowHelper.GetObjectField(flow, "FighterDescArray");
+            var fighter = FlowHelper.GetListItem(arr, team);
+            var profile = FlowHelper.Call(fighter, "get_Profile") as ManagedObject;
+            if (profile != null) return profile;
+        }
+        catch { }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Announce each side's connection once when the match profiles first load
+    /// (right after matchmaking, before the VS splash). The VS screen repeats it
+    /// inline with the names; this earlier call is for players who want to know
+    /// the opponent's connection as soon as the match is set.
+    /// </summary>
+    private static void PollMatchConnection()
+    {
+        try
+        {
+            string c1 = ConnectionLabel(0);
+            string c2 = ConnectionLabel(1);
+            if (c1 == null && c2 == null)
+            {
+                _connectionAnnounced = false; // no battle profiles → reset for next match
+                return;
+            }
+            if (_connectionAnnounced) return;
+            _connectionAnnounced = true;
+
+            var parts = new List<string>();
+            if (c1 != null) parts.Add($"P1 {c1}");
+            if (c2 != null) parts.Add($"P2 {c2}");
+            string text = string.Join(". ", parts);
+            API.LogInfo($"[SF6Access] Match connection: {text}");
+            ScreenReaderService.Speak(text, interrupt: false);
+        }
+        catch { }
+    }
+
     // ---- Matchmaking notices ----
 
     private static void PollMatchingNotices()
@@ -405,8 +629,14 @@ public class BattleInfoHooks
                 if (string.IsNullOrEmpty(text)) continue;
                 if (last == null && _pollCounter < SCAN_INTERVAL * 2) continue; // skip startup state
 
+                // The "opponent found! Confirm" prompt (MatchingStandby) is
+                // time-sensitive and needs an input — speak it immediately
+                // instead of queuing it behind "Searching for opponent..."
+                bool isConfirmPrompt = kvp.Key.IndexOf("MatchingStandby",
+                    System.StringComparison.OrdinalIgnoreCase) >= 0;
+
                 API.LogInfo($"[SF6Access] Matching notice [{kvp.Key}]: {text}");
-                ScreenReaderService.Speak(text, interrupt: false);
+                ScreenReaderService.Speak(text, interrupt: isConfirmPrompt);
             }
         }
         catch { }
