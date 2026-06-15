@@ -18,43 +18,81 @@ public class FGMenuHooks
     private static ManagedObject _fgParam;
     private static string _lastAnnounced;
 
-    // The item name is held back briefly so GuideTextHooks can fold the
-    // InputGuide description into a SINGLE "name. description" announcement
-    // (testers lost the title when the separate description replaced it). If no
-    // description arrives within the window, OnUpdate speaks the name alone.
+    // The item name is held back for a FEW FRAMES so the focused item's
+    // description can be folded into a SINGLE "name. description" announcement
+    // (testers lost the title when the separate description replaced it).
+    // FGMenuHooks reads the description itself every frame — waiting on
+    // GuideTextHooks' 10-frame poll + 150 ms delay caused ~0.5 s navigation lag.
     private static string _pendingName;
     private static long _pendingSince;
-    private const long PENDING_COMBINE_MS = 350;
+    private static string _descBaseline;       // InputGuide text at navigation time
+    private static string _lastCombinedDesc;   // description just spoken combined
+    private static long _lastCombinedTick;
+    // Speak the name alone if no description appears in this window — short, so
+    // description-less items don't feel laggy either.
+    private const long NAME_ONLY_MS = 130;
 
     /// <summary>
-    /// GuideTextHooks calls this when it is about to announce an InputGuide
-    /// description: returns the freshly-focused FG item name (once) so the two
-    /// are spoken together, or null when there is nothing pending.
+    /// True just after FG spoke "name. description", so GuideTextHooks does not
+    /// repeat that same InputGuide description as a second announcement.
     /// </summary>
-    public static string ConsumePendingName()
+    public static bool SuppressGuideDesc(string text)
     {
-        if (_pendingName == null) return null;
-        if (System.Environment.TickCount64 - _pendingSince > PENDING_COMBINE_MS + 400)
-        {
-            _pendingName = null;
-            return null;
-        }
-        string name = _pendingName;
-        _pendingName = null;
-        return name;
+        if (string.IsNullOrEmpty(_lastCombinedDesc) || string.IsNullOrEmpty(text)) return false;
+        if (System.Environment.TickCount64 - _lastCombinedTick > 600) return false;
+        return text == _lastCombinedDesc
+            || _lastCombinedDesc.Contains(text) || text.Contains(_lastCombinedDesc);
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void OnUpdate()
     {
         if (_pendingName == null) return;
-        if (System.Environment.TickCount64 - _pendingSince < PENDING_COMBINE_MS) return;
+        long now = System.Environment.TickCount64;
 
-        // No description folded it in within the window — speak the name alone
-        string name = _pendingName;
-        _pendingName = null;
-        API.LogInfo($"[SF6Access] FG item (no description): {name}");
-        ScreenReaderService.Speak(name);
+        // Combine the moment the focused item's description appears.
+        string desc = ReadInputGuideDesc();
+        if (!string.IsNullOrEmpty(desc) && desc != _descBaseline)
+        {
+            string name = _pendingName;
+            _pendingName = null;
+            _lastCombinedDesc = desc;
+            _lastCombinedTick = now;
+            string combined = $"{name}. {desc}";
+            API.LogInfo($"[SF6Access] FG item: {combined}");
+            ScreenReaderService.Speak(combined);
+            return;
+        }
+
+        // No description in time — speak the name alone (stays responsive).
+        if (now - _pendingSince >= NAME_ONLY_MS)
+        {
+            string name = _pendingName;
+            _pendingName = null;
+            API.LogInfo($"[SF6Access] FG item (no description): {name}");
+            ScreenReaderService.Speak(name);
+        }
+    }
+
+    /// <summary>The focused item's tooltip from the InputGuide GUI (element
+    /// "e_text"; the e_text_0_* entries are button hints, not the description).</summary>
+    private static string ReadInputGuideDesc()
+    {
+        try
+        {
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews("InputGuide"))
+            {
+                var parts = new System.Collections.Generic.List<string>();
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                {
+                    if (t.Name != "e_text" || string.IsNullOrWhiteSpace(t.Text)) continue;
+                    parts.Add(t.Text.Replace('\n', ' ').Trim());
+                }
+                if (parts.Count > 0) return string.Join(". ", parts);
+            }
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>Called from MainMenuHooks when c_SubMenu_item focus changes (vertical navigation)</summary>
@@ -169,10 +207,12 @@ public class FGMenuHooks
             if (!string.IsNullOrEmpty(name) && name != _lastAnnounced)
             {
                 _lastAnnounced = name;
-                // Hold the name so the description can be folded in (see
-                // ConsumePendingName / OnUpdate). Don't speak it here.
+                // Hold the name so OnUpdate can fold the description in. Baseline
+                // the current InputGuide text so we know when it switches to this
+                // item's description. Don't speak it here.
                 _pendingName = name;
                 _pendingSince = System.Environment.TickCount64;
+                _descBaseline = ReadInputGuideDesc();
                 API.LogInfo($"[SF6Access] FG item (pending combine): {name}");
             }
         }
