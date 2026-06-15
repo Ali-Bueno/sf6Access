@@ -261,8 +261,13 @@ public class MainMenuHooks
                 if (string.IsNullOrEmpty(btnLabel))
                     btnLabel = btnIdx == 0 ? "Yes" : "No";
 
-                // Key on text too: list rows can share one control name
-                if (GameStateTracker.HasChanged("focus_item", $"{rawName}|{btnLabel}"))
+                // In a text-entry dialog the name field between the buttons
+                // fires no focus event, so returning to a button looked
+                // unchanged to the dedup and went silent. Announce every focus
+                // there — the 250 ms speech filter still drops the 2x-per-
+                // navigation re-fire.
+                bool forceRead = TextInputDialogHooks.IsActive;
+                if (forceRead || GameStateTracker.HasChanged("focus_item", $"{rawName}|{btnLabel}"))
                 {
                     API.LogInfo($"[SF6Access] Item button [{rawName}]: {btnLabel}");
                     ScreenReaderService.Speak(btnLabel);
