@@ -73,41 +73,64 @@ public class ReplayInfoMenuHooks
         PollFocusedItem();
     }
 
+    // app.UICFNReplayInfo.MenuType values (GetFocusChild does NOT track focus on
+    // this mediator — GetFocusMenuType is the authoritative focused item).
+    private const int MENU_COMMENTATOR = 1;
+
+    // English last resort if the localized GetMenuTypeMessage call can't be made.
+    private static readonly string[] FallbackLabels =
+    {
+        "Watch replay",            // REPLAY
+        "Commentary",              // COMMENTATOR
+        "Add to favorites",        // REGIST
+        "Remove from favorites",   // UNREGIST
+        "Player 1 details",        // PROFILE1
+        "Player 2 details",        // PROFILE2
+        "Search by player 1",      // SEARCH1
+        "Search by player 2",      // SEARCH2
+        "Round results",           // RESULT_LIST
+    };
+
     private static void PollFocusedItem()
     {
         try
         {
-            string text = ReadFocusedItem();
-            if (string.IsNullOrEmpty(text) || text == _lastText) return;
+            int type = FlowHelper.CallInt(_list, "GetFocusMenuType", int.MinValue);
+            if (type == int.MinValue || type < 0) return;
 
+            string label = FlowHelper.CleanTags(
+                FlowHelper.Call(_list, "GetMenuTypeMessage", type) as string);
+            if (string.IsNullOrEmpty(label) && type < FallbackLabels.Length)
+                label = FallbackLabels[type];
+            if (string.IsNullOrEmpty(label)) return;
+
+            // Comentário is an on/off toggle — append its current value.
+            if (type == MENU_COMMENTATOR)
+            {
+                string toggle = ReadCommentToggle();
+                if (!string.IsNullOrEmpty(toggle)) label = $"{label}. {toggle}";
+            }
+
+            if (label == _lastText) return;
             bool first = _lastText == null;
-            _lastText = text;
-            API.LogInfo($"[SF6Access] Replay menu: {text}");
-            ScreenReaderService.Speak(text, interrupt: !first);
+            _lastText = label;
+            API.LogInfo($"[SF6Access] Replay menu [{type}]: {label}");
+            ScreenReaderService.Speak(label, interrupt: !first);
         }
         catch { }
     }
 
-    /// <summary>Focused option's on-screen text: the label (e_itemtext) plus the
-    /// toggle value (e_text, e.g. "Desl." / "Lig." for Comentário).</summary>
-    private static string ReadFocusedItem()
+    /// <summary>The Comentário on/off value ("Lig." / "Desl.") from the GUI.</summary>
+    private static string ReadCommentToggle()
     {
-        var child = FlowHelper.Call(_list, "GetFocusChild") as ManagedObject;
-        if (child == null) return null;
-
-        var control = FlowHelper.GetObjectField(child, "Control")
-            ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
-
-        string label = null, value = null;
-        foreach (var t in GuiTextReader.ReadControlTexts(control))
+        try
         {
-            if (string.IsNullOrWhiteSpace(t.Text)) continue;
-            if (t.Name == "e_itemtext") label ??= t.Text.Trim();
-            else if (t.Name == "e_text") value ??= t.Text.Trim();
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews("CFNReplayInfo"))
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                    if (t.Name == "e_text" && !string.IsNullOrWhiteSpace(t.Text))
+                        return t.Text.Trim();
         }
-
-        if (label == null && value == null) return null;
-        if (label == null) return value;
-        return value != null ? $"{label}. {value}" : label;
+        catch { }
+        return null;
     }
 }
