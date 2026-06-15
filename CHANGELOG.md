@@ -7,7 +7,13 @@
 - Frame data is announced during training (startup / total / advantage) when a move is performed.
 - Frame data and Attack Data (combo damage / hits) now respect their display options: each is only announced when its toggle is enabled in the Screen Display Settings, and frame data no longer leaks into replays.
 - Combo trials no longer re-read the recipe mid-combo before you finish the attempt.
+- Combo trials no longer read the attack-data combo damage on top of the trial feedback.
 - Vitality and Super Art gauge values are read correctly when scrolling (1P vitality and 1P/2P super art were stuck announcing 0).
+
+### Arcade
+- Stage results are announced (Score, Time / Vitality / Finish bonuses, Subtotal, Total) after the victory quote.
+- Bonus stage (car crush) results are announced (Score, Time bonus, Clear bonus, Total).
+- Ending artwork cards are announced as you page through them ("Special Artwork: ...", "SF Legacy: ...").
 
 ### Battle
 - Round winner is no longer announced for the wrong side (P1 winning was announced as P2 / the CPU).

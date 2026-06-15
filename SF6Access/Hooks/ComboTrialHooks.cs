@@ -18,6 +18,11 @@ public class ComboTrialHooks
     private const string PARAM_TYPE = "app.esports.UI11439.Param";
 
     private static bool _isActive;
+
+    /// <summary>True while a combo trial is running — other training readouts
+    /// (e.g. attack-data combo damage) suppress themselves during trials.</summary>
+    public static bool IsActive => _isActive;
+
     private static int _pollCounter;
     private const int POLL_SEARCH_INTERVAL = 60;
     private const int POLL_READ_INTERVAL = 10;

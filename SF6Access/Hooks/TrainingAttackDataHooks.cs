@@ -265,6 +265,10 @@ public class TrainingAttackDataHooks
     /// </summary>
     private static void AnnounceCombo(int count, int damage)
     {
+        // Combo trials show their own recipe/progress feedback — the combo damage
+        // readout is noise there and the tester asked to silence it.
+        if (ComboTrialHooks.IsActive) return;
+
         // Respect the in-game toggle: the "Attack Data" menu item is the master
         // toggle for the whole panel (Is_AttackAllView); the Is_DS_*_View flags
         // are sub-views that stay on. The combo data stays populated even when
