@@ -59,28 +59,24 @@ public class BattleInfoHooks
 
     // "Opponent found! Accept the match?" confirm screen (UIWidget_MatchingSelect):
     // the opponent's signal bars + WiFi/wired icon are set via SetSignalStrength,
-    // while the prompt + opponent name + any LP/rank are via.gui.Texts in the
-    // widget's contents. Capture the widget instance + signal args in the hook
-    // and announce on the next update (off the hook thread). SetSignalStrength
-    // fires every frame while the screen is up, so the read must run as soon as a
-    // request is pending — NOT after a frame countdown, which the per-frame hook
-    // would keep resetting. Antenna.Loading = -1 is the not-yet-measured value;
-    // dedup on the final string so the repeated calls only announce once.
+    // while the prompt + opponent name + buttons are via.gui.Texts in the widget.
+    //
+    // SetSignalStrength fires EVERY FRAME while the screen is up, so it doubles as
+    // a liveness signal. Read the widget ONCE per appearance (_widgetAnnounced),
+    // and detect close with a watchdog: each call refreshes _signalWatch; when no
+    // call refreshes it for CLOSE_FRAMES the screen has closed. This avoids the
+    // scene's ~10 duplicate widget instances toggling a hide/show event (an
+    // earlier FlowEvent_BeforeHide hook fired for hidden copies, looping the
+    // read + "Match cancelled" forever).
     private static ManagedObject _signalWidget;
     private static int _pendingAntenna = int.MinValue;
     private static int _pendingInterface;
-    private static bool _signalPending;
-    private static string _lastSignalText;
 
-    // Confirm-screen lifecycle: the widget closes either because the player
-    // accepted (EventDecide → VS screen reads it) or because it was cancelled
-    // (you backed out, the opponent declined, or it timed out). FlowEvent_BeforeHide
-    // fires on both; announce only the cancel case so the user knows the prompt
-    // disappeared without a match starting.
     private static bool _confirmShown;
-    private static bool _confirmAccepted;
-    private static bool _closePending;
-    private static bool _closeWasAccepted;
+    private static bool _confirmAccepted;   // player pressed accept (EventDecide)
+    private static bool _widgetAnnounced;   // contents read for this appearance
+    private static int _signalWatch;        // frames until the screen counts as closed
+    private const int CLOSE_FRAMES = 12;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -93,10 +89,9 @@ public class BattleInfoHooks
     /// Hook the "opponent found! Accept the match?" confirm widget
     /// (app.UIWidget_MatchingSelect):
     /// - SetSignalStrength(Antenna, InterfaceType) reports the opponent's signal
-    ///   bars + WiFi/wired type (both icons with no readable text) and marks the
-    ///   screen shown.
+    ///   bars + WiFi/wired type (both icons with no readable text) and, firing
+    ///   every frame, keeps the close watchdog alive.
     /// - EventDecide() fires when the player accepts the match.
-    /// - FlowEvent_BeforeHide() fires when the screen closes (accept or cancel).
     /// </summary>
     private static void HookMatchingSelect()
     {
@@ -116,11 +111,17 @@ public class BattleInfoHooks
                 try
                 {
                     // args[1] = this (widget), args[2] = antenna, args[3] = interfaceType
-                    if (!_confirmShown) { _confirmShown = true; _confirmAccepted = false; }
+                    if (!_confirmShown)
+                    {
+                        // fresh appearance
+                        _confirmShown = true;
+                        _confirmAccepted = false;
+                        _widgetAnnounced = false;
+                    }
+                    _signalWatch = CLOSE_FRAMES;
                     _signalWidget = ManagedObject.ToManagedObject(args[1]);
                     _pendingAntenna = (int)(long)args[2];
                     _pendingInterface = (int)(long)args[3];
-                    _signalPending = true;
                 }
                 catch { }
                 return PreHookResult.Continue;
@@ -129,17 +130,6 @@ public class BattleInfoHooks
             td.GetMethod("EventDecide")?.AddHook(false).AddPre(args =>
             {
                 _confirmAccepted = true;
-                return PreHookResult.Continue;
-            });
-
-            td.GetMethod("FlowEvent_BeforeHide")?.AddHook(false).AddPre(args =>
-            {
-                if (_confirmShown)
-                {
-                    _closeWasAccepted = _confirmAccepted;
-                    _closePending = true;
-                    _confirmShown = false;
-                }
                 return PreHookResult.Continue;
             });
 
@@ -154,8 +144,11 @@ public class BattleInfoHooks
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void OnUpdate()
     {
-        if (_signalPending) AnnounceOpponentWidget();
-        if (_closePending) AnnounceConfirmClose();
+        if (_confirmShown)
+        {
+            if (!_widgetAnnounced) AnnounceOpponentWidget();
+            if (--_signalWatch <= 0) AnnounceConfirmClose();
+        }
 
         _pollCounter++;
         if (_pollCounter % POLL_INTERVAL == 0)
@@ -172,28 +165,24 @@ public class BattleInfoHooks
     // ---- Opponent-found confirm screen connection ----
 
     /// <summary>
-    /// Speak the "opponent found! Accept the match?" widget captured by the
-    /// SetSignalStrength hook: the prompt + opponent name + any LP/rank (via.gui
-    /// texts walked from the widget contents), then the decoded connection —
-    /// type (WiFi/wired) + signal bars (Antenna 0-5). Announce only once a signal
-    /// is measured (antenna >= 0; the first calls pass Loading = -1), deduped on
-    /// the final string so the per-frame calls don't repeat. By the time the
-    /// signal is measured the prompt/name texts are already in place.
+    /// Speak the "opponent found! Accept the match?" widget once per appearance:
+    /// the prompt + opponent name + buttons (via.gui texts walked from the widget
+    /// contents), then the decoded connection — type (WiFi/wired) + signal bars
+    /// (Antenna 0-5). Waits for a measured signal (antenna >= 0; the first calls
+    /// pass Loading = -1); the prompt/name texts are already in place by then.
     /// </summary>
     private static void AnnounceOpponentWidget()
     {
-        _signalPending = false;
-        var widget = _signalWidget;
         int antenna = _pendingAntenna;
-        if (antenna < 0) { _lastSignalText = null; return; } // signal not measured yet
+        if (antenna < 0) return; // signal not measured yet — keep trying next frame
 
         try
         {
-            // Walk the widget's contents for all readable text (prompt, name, rank).
+            // Walk the widget's contents for all readable text (prompt, name, buttons).
             var parts = new List<string>();
             foreach (var field in new[] { "mCtrlContents", "mCtrlMatchiConfilm" })
             {
-                var ctrl = FlowHelper.GetObjectField(widget, field);
+                var ctrl = FlowHelper.GetObjectField(_signalWidget, field);
                 foreach (var t in GuiTextReader.ReadControlTexts(ctrl))
                 {
                     if (string.IsNullOrWhiteSpace(t.Text)) continue;
@@ -208,10 +197,9 @@ public class BattleInfoHooks
             conn.Add($"signal {antenna} of 5");
             parts.Add(string.Join(", ", conn));
 
-            string text = string.Join(". ", parts);
-            if (text == _lastSignalText) return;
-            _lastSignalText = text;
+            _widgetAnnounced = true; // once per appearance, even if texts were empty
 
+            string text = string.Join(". ", parts);
             API.LogInfo($"[SF6Access] Opponent confirm: {text}");
             ScreenReaderService.Speak(text, interrupt: false);
         }
@@ -219,18 +207,16 @@ public class BattleInfoHooks
     }
 
     /// <summary>
-    /// The confirm screen closed. Reset the per-show state so the next opponent
-    /// re-announces. Announce the closure only when the match was NOT accepted
+    /// The confirm screen closed (SetSignalStrength stopped refreshing the
+    /// watchdog). Announce the closure only when the match was NOT accepted
     /// (cancelled / declined / timed out); on accept the VS screen reads instead.
     /// </summary>
     private static void AnnounceConfirmClose()
     {
-        _closePending = false;
-        _signalPending = false;
+        _confirmShown = false;
         _signalWidget = null;
-        _lastSignalText = null;
 
-        if (_closeWasAccepted) return;
+        if (_confirmAccepted) return;
 
         API.LogInfo("[SF6Access] Opponent confirm cancelled");
         ScreenReaderService.Speak("Match cancelled", interrupt: false);
