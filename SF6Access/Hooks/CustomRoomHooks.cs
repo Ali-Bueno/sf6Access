@@ -87,12 +87,22 @@ public class CustomRoomHooks
         // Localized description of the focused entry
         string guide = FlowHelper.CleanTags(FlowHelper.Call(_param, "GuideMessage") as string);
 
-        // The entry's on-screen label from its OWN list child. Indexing the
-        // flat control text list (texts[idx]) gave a different order than
-        // SelectedIndex, so the names came out swapped ("View Invitations" with
-        // the Search Rooms tooltip) while GuideMessage() was right. _Children
-        // is in SelectedIndex order (same fix as the room search submenu).
-        string label = FlowHelper.ReadListRowText(_functionList, idx);
+        // The entry's on-screen label. The per-child control has no text here,
+        // and indexing the flat control text list by SelectedIndex came out in
+        // the wrong order (names were swapped). get_SelectedItem returns the
+        // focused item directly, independent of order.
+        string label = FlowHelper.ReadSelectedItemText(_functionList);
+        if (string.IsNullOrEmpty(label))
+        {
+            try
+            {
+                var control = FlowHelper.GetObjectField(_functionList, "Control")
+                    ?? FlowHelper.Call(_functionList, "get_Control") as ManagedObject;
+                var texts = GuiTextReader.ReadControlTexts(control);
+                if (idx < texts.Count) label = texts[idx].Text;
+            }
+            catch { }
+        }
 
         string announcement = !string.IsNullOrEmpty(label) && !string.IsNullOrEmpty(guide)
             ? $"{label}. {guide}"
