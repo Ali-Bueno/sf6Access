@@ -24,6 +24,13 @@ public class TextInputDialogHooks
 
     private static readonly List<(string owner, ManagedObject view)> _views = new();
     private static string _lastText;
+    private static bool _active;
+
+    /// <summary>True while a text-entry dialog is on screen. MainMenuHooks uses
+    /// it to stop suppressing FocusChanged, so the Cancelar / Buscar buttons are
+    /// announced as the user moves between them (the dialog itself only reads on
+    /// appearance).</summary>
+    public static bool IsActive => _active;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -40,7 +47,7 @@ public class TextInputDialogHooks
         {
             _views.Clear();
             _views.AddRange(GuiTextReader.FindGuiViews(DIALOG_GUI));
-            if (_views.Count == 0) _lastText = null;
+            if (_views.Count == 0) { _lastText = null; _active = false; }
         }
 
         if (_views.Count == 0 || _pollCounter % POLL_READ_INTERVAL != 0) return;
@@ -79,6 +86,9 @@ public class TextInputDialogHooks
             if (!string.IsNullOrEmpty(input)) parts.Add(input);
             parts.AddRange(buttons);
             if (parts.Count == 0) return;
+
+            // We have real dialog content on screen now
+            _active = true;
 
             string text = string.Join(". ", parts);
             if (text == _lastText) return;

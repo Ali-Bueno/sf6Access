@@ -149,11 +149,19 @@ public class MainMenuHooks
             if (OptionMenuHooks.IsInOptionMenu)
                 return;
 
+            // A text-entry dialog (search by name/code) is modal: the only
+            // FocusChanged events are its Cancelar / Buscar buttons, which a
+            // background tracker would otherwise suppress — leaving navigation
+            // silent. Let this generic reader handle them.
+            if (TextInputDialogHooks.IsActive)
+            {
+                // fall through to the c_item_N button handler below
+            }
             // Suppress while dedicated menu hooks handle announcements.
             // GroupFocus only suppresses while it actually announces rows —
             // a silently-active tracker must not mute this generic reader
             // (Battle Hub room muted the avatar battle menu)
-            if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
+            else if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
                 CustomRoomHooks.IsInCustomRoomTop ||
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
