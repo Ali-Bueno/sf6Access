@@ -140,6 +140,12 @@ public class BattleInfoHooks
             string cpuLevel = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(pd, "mTextCPULevel"));
             if (!string.IsNullOrWhiteSpace(cpuLevel)) bits.Add($"CPU {cpuLevel.Trim()}");
 
+            // Ranked-match rank tier + division (the on-screen rank is an icon,
+            // so there is no text to read — derive it from mOnlineLP). Empty for
+            // offline / casual play, where the league point struct stays zero.
+            string rank = ReadRank(pd);
+            if (!string.IsNullOrEmpty(rank)) bits.Add(rank);
+
             if (bits.Count == 0) return null; // player data not filled yet
             sides.Add(string.Join(" ", bits));
         }
@@ -150,6 +156,38 @@ public class BattleInfoHooks
         string text = $"{sides[0]} vs {sides[1]}";
         if (!string.IsNullOrWhiteSpace(stage)) text += $". {stage.Trim()}";
         return text;
+    }
+
+    // SF6 rank tiers, five divisions each, then Master (rated separately).
+    private static readonly string[] RankTiers =
+        { "Rookie", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond" };
+
+    /// <summary>
+    /// Readable rank ("Platinum 5", "Master 1832") from a VSInfo player's
+    /// mOnlineLP (app.network.MsgLeaguePoint). Null when not a ranked player
+    /// (the struct is all-zero for casual / offline). UNTESTED: the league_rank
+    /// → tier/division mapping needs confirmation on a real ranked face-off.
+    /// </summary>
+    private static string ReadRank(ManagedObject pd)
+    {
+        try
+        {
+            var lp = FlowHelper.GetObjectField(pd, "mOnlineLP");
+            if (lp == null) return null;
+
+            int masterRating = FlowHelper.ReadIntField(lp, "master_rating", 0);
+            if (masterRating > 0) return $"Master {masterRating}";
+
+            int rank = FlowHelper.ReadIntField(lp, "league_rank", 0);
+            if (rank <= 0) return null;
+
+            int idx = rank - 1;
+            int tier = idx / 5;
+            int division = idx % 5 + 1;
+            if (tier >= RankTiers.Length) return "Master";
+            return $"{RankTiers[tier]} {division}";
+        }
+        catch { return null; }
     }
 
     /// <summary>Fallback: window of visible VSInfo GUI texts in tree order.</summary>
@@ -263,7 +301,12 @@ public class BattleInfoHooks
                 break;
             }
 
-            // Fallback: hidden name elements of the round HUD, tree order
+            // Fallback: hidden name elements of the round HUD, tree order. The
+            // HUD lists 2P FIRST, then 1P — confirmed in every dump by
+            // BattleHud_PlayerName ("Jogador 2" then "Jogador 1"), PlayerArrow
+            // (J2 then J1) and the vs-CPU dump where "Você" (the human = 1P) is
+            // the SECOND entry. The old code assigned fallback[0] to 1P, which
+            // reversed the round winner (P1 wins → announced P2 / the CPU).
             var all = GuiTextReader.ReadControlTexts(_roundView, visibleOnly: false);
             var fallback = new List<string>();
             foreach (var t in all)
@@ -273,8 +316,9 @@ public class BattleInfoHooks
             }
             if (fallback.Count >= 2)
             {
-                _fighterName1P = fallback[0];
-                _fighterName2P = fallback[1];
+                _fighterName2P = fallback[0];
+                _fighterName1P = fallback[1];
+                API.LogInfo($"[SF6Access] Fighter sides (fallback): 1P={fallback[1]}, 2P={fallback[0]}");
             }
         }
         catch { }

@@ -95,8 +95,25 @@ public class GuideTextHooks
                 // glyph gaps ("Ative um espaço com .") — fill in the buttons
                 string announcement = TrainingMenuHooks.FillGuideIcons(gui.PendingText);
 
+                // Fighting Ground items hold their name back (FGMenuHooks) so it
+                // can be spoken together with this description as one message —
+                // testers lost the title when it was a separate announcement.
+                bool combinedWithName = false;
+                if (gui.Owner != null && gui.Owner.Contains("InputGuide"))
+                {
+                    string fgName = FGMenuHooks.ConsumePendingName();
+                    if (!string.IsNullOrEmpty(fgName) &&
+                        !announcement.Contains(fgName, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        announcement = $"{fgName}. {announcement}";
+                        combinedWithName = true;
+                    }
+                }
+
                 API.LogInfo($"[SF6Access] Guide [{gui.Owner}]: {announcement}");
-                ScreenReaderService.Speak(announcement, interrupt: false);
+                // The combined item+description is the primary announcement for
+                // that row, so it interrupts; standalone tooltips still queue.
+                ScreenReaderService.Speak(announcement, interrupt: combinedWithName);
                 gui.PendingText = null;
             }
             catch { }

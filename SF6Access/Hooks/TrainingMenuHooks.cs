@@ -157,6 +157,13 @@ public class TrainingMenuHooks
         _pollCounter++;
         ProcessPendingSlider();
 
+        // The reversal move-selection submenu opens on top of the training
+        // menu. While it is up TrainingReversalHooks owns announcements; keep
+        // polling the parent here only spammed TrainingMenuData[].Get out-of-
+        // range errors (the slot strip row index no longer fits) and fought
+        // the submenu for the cursor — the source of the "unstable" reversal.
+        if (TrainingReversalHooks.IsActive) return;
+
         if (!_isActive)
         {
             if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
@@ -349,10 +356,24 @@ public class TrainingMenuHooks
     /// </summary>
     private static int ReadSliderValue(ManagedObject viewData, int itemType, ManagedObject rowData, string rowLabel)
     {
+        // Vitality (11/12) and Super Art gauge (14/15) rows: the ViewData
+        // SliderValue is frequently a stale 0 for these (1P vitality, 1P/2P
+        // super art announced 0 regardless of the real setting). The on-screen
+        // value next to the row label is authoritative — the Dummy Settings
+        // dump shows e_text_value=100 immediately before "Barra de vida do J1"
+        // — so read it FIRST for these types. SLIDER_DRIVE (13) keeps ViewData
+        // first; it was verified correct there.
+        bool gaugePreferGui = itemType is 11 or 12 or 14 or 15;
+        if (gaugePreferGui)
+        {
+            string guiFirst = ReadSliderValueFromGui(rowLabel);
+            if (guiFirst != null && int.TryParse(guiFirst, out int gp)) return gp;
+        }
+
         int value = FlowHelper.ReadIntField(viewData, "SliderValue", int.MinValue);
         if (value != int.MinValue) return value;
 
-        string guiValue = ReadSliderValueFromGui(rowLabel);
+        string guiValue = gaugePreferGui ? null : ReadSliderValueFromGui(rowLabel);
         if (guiValue != null && int.TryParse(guiValue, out int parsed)) return parsed;
 
         // ItemType → (PlayerData field, player index); SLIDER_DRIVE is one

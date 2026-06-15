@@ -27,6 +27,32 @@ public class TrainingReversalHooks
     private static readonly Dictionary<string, int> _lastFocus = new();
     private static int _lastTabIndex = -2;
 
+    /// <summary>True while the reversal move-selection submenu is open, so the
+    /// parent TrainingMenuHooks pauses its polling (avoids the index-out-of-
+    /// range spam and cursor fight that made the reversal menu unstable).</summary>
+    public static bool IsActive => _isActive;
+
+    // Category list order, matched to the parent's TabIndex. The child flow
+    // for the focused tab is the only one whose rows should be read; without
+    // this every still-loaded category list announced its row at once.
+    private static int CategoryIndex(string typeName) => typeName switch
+    {
+        "app.training.UIFlowTrainingMenu_Reversal_Normal.Param" => 0,
+        "app.training.UIFlowTrainingMenu_Reversal_CommandNormal.Param" => 1,
+        "app.training.UIFlowTrainingMenu_Reversal_Special.Param" => 2,
+        "app.training.UIFlowTrainingMenu_Reversal_SA.Param" => 3,
+        "app.training.UIFlowTrainingMenu_Reversal_Recording.Param" => 4,
+        "app.training.UIFlowTrainingMenu_Reversal_Common.Param" => 5,
+        _ => -1,
+    };
+
+    // Readable fallback per tab — the parent Param's PrimaryTitle array is
+    // absent at runtime (logged "Member not found: PrimaryTitle"), so "Tab N"
+    // was all that came out. TODO: localize from game text once a dump of the
+    // reversal screen's tab widget is available.
+    private static readonly string[] CategoryNames =
+        { "Normal", "Command Normal", "Special", "Super Art", "Recording", "Common" };
+
     // Set on entry and tab change: the next readable focused row announces
     // even without a focus change (the initial row was never read otherwise)
     private static bool _pendingRowAnnounce;
@@ -66,12 +92,24 @@ public class TrainingReversalHooks
 
         if (!_isActive || _pollCounter % POLL_READ_INTERVAL != 0) return;
 
+        // Resolve the focused tab from the parent first so the move-list pass
+        // can ignore the non-visible category lists regardless of handle order.
+        int currentTab = -1;
         foreach (var (typeName, param) in _params)
         {
-            if (typeName == MAIN_PARAM)
-                PollTab(param);
-            else
-                PollMoveList(typeName, param);
+            if (typeName != MAIN_PARAM) continue;
+            PollTab(param);
+            currentTab = FlowHelper.ReadIntField(param, "TabIndex", -1);
+            break;
+        }
+
+        foreach (var (typeName, param) in _params)
+        {
+            if (typeName == MAIN_PARAM) continue;
+            int cat = CategoryIndex(typeName);
+            // Only the child list matching the focused tab is on screen
+            if (cat >= 0 && currentTab >= 0 && cat != currentTab) continue;
+            PollMoveList(typeName, param);
         }
     }
 
@@ -99,7 +137,7 @@ public class TrainingReversalHooks
 
         string announcement = !string.IsNullOrEmpty(title)
             ? FlowHelper.CleanTags(title)
-            : $"Tab {tab + 1}";
+            : (tab >= 0 && tab < CategoryNames.Length ? CategoryNames[tab] : $"Tab {tab + 1}");
         API.LogInfo($"[SF6Access] Reversal tab [{tab}]: {announcement}");
         ScreenReaderService.Speak(announcement, interrupt: !first);
     }
@@ -117,10 +155,11 @@ public class TrainingReversalHooks
         bool changed = first || focus != last;
         _lastFocus[typeName] = focus;
 
-        // Entry / tab change: read the visible list's current row once. Only
-        // the shown category's param has mIsActive set — without this check
-        // every category list would announce its row.
-        if (_pendingRowAnnounce && FlowHelper.ReadBoolField(param, "mIsActive"))
+        // Entry / tab change: read this (already tab-filtered) list's current
+        // row once. The previous code gated on a non-existent "mIsActive"
+        // field, so the initial row was never announced and the whole move
+        // list read as silent — the caller now passes only the active tab.
+        if (_pendingRowAnnounce)
         {
             string row = ReadSkillName(param, focus) ?? ReadRowText(param);
             if (!string.IsNullOrEmpty(row))
@@ -158,8 +197,12 @@ public class TrainingReversalHooks
     {
         try
         {
-            var group = FlowHelper.GetObjectField(param, "_pGroupScroll");
-            var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject;
+            // Most categories scroll via _pGroupScroll; the Super Art tab uses
+            // _pScrollList instead.
+            var group = FlowHelper.GetObjectField(param, "_pGroupScroll")
+                ?? FlowHelper.GetObjectField(param, "_pScrollList");
+            var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject
+                ?? FlowHelper.Call(group, "get_SelectedItem") as ManagedObject;
             var control = FlowHelper.GetObjectField(child, "Control")
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
             return GuiTextReader.ReadControlTextJoined(control);

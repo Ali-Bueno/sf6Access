@@ -1,6 +1,7 @@
 using System;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
+using REFrameworkNET.Callbacks;
 using SF6Access.Services;
 
 namespace SF6Access.Hooks;
@@ -12,8 +13,49 @@ namespace SF6Access.Hooks;
 /// </summary>
 public class FGMenuHooks
 {
+    private const string FG_PARAM_TYPE = "app.menu.UIFlowFGMainMenuList.Param";
+
     private static ManagedObject _fgParam;
     private static string _lastAnnounced;
+
+    // The item name is held back briefly so GuideTextHooks can fold the
+    // InputGuide description into a SINGLE "name. description" announcement
+    // (testers lost the title when the separate description replaced it). If no
+    // description arrives within the window, OnUpdate speaks the name alone.
+    private static string _pendingName;
+    private static long _pendingSince;
+    private const long PENDING_COMBINE_MS = 350;
+
+    /// <summary>
+    /// GuideTextHooks calls this when it is about to announce an InputGuide
+    /// description: returns the freshly-focused FG item name (once) so the two
+    /// are spoken together, or null when there is nothing pending.
+    /// </summary>
+    public static string ConsumePendingName()
+    {
+        if (_pendingName == null) return null;
+        if (System.Environment.TickCount64 - _pendingSince > PENDING_COMBINE_MS + 400)
+        {
+            _pendingName = null;
+            return null;
+        }
+        string name = _pendingName;
+        _pendingName = null;
+        return name;
+    }
+
+    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
+    public static void OnUpdate()
+    {
+        if (_pendingName == null) return;
+        if (System.Environment.TickCount64 - _pendingSince < PENDING_COMBINE_MS) return;
+
+        // No description folded it in within the window — speak the name alone
+        string name = _pendingName;
+        _pendingName = null;
+        API.LogInfo($"[SF6Access] FG item (no description): {name}");
+        ScreenReaderService.Speak(name);
+    }
 
     /// <summary>Called from MainMenuHooks when c_SubMenu_item focus changes (vertical navigation)</summary>
     public static void OnSubMenuItemFocused()
@@ -106,18 +148,32 @@ public class FGMenuHooks
 
         try
         {
-            // Try GetSelectData().GetModeTypeName() approach
-            string name = TryReadFromSelectData();
+            // Try GetSelectData().GetModeTypeName() approach, then tateText
+            string name = TryReadFromSelectData() ?? TryReadFromTateText();
 
-            // Fallback: read from tateText array
+            // Backing out of nested submenus fast leaves _fgParam pointing at a
+            // dead Param (the game recreated it), so reads return null and only
+            // GuideTextHooks' description was heard — the lost-title bug. Re-find
+            // the live Param and retry once.
             if (string.IsNullOrEmpty(name))
-                name = TryReadFromTateText();
+            {
+                var live = FlowHelper.FindFlowParam(FG_PARAM_TYPE);
+                if (live != null && FlowHelper.AddressOf(live) != FlowHelper.AddressOf(_fgParam))
+                {
+                    _fgParam = live;
+                    _lastAnnounced = null;
+                    name = TryReadFromSelectData() ?? TryReadFromTateText();
+                }
+            }
 
             if (!string.IsNullOrEmpty(name) && name != _lastAnnounced)
             {
                 _lastAnnounced = name;
-                API.LogInfo($"[SF6Access] FG item: {name}");
-                ScreenReaderService.Speak(name);
+                // Hold the name so the description can be folded in (see
+                // ConsumePendingName / OnUpdate). Don't speak it here.
+                _pendingName = name;
+                _pendingSince = System.Environment.TickCount64;
+                API.LogInfo($"[SF6Access] FG item (pending combine): {name}");
             }
         }
         catch (Exception ex)

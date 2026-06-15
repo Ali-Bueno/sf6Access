@@ -36,6 +36,17 @@ public class GroupFocusHooks
         "app.UIFlowDailyTournament",      // tournaments
         "app.UIFlowServerSelect",         // server list
         "app.esports.UIFlowResultMenu",   // post-match menu (rematch / leave...)
+        "app.UIFlowMailBox",              // notifications / mailbox list
+    };
+
+    // SimpleLists whose get_SelectedItem returns the MIRROR of the focused row
+    // (the room search menu announced "Ver convites" while focus was on
+    // "Buscar salas"; the log showed get_SelectedItem giving item 3 for index 0
+    // and item 0 for index 3). _Children, however, is in visual order, so for
+    // these read _Children[SelectedIndex] directly instead of get_SelectedItem.
+    private static readonly string[] ReversedListTypes =
+    {
+        "app.UIFlowCustomRoomSearchMenu.Param",
     };
 
     // Types with dedicated hooks — skipped here to avoid double announcements
@@ -311,9 +322,13 @@ public class GroupFocusHooks
                 // Lists: read the actually-selected item (child order can be
                 // reversed relative to SelectedIndex); groups: descend by focus
                 string path = idx.ToString();
-                string text = f.IsList
-                    ? FlowHelper.ReadSelectedItemText(obj) ?? ReadRowText(obj, idx, out path)
-                    : ReadRowText(obj, idx, out path);
+                string text;
+                if (f.IsList && System.Array.IndexOf(ReversedListTypes, tp.TypeName) >= 0)
+                    text = ReadReversedListRow(obj, idx, out path);
+                else
+                    text = f.IsList
+                        ? FlowHelper.ReadSelectedItemText(obj) ?? ReadRowText(obj, idx, out path)
+                        : ReadRowText(obj, idx, out path);
 
                 bool first = f.LastIndex == -2;
                 // Row moves include nested focus changes inside the same group
@@ -464,6 +479,30 @@ public class GroupFocusHooks
             catch { }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Read a list row directly from _Children[SelectedIndex] (visual order),
+    /// bypassing get_SelectedItem — which returns the mirrored row for these
+    /// lists, announcing "Ver convites" while focus was on "Buscar salas".
+    /// </summary>
+    private static string ReadReversedListRow(ManagedObject listObj, int idx, out string path)
+    {
+        path = idx.ToString();
+        try
+        {
+            var children = FlowHelper.GetObjectField(listObj, "_Children");
+            int count = FlowHelper.GetListCount(children);
+            if (count <= 0 || idx < 0 || idx >= count)
+                return FlowHelper.ReadSelectedItemText(listObj);
+
+            var child = FlowHelper.GetListItem(children, idx);
+            var control = FlowHelper.GetObjectField(child, "Control")
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+            string text = JoinTexts(GuiTextReader.ReadControlTexts(control));
+            return !string.IsNullOrEmpty(text) ? text : FlowHelper.ReadSelectedItemText(listObj);
+        }
+        catch { return FlowHelper.ReadSelectedItemText(listObj); }
     }
 
     private static string ReadRowText(ManagedObject obj, int idx) => ReadRowText(obj, idx, out string ignoredPath);

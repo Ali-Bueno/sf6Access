@@ -95,8 +95,9 @@ public class FlowTrackerHooks
         // World Tour
         { "UIFlowWorldTour", "World Tour" },
         // Boot title screen (the prompt renders as an image; despite the
-        // game saying "any button", only these inputs actually advance)
-        { "UIFlowTitle", "Title screen. Press X on keyboard, A on Xbox controller, or Cross on PlayStation controller" },
+        // game saying "any button", only these inputs actually advance). The
+        // keyboard default is F, not X (tester-confirmed).
+        { "UIFlowTitle", "Title screen. Press F on keyboard, A on Xbox controller, or Cross on PlayStation controller" },
     };
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
