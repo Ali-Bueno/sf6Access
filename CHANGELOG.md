@@ -14,6 +14,7 @@
 
 ### Online
 - "Opponent found! Accept the match?" confirmation screen (reached by pressing Back/Escape during ranked/casual matchmaking) is now read: the prompt plus the opponent's connection — type (WiFi / Cable) and signal strength (0-5) — and any name/rank text shown in the widget.
+- "Match cancelled" is announced when that confirmation screen closes without the match starting (you backed out, the opponent declined, or it timed out); accepting it stays silent since the VS screen reads instead.
 
 ### Command list
 - The command list now reads the inputs for the control type actually selected. It used to always read the Classic notation, so on Modern controls the commands were wrong; it now follows the Classic/Modern input-type tab and re-reads the focused move when you switch it.
