@@ -87,16 +87,12 @@ public class CustomRoomHooks
         // Localized description of the focused entry
         string guide = FlowHelper.CleanTags(FlowHelper.Call(_param, "GuideMessage") as string);
 
-        // The entry's on-screen label from the list control subtree
-        string label = null;
-        try
-        {
-            var control = FlowHelper.GetObjectField(_functionList, "Control")
-                ?? FlowHelper.Call(_functionList, "get_Control") as ManagedObject;
-            var texts = GuiTextReader.ReadControlTexts(control);
-            if (idx < texts.Count) label = texts[idx].Text;
-        }
-        catch { }
+        // The entry's on-screen label from its OWN list child. Indexing the
+        // flat control text list (texts[idx]) gave a different order than
+        // SelectedIndex, so the names came out swapped ("View Invitations" with
+        // the Search Rooms tooltip) while GuideMessage() was right. _Children
+        // is in SelectedIndex order (same fix as the room search submenu).
+        string label = FlowHelper.ReadListRowText(_functionList, idx);
 
         string announcement = !string.IsNullOrEmpty(label) && !string.IsNullOrEmpty(guide)
             ? $"{label}. {guide}"
