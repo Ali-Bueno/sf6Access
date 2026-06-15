@@ -44,6 +44,25 @@ public class TrainingFrameDataHooks
         }
 
         if (_views.Count == 0 || _pollCounter % POLL_READ_INTERVAL != 0) return;
+
+        // The frame meter HUD ("ui11255") also renders while watching replays
+        // (where it was leaking). Only read it during a live training session...
+        if (API.GetManagedSingleton("app.training.TrainingManager") == null)
+        {
+            _lastByLine.Clear();
+            return;
+        }
+
+        // ...and only when the Frame Meter display option is enabled. The panel
+        // stays in the scene when the option is off, so it must be gated by the
+        // actual setting (Is_FrameMeter_View) rather than panel presence.
+        var ds = FlowHelper.GetTrainingDisplaySetting();
+        if (ds != null && !FlowHelper.ReadBoolField(ds, "Is_FrameMeter_View"))
+        {
+            _lastByLine.Clear();
+            return;
+        }
+
         PollFrameData();
     }
 

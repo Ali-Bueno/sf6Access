@@ -9,9 +9,11 @@ namespace SF6Access.Hooks;
 /// Announces the Attack Data (combo damage + hit count) when a combo ends in
 /// training mode. The end is signalled by the on-screen hit counter
 /// (app.UIPartsHitCount): UpdateNumber marks a combo as running and the
-/// FADE_OUT animation (or HideCount) marks the true end — a quiet-frames
-/// timer alone announced mid-combo during super freezes. Data source:
-/// TrainingManager.DisplayFunc._gData.PlayerDatas[0] (prevComboCount /
+/// FADE_OUT animation (or HideCount) marks the true end. A quiet-frames timer
+/// is the fallback. Both end signals are additionally held off while the game's
+/// own combo counter (app.cTeam.mComboCount) is still above zero, so a long
+/// finisher animation is no longer mistaken for the end of the combo. Data
+/// source: TrainingManager.DisplayFunc._gData.PlayerDatas[0] (prevComboCount /
 /// comboDamage), the same data that feeds the Attack Data panel.
 /// </summary>
 public class TrainingAttackDataHooks
@@ -193,6 +195,9 @@ public class TrainingAttackDataHooks
             if (_hudEndFrame >= 0)
             {
                 if (_pollCounter - _hudEndFrame < END_CONFIRM_FRAMES) return;
+                // The game's own combo counter is still up — a long finisher is
+                // still part of the combo; wait for it to truly end
+                if (TeamComboStillActive()) return;
                 _hudEndFrame = -1;
                 if (_dirty && count > 0 && count == _hudCount)
                 {
@@ -210,6 +215,8 @@ public class TrainingAttackDataHooks
             // (juggle gaps and freezes are not the end) and on stable zeros
             if (_comboActive) return;
             if (!_dirty || _pollCounter - _lastChangeFrame < QUIET_FRAMES) return;
+            // Still combatting: the game combo counter has not cleared yet
+            if (TeamComboStillActive()) return;
             _dirty = false;
             if (count <= 0 && damage <= 0) return;
 
@@ -222,11 +229,49 @@ public class TrainingAttackDataHooks
     }
 
     /// <summary>
+    /// Whether the game's own combo counter (app.cTeam.mComboCount, reached via
+    /// the player shells) is still above zero — i.e. a combo is genuinely in
+    /// progress. Holds the end-detection off through long finisher animations.
+    /// Returns false (does not block) when the team data can't be read, so a
+    /// broken path falls back to the timer/HUD heuristics rather than going mute.
+    /// </summary>
+    private static bool TeamComboStillActive()
+    {
+        try
+        {
+            var displayFunc = FlowHelper.GetObjectField(_manager, "DisplayFunc");
+            var gameData = FlowHelper.GetObjectField(displayFunc, "_gData");
+            var players = FlowHelper.GetObjectField(gameData, "PlayerDatas");
+            if (players == null) return false;
+
+            int best = 0;
+            for (int i = 0; i < 2; i++)
+            {
+                var pl = FlowHelper.GetListItem(players, i);
+                var shell = FlowHelper.GetObjectField(pl, "shell");
+                var team = ComboTracker.TeamOf(shell);
+                if (team == null) continue;
+                int c = ComboTracker.CountOf(team, out int _d);
+                if (c > best) best = c;
+            }
+            return best > 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
     /// Damage first, then hit count, no "Combo" prefix — the tester asked for
     /// the bare numbers, and "hits" is the word he uses in any language.
     /// </summary>
     private static void AnnounceCombo(int count, int damage)
     {
+        // Respect the in-game toggle: the "Attack Data" menu item is the master
+        // toggle for the whole panel (Is_AttackAllView); the Is_DS_*_View flags
+        // are sub-views that stay on. The combo data stays populated even when
+        // the panel is hidden, so the setting is the reliable gate.
+        var ds = FlowHelper.GetTrainingDisplaySetting();
+        if (ds != null && !FlowHelper.ReadBoolField(ds, "Is_AttackAllView")) return;
+
         string announcement = damage > 0
             ? (count > 0 ? $"{damage}. {count} hits" : damage.ToString())
             : $"{count} hits";

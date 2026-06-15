@@ -94,6 +94,23 @@ public class ComboTrialHooks
             if (onAttack != null)
             {
                 var hook = onAttack.AddHook(false);
+                hook.AddPre(args =>
+                {
+                    if (_isActive)
+                    {
+                        // Cache both fighters' teams so the poll can read the live
+                        // combo counter (args[2]=attacker cWork, args[3]=defender
+                        // cPlayer) and hold re-reads until the combo really ends.
+                        try
+                        {
+                            ComboTracker.NoteTeams(
+                                ManagedObject.ToManagedObject(args[2]),
+                                ManagedObject.ToManagedObject(args[3]));
+                        }
+                        catch { }
+                    }
+                    return PreHookResult.Continue;
+                });
                 hook.AddPost((ref ulong retval) =>
                 {
                     if (!_isActive) return;
@@ -140,6 +157,7 @@ public class ComboTrialHooks
             {
                 _isActive = false;
                 _param = null;
+                ComboTracker.Clear();
                 API.LogInfo("[SF6Access] Combo trial ended");
                 return;
             }
@@ -334,6 +352,16 @@ public class ComboTrialHooks
         try
         {
             bool timedOut = _pollCounter - _pendingSinceFrame > PENDING_TIMEOUT_FRAMES;
+
+            // Never re-read the recipe while a combo is still live: the game keeps
+            // its combo counter (cTeam.mComboCount) up through long finisher
+            // animations, so this waits for the real end instead of talking over
+            // a combo the player hasn't finished yet.
+            if (!_pendingIncludeTitle && ComboTracker.IsComboActive())
+            {
+                if (timedOut) _pendingAnnounce = false;
+                return;
+            }
 
             // Attempt-end re-reads wait for the combo to actually finish:
             // no hits landed for QUIET_FRAMES. If the player just keeps

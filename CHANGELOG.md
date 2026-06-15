@@ -5,6 +5,8 @@
 ### Training
 - Reversal move-selection submenu now reads (the move lists and category tabs), and the instability/cursor fight that made it freeze is gone.
 - Frame data is announced during training (startup / total / advantage) when a move is performed.
+- Frame data and Attack Data (combo damage / hits) now respect their display options: each is only announced when its toggle is enabled in the Screen Display Settings, and frame data no longer leaks into replays.
+- Combo trials no longer re-read the recipe mid-combo before you finish the attempt.
 - Vitality and Super Art gauge values are read correctly when scrolling (1P vitality and 1P/2P super art were stuck announcing 0).
 
 ### Battle

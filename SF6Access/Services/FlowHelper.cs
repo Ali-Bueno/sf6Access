@@ -283,6 +283,22 @@ public static class FlowHelper
         return fallback;
     }
 
+    /// <summary>Read a 16-bit (short) field as int. Reading a short via the int
+    /// path would pull in the adjacent field's bytes, so the type must match.</summary>
+    public static int ReadShortField(ManagedObject obj, string name, int fallback = 0)
+    {
+        if (obj == null) return fallback;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField($"<{name}>k__BackingField") ?? td?.GetField(name);
+            if (field != null)
+                return Convert.ToInt32(field.GetDataBoxed(typeof(short), obj.GetAddress(), false));
+        }
+        catch { }
+        return fallback;
+    }
+
     public static float ReadFloatField(ManagedObject obj, string name, float fallback = float.NaN)
     {
         if (obj == null) return fallback;
@@ -326,6 +342,30 @@ public static class FlowHelper
         }
         catch { }
         return false;
+    }
+
+    /// <summary>
+    /// The training-mode display-settings record (app.training.TrainingData.TM_DisplaySetting)
+    /// holding the user's on/off toggles (Is_FrameMeter_View, Is_DS_AD_View, etc.).
+    /// TrainingManager._tData is only populated during a live training session
+    /// (null on menus), so returns null outside training. Falls back to the
+    /// display func's training-data reference.
+    /// </summary>
+    public static ManagedObject GetTrainingDisplaySetting()
+    {
+        try
+        {
+            var mgr = API.GetManagedSingleton("app.training.TrainingManager");
+            if (mgr == null) return null;
+            var tData = GetObjectField(mgr, "_tData");
+            if (tData == null)
+            {
+                var func = GetObjectField(mgr, "DisplayFunc");
+                tData = GetObjectField(func, "_tData");
+            }
+            return GetObjectField(tData, "DisplaySetting");
+        }
+        catch { return null; }
     }
 
     /// <summary>Call a method declared on the object's own class (not an interface). Returns null on failure.</summary>
