@@ -115,6 +115,11 @@ public class TrainingSubListHooks
         string value = ReadCurrentValue(viewData, rowData);
         _lastValue = value;
 
+        // SpinList (Delay Settings) has no ViewData label — use the picker's
+        // own title (e_txt_name) so the entry announce keeps its context
+        if (_activeType == SPINLIST_TYPE && string.IsNullOrEmpty(label))
+            label = ReadMenuListText("e_txt_name");
+
         // SpinList value picker (Delay Settings): on entry read the setting +
         // value once; every later left/right move is just a value change, so
         // announce only the value (interrupt == not the first read).
@@ -183,8 +188,12 @@ public class TrainingSubListHooks
         ScreenReaderService.Speak(diff);
     }
 
-    /// <summary>Focused frame value from the SpinList's own _MenuList group.</summary>
-    private static string ReadMenuListValue()
+    /// <summary>
+    /// The SpinList's focused item carries the setting title (e_txt_name) AND
+    /// the value (e_txt_0). Return only the requested element so left/right
+    /// edits announce the frame value alone, not "Delay Settings" each time.
+    /// </summary>
+    private static string ReadMenuListText(string elementName)
     {
         try
         {
@@ -192,10 +201,18 @@ public class TrainingSubListHooks
             var child = FlowHelper.Call(list, "GetFocusChild") as ManagedObject;
             var control = FlowHelper.GetObjectField(child, "Control")
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
-            return FlowHelper.FormatRowTexts(GuiTextReader.ReadControlTexts(control), 4);
+            if (control == null) return null;
+            foreach (var t in GuiTextReader.ReadControlTexts(control))
+            {
+                if (t.Name == elementName && !string.IsNullOrWhiteSpace(t.Text))
+                    return t.Text.Trim();
+            }
         }
-        catch { return null; }
+        catch { }
+        return null;
     }
+
+    private static string ReadMenuListValue() => ReadMenuListText("e_txt_0");
 
     /// <summary>Focused row GUI text via the inherited secondary list.</summary>
     private static string ReadRowGuiText()
