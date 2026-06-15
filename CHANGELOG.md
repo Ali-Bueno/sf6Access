@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0 — 15/06/2026
+
+### Training
+- Stage select: the BGM selection (Q/E) is announced when you change it (Stage BGM / Character BGM / track).
+- Reversal move-selection submenu: the Super Art tab move list now reads (it uses a different list control than the other tabs).
+- Reversal slots: each slot reads its number, assigned move (or "Empty"), on/off state, and delay; the on/off toggle and the assigned move are announced as they change.
+- Reversal "Delay Settings" submenu (R) reads the frame value, announcing only the value as you change it with left/right.
+- CPU Level is read when a player is set to CPU (the control-type slot becomes CPU Level), announcing the value and updating it on left/right.
+
 ## v0.3.0 — 15/06/2026
 
 ### Training

@@ -21,6 +21,10 @@ public class TrainingSubListHooks
         "app.training.UIFlowTrainingMenu_TextList.Param",
     };
 
+    // The reversal "Delay Settings" picker (opened with R) is a SpinList whose
+    // values (0F/1F/2F...) live in _MenuList, not the parent's _SecondaryList
+    private const string SPINLIST_TYPE = "app.training.UIFlowTrainingMenu_SpinList.Param";
+
     // app.training.ItemType slider variants — value is numeric, not a Guid
     private static readonly int[] SliderItemTypes = { 2, 10, 11, 12, 13, 14, 15 };
 
@@ -111,6 +115,17 @@ public class TrainingSubListHooks
         string value = ReadCurrentValue(viewData, rowData);
         _lastValue = value;
 
+        // SpinList value picker (Delay Settings): on entry read the setting +
+        // value once; every later left/right move is just a value change, so
+        // announce only the value (interrupt == not the first read).
+        if (_activeType == SPINLIST_TYPE && interrupt && !string.IsNullOrEmpty(value))
+        {
+            _lastRowText = ReadRowGuiText();
+            API.LogInfo($"[SF6Access] Training sub-list value: {value}");
+            ScreenReaderService.Speak(value, interrupt);
+            return;
+        }
+
         var parts = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrEmpty(label)) parts.Add(label);
         if (!string.IsNullOrEmpty(value) && value != label) parts.Add(value);
@@ -168,12 +183,27 @@ public class TrainingSubListHooks
         ScreenReaderService.Speak(diff);
     }
 
+    /// <summary>Focused frame value from the SpinList's own _MenuList group.</summary>
+    private static string ReadMenuListValue()
+    {
+        try
+        {
+            var list = FlowHelper.GetObjectField(_param, "_MenuList");
+            var child = FlowHelper.Call(list, "GetFocusChild") as ManagedObject;
+            var control = FlowHelper.GetObjectField(child, "Control")
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+            return FlowHelper.FormatRowTexts(GuiTextReader.ReadControlTexts(control), 4);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Focused row GUI text via the inherited secondary list.</summary>
     private static string ReadRowGuiText()
     {
         try
         {
-            var list = FlowHelper.GetObjectField(_param, "_SecondaryList");
+            var list = FlowHelper.GetObjectField(_param, "_MenuList")
+                ?? FlowHelper.GetObjectField(_param, "_SecondaryList");
             var child = FlowHelper.Call(list, "GetFocusChild") as ManagedObject;
             var control = FlowHelper.GetObjectField(child, "Control")
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
@@ -186,6 +216,15 @@ public class TrainingSubListHooks
     /// currently-selected value child message.</summary>
     private static string ReadCurrentValue(ManagedObject viewData, ManagedObject rowData)
     {
+        // SpinList value picker (Delay Settings): the selected frame value is
+        // the focused child of _MenuList (e_txt_0 = "1F"), not in ViewData or
+        // the parent's secondary list
+        if (_activeType == SPINLIST_TYPE)
+        {
+            string frame = ReadMenuListValue();
+            if (!string.IsNullOrEmpty(frame)) return frame;
+        }
+
         // No row data (the _All screen): the manager's CurrentMenuData points
         // at the parent menu row, not these rows — read nothing here so the
         // GUI-text path takes over

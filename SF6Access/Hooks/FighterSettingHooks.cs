@@ -41,6 +41,19 @@ public class FighterSettingHooks
     private static ManagedObject _activeParam;
     private static int _activePlayerIndex;
 
+    // CPU panels (mCpuFlag) replace the control-type spin (index 2) with a
+    // "CPU Level" spin; its value lives on the spin itself, not in UIFlowUI10511.
+    // mCpuFlag is set a few frames AFTER the panel becomes active, so it must be
+    // read live each poll — caching it at bind time caught a stale False.
+    private static string _lastCpuLevel;
+    private static string _cpuLevelLabel;
+    private static ManagedObject _cpuView;
+    private static string _cpuViewOwner;
+    private const int SPIN_CONTROL = 2;
+
+    private static bool IsCpuPanel() =>
+        _activeParam != null && ReadBoolField(_activeParam, "mCpuFlag");
+
     // Cached from active param
     private static ManagedObject _group;          // UIPartsGroup (has _FocusIndex)
     private static ManagedObject _spinsList;      // List<UIPartsSpin> (for count)
@@ -84,6 +97,8 @@ public class FighterSettingHooks
                 Reset();
                 return;
             }
+            // Re-cache the CPU panel's GUI view (recreated with the screen)
+            if (IsCpuPanel()) RefreshCpuView();
         }
 
         if (_pollCounter % POLL_READ_INTERVAL == 0)
@@ -138,6 +153,13 @@ public class FighterSettingHooks
             var getItemMethod = handles.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
             if (countMethod == null || getItemMethod == null) return null;
 
+            // Both players' setting panels (P1 + P2) can be mIsActive at once.
+            // The one the user is editing is the FOCUSED one — prefer it, so a
+            // CPU P2 panel isn't shadowed by an active P1 human panel that
+            // happens to come first in handle order.
+            ManagedObject firstActive = null;
+            int firstPlayer = -1;
+
             int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
             for (int i = 0; i < count && i < 50; i++)
             {
@@ -147,15 +169,45 @@ public class FighterSettingHooks
                     if (handle == null) continue;
                     var param = handle.GetField("<Param>k__BackingField") as ManagedObject;
                     if (param?.GetTypeDefinition()?.FullName != "app.UIFlowUI10505.Param") continue;
+                    if (!ReadBoolField(param, "mIsActive")) continue;
 
-                    if (ReadBoolField(param, "mIsActive"))
-                    {
-                        playerIndex = ReadIntField(param, "mPlayerIndex");
-                        return param;
-                    }
+                    int pIdx = ReadIntField(param, "mPlayerIndex");
+                    bool focused = IsParamFocused(param);
+                    API.LogInfo($"[SF6Access] UI10505 candidate: name={ReadStringField(param, "object_name")}, " +
+                        $"cpu={ReadBoolField(param, "mCpuFlag")}, player={pIdx}, focused={focused}");
+
+                    if (firstActive == null) { firstActive = param; firstPlayer = pIdx; }
+                    if (focused) { playerIndex = pIdx; return param; }
                 }
                 catch { }
             }
+
+            playerIndex = firstPlayer;
+            return firstActive;
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>True when the panel's input group currently holds focus.</summary>
+    private static bool IsParamFocused(ManagedObject param)
+    {
+        var group = GetField(param, "Group");
+        if (group == null) return false;
+        var result = (group as IObject)?.Call("get_IsFocus");
+        if (result is bool b) return b;
+        return ReadBoolField(group, "_IsFocus");
+    }
+
+    private static string ReadStringField(ManagedObject obj, string name)
+    {
+        if (obj == null) return null;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField(name) ?? td?.GetField($"<{name}>k__BackingField");
+            if (field != null)
+                return field.GetDataBoxed(typeof(string), obj.GetAddress(), false) as string;
         }
         catch { }
         return null;
@@ -199,6 +251,61 @@ public class FighterSettingHooks
         return (-1, -1);
     }
 
+    /// <summary>
+    /// CPU level label + value read straight from the active panel's GUI
+    /// (object_name, e.g. "ui10507"): e_text_title is the localized "CPU Level"
+    /// and the first following e_text is the level number. The level is NOT a
+    /// UIFlowUI10505 spin and UIFlowUI10506.getLevel() returned a stale 0, so
+    /// the on-screen text is the only reliable source.
+    /// </summary>
+    private static (string label, string value) ReadCpuLevelGui()
+    {
+        try
+        {
+            if (_cpuView == null) RefreshCpuView();
+            if (_cpuView == null) return (null, null);
+
+            string label = null, value = null;
+            bool seenTitle = false;
+            foreach (var t in GuiTextReader.ReadViewTexts(_cpuView, _cpuViewOwner))
+            {
+                if (t.Name == "e_text_title" && !string.IsNullOrWhiteSpace(t.Text))
+                {
+                    label = t.Text.Trim();
+                    seenTitle = true;
+                }
+                else if (seenTitle && t.Name == "e_text" && !string.IsNullOrWhiteSpace(t.Text))
+                {
+                    value = t.Text.Trim();
+                    break;
+                }
+            }
+            if (label != null) _cpuLevelLabel = label;
+            return (label, value);
+        }
+        catch { return (null, null); }
+    }
+
+    /// <summary>Cache the active CPU panel's GUI view (object_name) so the
+    /// per-poll value read walks only that subtree, not the whole scene.</summary>
+    private static void RefreshCpuView()
+    {
+        _cpuView = null;
+        _cpuViewOwner = null;
+        try
+        {
+            string owner = ReadStringField(_activeParam, "object_name");
+            if (string.IsNullOrEmpty(owner)) return;
+            foreach (var (o, view) in GuiTextReader.FindGuiViews(owner))
+            {
+                _cpuView = view;
+                _cpuViewOwner = o;
+                break;
+            }
+        }
+        catch { }
+    }
+
     private static bool RefreshActiveParam()
     {
         // Always re-scan _Handles: trusting the cached param's mIsActive kept
@@ -217,6 +324,11 @@ public class FighterSettingHooks
         _activeParam = param;
         _activePlayerIndex = playerIndex;
         _isActive = true;
+        _cpuLevelLabel = null;
+        _cpuView = null;
+        _cpuViewOwner = null;
+        // Seed so the value poll doesn't announce the CPU level on entry
+        _lastCpuLevel = ReadBoolField(param, "mCpuFlag") ? ReadCpuLevelGui().value : null;
 
         // Cache child objects
         _group = GetField(param, "Group");
@@ -244,7 +356,7 @@ public class FighterSettingHooks
         if (focusChanged)
             AnnounceCurrentItem();
 
-        API.LogInfo($"[SF6Access] FighterSetting active (player={playerIndex}, spins={_spinCount}, messData={GetArrayLength(_messDataArr)}, costume={_lastCostumeIdx}, color={_lastColorIdx}, ctrl={_lastControllerType}, preset={_lastPresetIdx})");
+        API.LogInfo($"[SF6Access] FighterSetting active (name={ReadStringField(param, "object_name")}, cpu={ReadBoolField(param, "mCpuFlag")}, player={playerIndex}, spins={_spinCount}, messData={GetArrayLength(_messDataArr)}, costume={_lastCostumeIdx}, color={_lastColorIdx}, ctrl={_lastControllerType}, preset={_lastPresetIdx})");
     }
 
     // --- Focus & Value Polling ---
@@ -287,6 +399,23 @@ public class FighterSettingHooks
                 GetColorName(_lastCostumeIdx, colorIdx));
             API.LogInfo($"[SF6Access] Color changed: {text} (idx={colorIdx})");
             ScreenReaderService.Speak(text);
+        }
+
+        // CPU panel: the "Control Type" slot is replaced by "CPU Level", which
+        // is NOT a UIFlowUI10505 spin — it lives on the sibling UIFlowUI10506
+        // battle-setting Param (getLevel()). Poll it for changes.
+        if (IsCpuPanel())
+        {
+            var (_, cpuLevel) = ReadCpuLevelGui();
+            if (!string.IsNullOrEmpty(cpuLevel) && cpuLevel != _lastCpuLevel)
+            {
+                _lastCpuLevel = cpuLevel;
+                // Left/right edit on the same row: announce only the new value,
+                // the label was already read when the row got focus
+                API.LogInfo($"[SF6Access] CPU level changed: {cpuLevel}");
+                ScreenReaderService.Speak(cpuLevel);
+            }
+            return;
         }
 
         // Controller type + Preset — both from UIFlowUI10511 handle
@@ -521,7 +650,17 @@ public class FighterSettingHooks
         string label = ReadSpinLabel(_lastFocusIndex);
         string valueText;
 
-        if (_lastFocusIndex <= 2)
+        if (_lastFocusIndex == SPIN_CONTROL && IsCpuPanel())
+        {
+            // CPU panel: the control-type slot is replaced by "CPU Level".
+            // Read both the localized label and the value from the on-screen
+            // GUI (the spin holds neither).
+            var (cpuLabel, cpuValue) = ReadCpuLevelGui();
+            valueText = cpuValue;
+            _lastCpuLevel = cpuValue;
+            if (!string.IsNullOrEmpty(cpuLabel)) label = cpuLabel;
+        }
+        else if (_lastFocusIndex <= 2)
         {
             int valueIdx = GetCurrentValueForSpin(_lastFocusIndex);
             valueText = valueIdx >= 0 ? ReadValueFromTextList(_lastFocusIndex, valueIdx) : null;
@@ -687,7 +826,7 @@ public class FighterSettingHooks
             catch { }
         }
 
-        string[] fallbacks = { "Costume", "Color", "Control Type", "Preset" };
+        string[] fallbacks = { "Costume", "Color", IsCpuPanel() ? "CPU Level" : "Control Type", "Preset" };
         string fb = index < fallbacks.Length ? fallbacks[index] : $"Setting {index}";
         _labelCache[index] = fb;
         return fb;
@@ -957,6 +1096,10 @@ public class FighterSettingHooks
         _lastColorIdx = -1;
         _lastControllerType = -1;
         _lastPresetIdx = -1;
+        _lastCpuLevel = null;
+        _cpuLevelLabel = null;
+        _cpuView = null;
+        _cpuViewOwner = null;
         _labelCache.Clear();
         _costumeNameCache.Clear();
         _recordsLogged = false;

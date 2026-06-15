@@ -24,6 +24,14 @@ public class StageSelectHooks
     // State tracking
     private static string _lastStageName = "";
 
+    // BGM selection (Q/E on the stage select screen toggles Stage BGM /
+    // Character BGM / a specific track). The value lives in the "StageSelect"
+    // GUI's e_text_bgm element, not in a Param field — cache the view and poll.
+    private const string BGM_GUI = "StageSelect";
+    private const string BGM_TEXT = "e_text_bgm";
+    private static readonly System.Collections.Generic.List<(string owner, ManagedObject view)> _bgmViews = new();
+    private static string _lastBgm = "";
+
     // Cached message resolution
     private static Method _msgGetMethod;
 
@@ -71,15 +79,25 @@ public class StageSelectHooks
                     _isActive = false;
                     _stageParam = null;
                     _lastStageName = "";
+                    _bgmViews.Clear();
+                    _lastBgm = "";
                     return;
                 }
                 if (FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_stageParam))
                     BindParam(current);
+
+                // Refresh the BGM GUI view (re-created with the screen)
+                _bgmViews.Clear();
+                foreach (var v in GuiTextReader.FindGuiViews(BGM_GUI))
+                    _bgmViews.Add(v);
             }
 
-            // Poll for stage name changes every few frames
+            // Poll for stage name + BGM changes every few frames
             if (_pollCounter % 5 == 0)
+            {
                 ReadAndAnnounce();
+                PollBgm();
+            }
         }
         catch (Exception ex)
         {
@@ -121,8 +139,42 @@ public class StageSelectHooks
         _isActive = true;
         _lastStageName = "";
         _fieldsLogged = false;
+        _lastBgm = "";
+        _bgmViews.Clear();
+        foreach (var v in GuiTextReader.FindGuiViews(BGM_GUI))
+            _bgmViews.Add(v);
         API.LogInfo($"[SF6Access] Stage select param found: {param.GetTypeDefinition()?.FullName}");
         LogParamFields(param);
+    }
+
+    /// <summary>
+    /// Announce the BGM selection (Q/E) when it changes. The current choice is
+    /// the StageSelect GUI's e_text_bgm element ("Stage BGM", "Character BGM",
+    /// a track name...).
+    /// </summary>
+    private static void PollBgm()
+    {
+        foreach (var (owner, view) in _bgmViews)
+        {
+            try
+            {
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                {
+                    if (t.Name != BGM_TEXT) continue;
+                    string bgm = t.Text?.Trim();
+                    if (string.IsNullOrEmpty(bgm) || bgm == _lastBgm) return;
+
+                    bool first = string.IsNullOrEmpty(_lastBgm);
+                    _lastBgm = bgm;
+                    if (first) return; // Don't announce the initial value
+
+                    API.LogInfo($"[SF6Access] Stage BGM: {bgm}");
+                    ScreenReaderService.Speak(bgm);
+                    return;
+                }
+            }
+            catch { }
+        }
     }
 
     private static void LogParamFields(ManagedObject param)

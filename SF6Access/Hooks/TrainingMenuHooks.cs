@@ -41,12 +41,7 @@ public class TrainingMenuHooks
     // data from TrainingManager._tData instead
     private const int ITEM_TYPE_REVERSAL = 8;
     private static bool _onReversalRow;
-    private static string _lastSlotSig;
-
-    // TrainingReversalData skill arrays indexed by app.training.ReversalType
-    // (NORMAL..OTHER); RECORDING (4) has no skill array
-    private static readonly string[] SkillArrayFields =
-        { "NormalData", "CommandNormalData", "SpecialData", "SaData", null, "CommonData", "OtherData" };
+    private static string _lastSlotText;
 
     // OnSliderUp/Down edits: the slider's GUI text updates AFTER the handler
     // runs, so the hook only queues the slider and the read happens a few
@@ -466,7 +461,7 @@ public class TrainingMenuHooks
         var row = rowData ?? data;
 
         _onReversalRow = FlowHelper.ReadIntField(row, "_Type", -1) == ITEM_TYPE_REVERSAL;
-        _lastSlotSig = null;
+        _lastSlotText = null;
 
         string value = FlowHelper.ResolveGuidField(data, "_MessageID");
         _lastValueName = value;
@@ -527,10 +522,13 @@ public class TrainingMenuHooks
                 parts.Add(sliderValue.ToString());
         }
 
-        // Reversal slot rows: append the focused slot's real data
+        // Reversal slot rows: append the focused slot's on-screen data
+        // (_tData is null at runtime, so read the GUI: slot name, assigned
+        // move, on/off state, delay)
         if (_onReversalRow)
         {
-            string slotInfo = ReadReversalSlotInfo(row, out _lastSlotSig);
+            string slotInfo = ReadReversalRowGui();
+            _lastSlotText = slotInfo;
             API.LogInfo($"[SF6Access] Reversal row: SlotID={FlowHelper.ReadIntField(row, "_SlotID", -1)}, info={slotInfo}");
             if (!string.IsNullOrEmpty(slotInfo)) parts.Add(slotInfo);
         }
@@ -611,90 +609,68 @@ public class TrainingMenuHooks
     }
 
     /// <summary>
-    /// Detect tile moves (left/right, via TrainingManager._CurrentSlotNo) and
-    /// in-place edits on the focused reversal slot row by watching a cheap
-    /// signature of the slot's data fields.
+    /// Detect in-place edits on the focused reversal slot row (the T toggle
+    /// for on/off, the R delay/timing config, count changes) by re-reading the
+    /// focused slot's on-screen text and announcing the changed segment.
     /// </summary>
     private static void PollReversalSlot()
     {
-        // Reversal rows have no value children, so CurrentMenuData is the row
-        // itself when the data tree lookup fails
-        var rowData = FindRowData()
-            ?? FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
-        if (rowData == null) return;
+        string info = ReadReversalRowGui();
+        if (string.IsNullOrEmpty(info)) return;
 
-        string info = ReadReversalSlotInfo(rowData, out string sig);
-        if (sig == null || sig == _lastSlotSig) return;
+        string previous = _lastSlotText;
+        if (info == previous) return;
+        _lastSlotText = info;
+        if (previous == null) return; // baseline from the focus-change read
 
-        bool first = _lastSlotSig == null;
-        _lastSlotSig = sig;
-        if (first || string.IsNullOrEmpty(info)) return;
+        // Same slot, a field was edited: announce only what changed
+        string announcement = FlowHelper.DiffSegments(previous, info);
+        if (string.IsNullOrEmpty(announcement)) announcement = info;
 
-        API.LogInfo($"[SF6Access] Reversal slot: {info} ({sig})");
-        ScreenReaderService.Speak(info);
-        _lastRowText = ReadFocusedRowText();
+        API.LogInfo($"[SF6Access] Reversal slot: {announcement}");
+        ScreenReaderService.Speak(announcement);
     }
 
     /// <summary>
-    /// Read the focused tile of a reversal slot strip from the training save
-    /// data: slot number, assigned move name, active state, count and delay.
-    /// The strip's GUI repaints all tiles at once and is unreadable as text.
+    /// On-screen data of the focused reversal slot row: slot name, assigned
+    /// move (or "Empty"), on/off state, count and delay. Read from the GUI
+    /// because TrainingManager._tData is null at runtime — the named text
+    /// elements (e_txt_name/e_txt_center/e_txt_sub/e_txt_right/e_txt_east)
+    /// carry everything the sighted player sees.
     /// </summary>
-    private static string ReadReversalSlotInfo(ManagedObject rowData, out string signature)
+    private static string ReadReversalRowGui()
     {
-        signature = null;
         try
         {
-            // _SlotID is the slot number within the strip (one row per slot);
-            // the strip category (wakeup/block/damage) is the selected
-            // reversal tab, mirrored in ReversalSetting.ReversalType
-            int slotNo = FlowHelper.ReadIntField(rowData, "_SlotID", -1);
-            if (slotNo < 0) return null;
+            var param = _flowParam ??= FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
+            var list = FlowHelper.GetObjectField(param, "_SecondaryList");
+            var child = FlowHelper.Call(list, "GetFocusChild") as ManagedObject;
+            var control = FlowHelper.GetObjectField(child, "Control")
+                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
+            if (control == null) return null;
 
-            var tData = FlowHelper.GetObjectField(_manager, "_tData");
-            var setting = FlowHelper.GetObjectField(tData, "ReversalSetting");
-
-            int category = FlowHelper.ReadIntField(setting, "ReversalType", 0);
-            string arrayField = category switch
+            string name = null, move = null, state = null, count = null, delay = null;
+            foreach (var t in GuiTextReader.ReadControlTexts(control))
             {
-                0 => "DownReversalDatas",
-                1 => "GuardReversalDatas",
-                2 => "DamageReversalDatas",
-                _ => null,
-            };
-            if (arrayField == null) return null;
-
-            var fighters = FlowHelper.GetObjectField(setting, "FighterDataList");
-            int fighterCount = FlowHelper.GetListCount(fighters);
-            if (fighterCount == 0) return null;
-
-            // Settings are per fighter; the entry being edited follows the
-            // menu's player index (single-entry list = that one fighter)
-            int playerIdx = FlowHelper.ReadIntField(_manager, "_UIPlayerIndex", 0);
-            if (playerIdx < 0) playerIdx = 0;
-            var fighter = FlowHelper.GetListItem(fighters, System.Math.Min(playerIdx, fighterCount - 1));
-
-            var slot = FlowHelper.GetListItem(FlowHelper.GetObjectField(fighter, arrayField), slotNo);
-            if (slot == null) return null;
-
-            bool isValid = FlowHelper.ReadBoolField(slot, "IsValid");
-            bool isActive = FlowHelper.ReadBoolField(slot, "IsActive");
-            int type = FlowHelper.ReadIntField(slot, "Type", -1);
-            int skillIndex = FlowHelper.ReadIntField(slot, "SkillIndex", -1);
-            int count = FlowHelper.ReadIntField(slot, "Count", 0);
-            int delay = FlowHelper.ReadIntField(slot, "Delay", 0);
-            signature = $"{category}|{slotNo}|{isValid}|{isActive}|{type}|{skillIndex}|{count}|{delay}";
-
-            var parts = new System.Collections.Generic.List<string> { (slotNo + 1).ToString() };
-            if (isValid)
-            {
-                string skill = ReadReversalSkillName(playerIdx, type, skillIndex);
-                if (!string.IsNullOrEmpty(skill)) parts.Add(skill);
-                parts.Add(isActive ? "ON" : "OFF");
-                if (count > 1) parts.Add(count.ToString());
-                if (delay > 0) parts.Add(delay.ToString());
+                string text = t.Text?.Trim();
+                if (string.IsNullOrEmpty(text)) continue;
+                switch (t.Name)
+                {
+                    case "e_txt_name": name ??= text; break;   // "Slot 1"
+                    case "e_txt_center": move ??= text; break; // move name or "Empty"
+                    case "e_txt_sub": state ??= text; break;   // "On" / "Off"
+                    case "e_txt_right": count ??= text; break; // "Count: 1"
+                    case "e_txt_east": delay ??= text; break;  // "Delay: 0F"
+                }
             }
-            return string.Join(". ", parts);
+
+            var parts = new System.Collections.Generic.List<string>();
+            if (!string.IsNullOrEmpty(name)) parts.Add(name);
+            if (!string.IsNullOrEmpty(move)) parts.Add(move);
+            if (!string.IsNullOrEmpty(state)) parts.Add(state);
+            if (!string.IsNullOrEmpty(count)) parts.Add(count);
+            if (!string.IsNullOrEmpty(delay)) parts.Add(delay);
+            return parts.Count > 0 ? string.Join(". ", parts) : null;
         }
         catch { return null; }
     }
@@ -720,26 +696,6 @@ public class TrainingMenuHooks
         }
         catch { }
         return names;
-    }
-
-    /// <summary>Localized move name from TrainingManager._UISkillData (per
-    /// player), in the skill array matching the slot's ReversalType.</summary>
-    private static string ReadReversalSkillName(int playerIdx, int reversalType, int skillIndex)
-    {
-        try
-        {
-            if (reversalType < 0 || reversalType >= SkillArrayFields.Length || skillIndex < 0)
-                return null;
-            string field = SkillArrayFields[reversalType];
-            if (field == null) return null; // RECORDING has no skill array
-
-            var perPlayer = FlowHelper.GetListItem(
-                FlowHelper.GetObjectField(_manager, "_UISkillData"), playerIdx);
-            var record = FlowHelper.GetListItem(
-                FlowHelper.GetObjectField(perPlayer, field), skillIndex);
-            return FlowHelper.ResolveGuidField(record, "SkillMessage");
-        }
-        catch { return null; }
     }
 
     /// <summary>
@@ -782,7 +738,7 @@ public class TrainingMenuHooks
         _lastRowText = null;
         _flowParam = null;
         _onReversalRow = false;
-        _lastSlotSig = null;
+        _lastSlotText = null;
         _pendingSlider = null;
     }
 }

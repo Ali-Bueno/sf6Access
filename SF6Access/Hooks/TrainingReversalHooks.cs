@@ -25,6 +25,7 @@ public class TrainingReversalHooks
     private static bool _isActive;
     private static readonly List<(string typeName, ManagedObject param)> _params = new();
     private static readonly Dictionary<string, int> _lastFocus = new();
+    private static readonly Dictionary<string, string> _lastText = new();
     private static int _lastTabIndex = -2;
 
     /// <summary>True while the reversal move-selection submenu is open, so the
@@ -78,6 +79,7 @@ public class TrainingReversalHooks
             {
                 _isActive = true;
                 _lastFocus.Clear();
+                _lastText.Clear();
                 _lastTabIndex = -2;
                 _pendingRowAnnounce = true;
                 API.LogInfo($"[SF6Access] Reversal menu active ({_params.Count} params)");
@@ -86,6 +88,7 @@ public class TrainingReversalHooks
             {
                 _isActive = false;
                 _lastFocus.Clear();
+                _lastText.Clear();
                 API.LogInfo("[SF6Access] Reversal menu ended");
             }
         }
@@ -125,6 +128,7 @@ public class TrainingReversalHooks
         // A new tab shows a new list: read its focused row too, even when
         // that list's focus index didn't move
         _lastFocus.Clear();
+        _lastText.Clear();
         _pendingRowAnnounce = true;
 
         string title = null;
@@ -142,71 +146,90 @@ public class TrainingReversalHooks
         ScreenReaderService.Speak(announcement, interrupt: !first);
     }
 
-    /// <summary>Move rows of one category list.</summary>
+    /// <summary>
+    /// Move rows of one category list. Most child Params expose _pGroupScroll
+    /// (a UIPartsGroup → _FocusIndex + GetFocusChild). The Super Art tab uses
+    /// _pScrollList (a UIPartsScrollList → SelectedIndex + SelectedItem)
+    /// instead — confirmed in the decompiled UIFlowTrainingMenu_Reversal_SA.
+    /// Read the focused row's name and announce on change.
+    /// </summary>
     private static void PollMoveList(string typeName, ManagedObject param)
     {
-        // "FoucsIndex" is the game's own typo on most categories
-        int focus = FlowHelper.ReadIntField(param, "FoucsIndex", int.MinValue);
-        if (focus == int.MinValue)
-            focus = FlowHelper.ReadIntField(param, "FocusIndex", int.MinValue);
-        if (focus < 0) return;
+        int focus;
+        string row;
 
-        bool first = !_lastFocus.TryGetValue(typeName, out int last);
-        bool changed = first || focus != last;
+        var group = FlowHelper.GetObjectField(param, "_pGroupScroll");
+        if (group != null)
+        {
+            focus = FlowHelper.ReadIntField(group, "_FocusIndex", int.MinValue);
+            row = ReadGroupRow(group);
+        }
+        else
+        {
+            var list = FlowHelper.GetObjectField(param, "_pScrollList");
+            if (list == null) return;
+            focus = FlowHelper.CallInt(list, "get_SelectedIndex", int.MinValue);
+            row = ReadListRow(list);
+        }
+        if (string.IsNullOrEmpty(row)) return;
+
+        bool firstIdx = !_lastFocus.TryGetValue(typeName, out int lastFocus);
+        bool idxChanged = firstIdx || focus != lastFocus;
+        bool textChanged = !_lastText.TryGetValue(typeName, out string lastText) || row != lastText;
         _lastFocus[typeName] = focus;
+        _lastText[typeName] = row;
 
-        // Entry / tab change: read this (already tab-filtered) list's current
-        // row once. The previous code gated on a non-existent "mIsActive"
-        // field, so the initial row was never announced and the whole move
-        // list read as silent — the caller now passes only the active tab.
+        // Entry / tab change: read the current row once even though nothing moved
         if (_pendingRowAnnounce)
         {
-            string row = ReadSkillName(param, focus) ?? ReadRowText(param);
-            if (!string.IsNullOrEmpty(row))
-            {
-                _pendingRowAnnounce = false;
-                API.LogInfo($"[SF6Access] Reversal row (initial) [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
-                ScreenReaderService.Speak(row, interrupt: false);
-            }
+            _pendingRowAnnounce = false;
+            API.LogInfo($"[SF6Access] Reversal row (initial) [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
+            ScreenReaderService.Speak(row, interrupt: false);
             return;
         }
 
-        if (!changed || first) return;
+        if (!idxChanged && !textChanged) return;
 
-        string announcement = ReadSkillName(param, focus) ?? ReadRowText(param);
-        if (string.IsNullOrEmpty(announcement)) return;
-
-        API.LogInfo($"[SF6Access] Reversal move [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        API.LogInfo($"[SF6Access] Reversal move [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
+        ScreenReaderService.Speak(row);
     }
 
-    /// <summary>Localized move name from SkillData[focus].SkillMessage.</summary>
-    private static string ReadSkillName(ManagedObject param, int focus)
+    /// <summary>Focused move name from a UIPartsGroup (GetFocusChild).</summary>
+    private static string ReadGroupRow(ManagedObject group)
     {
         try
         {
-            var skills = FlowHelper.GetObjectField(param, "SkillData");
-            var record = FlowHelper.GetListItem(skills, focus);
-            return FlowHelper.ResolveGuidField(record, "SkillMessage");
-        }
-        catch { return null; }
-    }
-
-    /// <summary>On-screen text of the focused row in the list's group scroll.</summary>
-    private static string ReadRowText(ManagedObject param)
-    {
-        try
-        {
-            // Most categories scroll via _pGroupScroll; the Super Art tab uses
-            // _pScrollList instead.
-            var group = FlowHelper.GetObjectField(param, "_pGroupScroll")
-                ?? FlowHelper.GetObjectField(param, "_pScrollList");
-            var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject
-                ?? FlowHelper.Call(group, "get_SelectedItem") as ManagedObject;
+            var child = FlowHelper.Call(group, "GetFocusChild") as ManagedObject;
             var control = FlowHelper.GetObjectField(child, "Control")
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
-            return GuiTextReader.ReadControlTextJoined(control);
+            return ReadNameOrJoined(control);
         }
         catch { return null; }
+    }
+
+    /// <summary>Selected move name from a UIPartsScrollList (Super Art tab).</summary>
+    private static string ReadListRow(ManagedObject list)
+    {
+        try
+        {
+            var item = FlowHelper.Call(list, "get_SelectedItem") as ManagedObject;
+            if (item == null) return null;
+            string name = ReadNameOrJoined(item);
+            return !string.IsNullOrEmpty(name) ? name : FlowHelper.ReadSelectedItemText(list);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Move items carry their label in e_txt_name; prefer it over the
+    /// joined text (which can pick up adjacent decorations).</summary>
+    private static string ReadNameOrJoined(ManagedObject control)
+    {
+        if (control == null) return null;
+        foreach (var t in GuiTextReader.ReadControlTexts(control))
+        {
+            if (t.Name == "e_txt_name" && !string.IsNullOrWhiteSpace(t.Text))
+                return t.Text.Trim();
+        }
+        return GuiTextReader.ReadControlTextJoined(control);
     }
 }
