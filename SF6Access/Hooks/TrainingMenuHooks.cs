@@ -158,7 +158,7 @@ public class TrainingMenuHooks
         // polling the parent here only spammed TrainingMenuData[].Get out-of-
         // range errors (the slot strip row index no longer fits) and fought
         // the submenu for the cursor — the source of the "unstable" reversal.
-        if (TrainingReversalHooks.IsActive) return;
+        if (TrainingReversalHooks.IsActive || TrainingCharacterSpecificHooks.IsActive) return;
 
         if (!_isActive)
         {
