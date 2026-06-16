@@ -36,11 +36,11 @@ public class TrainingMenuHooks
     // SLIDER_DRIVE, SLIDER_SA_1P/2P) — their value is numeric, not a message Guid
     private static readonly int[] SliderItemTypes = { 2, 10, 11, 12, 13, 14, 15 };
 
-    // app.training.ItemType.REVERSAL_ITEM: a strip of reversal slot tiles whose
-    // GUI repaints all tiles at once (unreadable as row text) — read the slot
-    // data from TrainingManager._tData instead
-    private const int ITEM_TYPE_REVERSAL = 8;
-    private static bool _onReversalRow;
+    // Slot-strip rows whose GUI repaints all tiles at once (unreadable as plain
+    // row text) — read the focused slot's named texts instead. app.training.ItemType:
+    // PLAY_SLOT_ITEM=5, RECORD_SLOT_ITEM=6 (recording slots), REVERSAL_ITEM=8.
+    private static readonly int[] SLOT_ITEM_TYPES = { 5, 6, 8 };
+    private static bool _onSlotRow;
     private static string _lastSlotText;
 
     // OnSliderUp/Down edits: the slider's GUI text updates AFTER the handler
@@ -234,7 +234,7 @@ public class TrainingMenuHooks
     {
         // Reversal slot rows: left/right moves between tiles and in-place edits
         // (toggle, count, skill change) only show up in the slot DATA
-        if (_onReversalRow)
+        if (_onSlotRow)
         {
             PollReversalSlot();
             return;
@@ -460,7 +460,7 @@ public class TrainingMenuHooks
         var rowData = FindRowData() ?? FlowHelper.GetObjectField(viewData, "Data");
         var row = rowData ?? data;
 
-        _onReversalRow = FlowHelper.ReadIntField(row, "_Type", -1) == ITEM_TYPE_REVERSAL;
+        _onSlotRow = System.Array.IndexOf(SLOT_ITEM_TYPES, FlowHelper.ReadIntField(row, "_Type", -1)) >= 0;
         _lastSlotText = null;
 
         string value = FlowHelper.ResolveGuidField(data, "_MessageID");
@@ -492,7 +492,7 @@ public class TrainingMenuHooks
         // No ViewData (row never redrawn): the on-screen row text is the only
         // place that has label AND displayed value together
         string rowText = null;
-        if (string.IsNullOrEmpty(label) && !_onReversalRow)
+        if (string.IsNullOrEmpty(label) && !_onSlotRow)
         {
             rowText = ReadFocusedRowText();
             if (!string.IsNullOrEmpty(rowText) && CountSegments(rowText) > 5)
@@ -525,7 +525,7 @@ public class TrainingMenuHooks
         // Reversal slot rows: append the focused slot's on-screen data
         // (_tData is null at runtime, so read the GUI: slot name, assigned
         // move, on/off state, delay)
-        if (_onReversalRow)
+        if (_onSlotRow)
         {
             string slotInfo = ReadReversalRowGui();
             _lastSlotText = slotInfo;
@@ -737,7 +737,7 @@ public class TrainingMenuHooks
         _lastSectionName = null;
         _lastRowText = null;
         _flowParam = null;
-        _onReversalRow = false;
+        _onSlotRow = false;
         _lastSlotText = null;
         _pendingSlider = null;
     }

@@ -220,16 +220,43 @@ public class TrainingReversalHooks
         catch { return null; }
     }
 
-    /// <summary>Move items carry their label in e_txt_name; prefer it over the
-    /// joined text (which can pick up adjacent decorations).</summary>
+    // Strength variant of a reversal special move (Light / Medium / Heavy,
+    // changed with left/right). Its on-screen element name is not yet confirmed,
+    // so capture several likely candidates and log all named texts to pin it down.
+    private static readonly string[] StrengthElementNames =
+        { "e_txt_sub", "e_txt_right", "e_txt_center", "e_txt_strength", "e_txt_level", "e_txt_east" };
+
+    private static string _lastMoveTexts;
+
+    /// <summary>Move items carry their label in e_txt_name; append the strength
+    /// variant (Light/Medium/Heavy) when present so changing it re-announces.</summary>
     private static string ReadNameOrJoined(ManagedObject control)
     {
         if (control == null) return null;
+
+        string name = null;
+        string strength = null;
+        var seen = new List<string>();
         foreach (var t in GuiTextReader.ReadControlTexts(control))
         {
-            if (t.Name == "e_txt_name" && !string.IsNullOrWhiteSpace(t.Text))
-                return t.Text.Trim();
+            if (string.IsNullOrWhiteSpace(t.Text)) continue;
+            string text = t.Text.Trim();
+            seen.Add($"{t.Name}='{text}'");
+            if (t.Name == "e_txt_name") name ??= text;
+            else if (strength == null && System.Array.IndexOf(StrengthElementNames, t.Name) >= 0)
+                strength = text;
         }
+
+        // Trace (only when it changes) to confirm which element carries the strength
+        string joined = string.Join(", ", seen);
+        if (seen.Count > 0 && joined != _lastMoveTexts)
+        {
+            _lastMoveTexts = joined;
+            API.LogInfo($"[SF6Access] Reversal move texts: {joined}");
+        }
+
+        if (!string.IsNullOrEmpty(name))
+            return string.IsNullOrEmpty(strength) ? name : $"{name}. {strength}";
         return GuiTextReader.ReadControlTextJoined(control);
     }
 }

@@ -2,6 +2,9 @@
 
 ## v0.3.5 — 16/06/2026
 
+### Training
+- Recording / playback slots now read their slot number and data as you navigate them, the same way the reversal slots already did.
+
 ### Rewards / Fighting Pass
 - The Rewards screen now reads as you navigate it: the tab (Fighting Pass / Challenge / Kudos / Master Pass) is announced when you switch, and the focused row of each tab is read.
 - Battle Pass rewards are announced with their name, whether they are a Free or Premium reward, and their claimed status ("Claimed" / "Not claimed").
