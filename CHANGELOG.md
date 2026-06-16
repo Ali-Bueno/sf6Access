@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.6 — 16/06/2026
+
+### Training
+- On the Fighting Ground guide list screens, the control-type display toggle (Classic / Modern / Dynamic), changed with L2/R2 or Z/C, is now announced with the screen reader instead of only playing a sound. This works on the Tutorials list, the Character Guides list and the Combo Trials list.
+
 ## v0.3.5 — 16/06/2026
 
 ### Training

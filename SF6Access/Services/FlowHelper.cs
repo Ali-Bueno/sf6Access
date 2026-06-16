@@ -283,6 +283,22 @@ public static class FlowHelper
         return fallback;
     }
 
+    /// <summary>Read an 8-bit (byte/sbyte enum) field as int. Reading a byte via
+    /// the int path would pull in the adjacent field's bytes, so the type must match.</summary>
+    public static int ReadByteField(ManagedObject obj, string name, int fallback = 0)
+    {
+        if (obj == null) return fallback;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField($"<{name}>k__BackingField") ?? td?.GetField(name);
+            if (field != null)
+                return Convert.ToInt32(field.GetDataBoxed(typeof(byte), obj.GetAddress(), false));
+        }
+        catch { }
+        return fallback;
+    }
+
     /// <summary>Read a 16-bit (short) field as int. Reading a short via the int
     /// path would pull in the adjacent field's bytes, so the type must match.</summary>
     public static int ReadShortField(ManagedObject obj, string name, int fallback = 0)
@@ -842,6 +858,27 @@ public static class FlowHelper
     private static long _wordsCheckedTick;
     private static ManagedObject _optionManager;
 
+    /// <summary>Display-language bucket (collapses the dialects we have words for).</summary>
+    public enum UiLang { En, Es, Pt }
+
+    /// <summary>Current display language, from the app.Option DispLanguage value.</summary>
+    public static UiLang GetDisplayLang()
+    {
+        try
+        {
+            _optionManager ??= API.GetManagedSingleton("app.OptionManager");
+            var result = Call(_optionManager, "GetOptionValue", DISP_LANGUAGE_TYPE_ID);
+            int lang = result != null ? Convert.ToInt32(result) : -1;
+            return lang switch
+            {
+                5 or 13 => UiLang.Es,
+                8 => UiLang.Pt,
+                _ => UiLang.En,
+            };
+        }
+        catch { return UiLang.En; }
+    }
+
     private static CommandWords CurrentWords()
     {
         long now = System.Environment.TickCount64;
@@ -850,17 +887,14 @@ public static class FlowHelper
 
         try
         {
-            _optionManager ??= API.GetManagedSingleton("app.OptionManager");
-            var result = Call(_optionManager, "GetOptionValue", DISP_LANGUAGE_TYPE_ID);
-            int lang = result != null ? Convert.ToInt32(result) : -1;
-            var words = lang switch
+            var words = GetDisplayLang() switch
             {
-                5 or 13 => WordsEs,
-                8 => WordsPt,
+                UiLang.Es => WordsEs,
+                UiLang.Pt => WordsPt,
                 _ => WordsEn,
             };
             if (words != _words)
-                API.LogInfo($"[SF6Access] Command vocabulary switched (display language value={lang})");
+                API.LogInfo($"[SF6Access] Command vocabulary switched (display language={GetDisplayLang()})");
             _words = words;
         }
         catch { }
