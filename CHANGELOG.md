@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.0 — 16/06/2026
+## v0.3.5 — 16/06/2026
 
 ### Rewards / Fighting Pass
 - The Rewards screen now reads as you navigate it: the tab (Fighting Pass / Challenge / Kudos / Master Pass) is announced when you switch, and the focused row of each tab is read.
