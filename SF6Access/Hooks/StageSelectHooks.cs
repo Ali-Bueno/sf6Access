@@ -306,6 +306,19 @@ public class StageSelectHooks
                 }
             }
 
+            // Battle Hub generic stage setting holds the stage name only in its
+            // GUI ("GenericStageSetting_BH", element e_text_stage), not in any
+            // Param field — read that element directly. Scoped to the stage GUI
+            // so the Battle Hub's ambient on-screen text is never picked up.
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews("StageSetting"))
+            {
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                {
+                    if (t.Name == "e_text_stage" && !string.IsNullOrWhiteSpace(t.Text))
+                        return t.Text.Replace('\n', ' ').Trim();
+                }
+            }
+
             // Try all Guid fields and resolve via message system
             if (fields != null && _msgGetMethod != null)
             {

@@ -289,9 +289,9 @@ public class BattleInfoHooks
             string cpuLevel = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(pd, "mTextCPULevel"));
             if (!string.IsNullOrWhiteSpace(cpuLevel)) bits.Add($"CPU {cpuLevel.Trim()}");
 
-            // Ranked-match rank tier + division (the on-screen rank is an icon,
-            // so there is no text to read — derive it from mOnlineLP). Empty for
-            // offline / casual play, where the league point struct stays zero.
+            // Ranked tier + division (the on-screen rank is an icon, no text);
+            // resolved from the game's league data. Confirmed in logs:
+            // league_rank 6 → "Iron 1", 39 → "New Challenger 1".
             string rank = ReadRank(pd);
             if (!string.IsNullOrEmpty(rank)) bits.Add(rank);
 
@@ -311,15 +311,12 @@ public class BattleInfoHooks
         return text;
     }
 
-    // SF6 rank tiers, five divisions each, then Master (rated separately).
-    private static readonly string[] RankTiers =
-        { "Rookie", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond" };
-
     /// <summary>
-    /// Readable rank ("Platinum 5", "Master 1832") from a VSInfo player's
-    /// mOnlineLP (app.network.MsgLeaguePoint). Null when not a ranked player
-    /// (the struct is all-zero for casual / offline). UNTESTED: the league_rank
-    /// → tier/division mapping needs confirmation on a real ranked face-off.
+    /// Readable rank ("Iron 1", "Diamond 3", "Master 1832") from a VSInfo player's
+    /// mOnlineLP (app.network.MsgLeaguePoint). The localized tier/division name
+    /// comes from the game's league data via LeagueRankResolver — no hardcoded
+    /// tables. league_rank is an app.AppDefine.LeagueRankWithLevel (confirmed in
+    /// logs: 6 → "Iron 1", 39 → "New Challenger 1", the real pre-placement rank).
     /// </summary>
     private static string ReadRank(ManagedObject pd)
     {
@@ -328,17 +325,23 @@ public class BattleInfoHooks
             var lp = FlowHelper.GetObjectField(pd, "mOnlineLP");
             if (lp == null) return null;
 
+            int leagueRank = FlowHelper.ReadIntField(lp, "league_rank", 0);
+            if (leagueRank <= 0) return null;
+
+            var record = LeagueRankResolver.GetRecord(leagueRank);
+            if (record == null) return null;
+
             int masterRating = FlowHelper.ReadIntField(lp, "master_rating", 0);
-            if (masterRating > 0) return $"Master {masterRating}";
+            bool isMaster = LeagueRankResolver.IsMaster(record);
 
-            int rank = FlowHelper.ReadIntField(lp, "league_rank", 0);
-            if (rank <= 0) return null;
+            // Guard a genuine Master-tier value that carries no rating yet (the
+            // earlier false "Master"); ordinary tiers incl. New Challenger pass.
+            if (isMaster && masterRating <= 0) return null;
 
-            int idx = rank - 1;
-            int tier = idx / 5;
-            int division = idx % 5 + 1;
-            if (tier >= RankTiers.Length) return "Master";
-            return $"{RankTiers[tier]} {division}";
+            string name = LeagueRankResolver.Format(record, tierOnly: false);
+            if (string.IsNullOrEmpty(name)) return null;
+
+            return isMaster ? $"{name} {masterRating}" : name;
         }
         catch { return null; }
     }

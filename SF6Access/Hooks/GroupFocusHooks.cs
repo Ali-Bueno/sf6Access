@@ -37,6 +37,14 @@ public class GroupFocusHooks
         "app.UIFlowServerSelect",         // server list
         "app.esports.UIFlowResultMenu",   // post-match menu (rematch / leave...)
         "app.UIFlowMailBox",              // notifications / mailbox list
+        // Battle Hub navigable menus (all expose UIPartsGroup/SimpleList fields)
+        "app.UIFlowAccessOtherPlayerMenu", // walk up to a player (access / challenge / profile)
+        "app.UIFlowCabinetMenu",           // sit at an arcade cabinet (change character, start...)
+        "app.UIFlowRivalAi",               // Rival AI server menu (train / fight your learning CPU)
+        "app.UIFlowAvatarRandomMatch",     // avatar random match top (mode list)
+        // app.UICFNSelectLeague / ...Detail handled by LeagueSelectHooks — their
+        // grid/list cells render the rank as an icon (text is only "Unspecified"),
+        // so the name must be resolved from the league data, not the focused row.
     };
 
     // SimpleLists whose get_SelectedItem returns the MIRROR of the focused row
