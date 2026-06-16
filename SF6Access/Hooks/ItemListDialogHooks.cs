@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
@@ -9,9 +10,14 @@ namespace SF6Access.Hooks;
 /// <summary>
 /// Reads the item/reward dialog opened from the notifications &amp; mailbox when
 /// claiming a reward (app.UIFlowItemListDialog.FlowParam, GUI "ItemListDialog").
-/// It lists the received item(s) and the action button(s) ("Fechar" / confirm /
-/// back). Announced when the dialog appears and whenever its on-screen text
-/// changes (button focus moving between confirm/back).
+///
+/// On open it announces the whole picture once (the received item(s) and the
+/// action button). After that it tracks focus through the dialog's own
+/// UIPartsItemDialog: its FocusMode tells whether the cursor is on the item list
+/// or on the button, so navigating the list announces the selected item and
+/// moving to the button announces its label ("Receive" / "Close"). Without this
+/// the dialog read as one undifferentiated block and the user could not tell
+/// which element the cursor was on.
 /// </summary>
 public class ItemListDialogHooks
 {
@@ -23,7 +29,10 @@ public class ItemListDialogHooks
     private const int POLL_READ_INTERVAL = 6;
 
     private static bool _active;
-    private static string _lastText;
+    private static ManagedObject _param;
+    private static ManagedObject _dialog;
+    private static string _lastSummary;
+    private static string _lastFocus;
 
     /// <summary>True while the reward/item dialog is up, so other generic
     /// readers can stand down if needed.</summary>
@@ -42,26 +51,41 @@ public class ItemListDialogHooks
 
         if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
-            bool present = FlowHelper.FindFlowParam(PARAM_TYPE) != null;
-            if (present && !_active)
+            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
+            if (param != null && !_active)
             {
                 _active = true;
-                _lastText = null;
+                _param = param;
+                _dialog = FlowHelper.GetObjectField(param, "Dialog");
+                _lastSummary = null;
+                _lastFocus = null;
                 API.LogInfo("[SF6Access] Item/reward dialog opened");
             }
-            else if (!present && _active)
+            else if (param == null && _active)
             {
                 _active = false;
-                _lastText = null;
+                _param = null;
+                _dialog = null;
+                _lastSummary = null;
+                _lastFocus = null;
                 API.LogInfo("[SF6Access] Item/reward dialog closed");
+            }
+            else if (param != null)
+            {
+                _param = param;
+                _dialog ??= FlowHelper.GetObjectField(param, "Dialog");
             }
         }
 
         if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollDialog();
+
+        // Whole picture once on open (item names + button), then focus tracking.
+        AnnounceSummary();
+        PollFocus();
     }
 
-    private static void PollDialog()
+    /// <summary>The full dialog text, announced once when it appears.</summary>
+    private static void AnnounceSummary()
     {
         try
         {
@@ -81,12 +105,68 @@ public class ItemListDialogHooks
             if (items.Count == 0) return;
 
             string text = string.Join(". ", items);
-            if (text == _lastText) return;
-            _lastText = text;
+            if (text == _lastSummary) return;
+            _lastSummary = text;
 
             API.LogInfo($"[SF6Access] Item/reward dialog: {text}");
             ScreenReaderService.Speak(text, interrupt: false);
         }
         catch { }
+    }
+
+    /// <summary>Announce the focused element (selected item or the button) as the
+    /// cursor moves through the dialog.</summary>
+    private static void PollFocus()
+    {
+        if (_dialog == null) return;
+        try
+        {
+            // FocusMode: 0 = ItemList, 1 = Button
+            var modeObj = FlowHelper.Call(_dialog, "GetFocusMode");
+            if (modeObj == null) return;
+            int mode = Convert.ToInt32(modeObj);
+
+            string focusKey, announce;
+            if (mode == 1)
+            {
+                string label = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_dialog, "ButtonText"));
+                if (string.IsNullOrWhiteSpace(label)) return;
+                announce = label.Trim();
+                focusKey = "btn|" + announce;
+            }
+            else
+            {
+                string name = ReadSelectedItem();
+                if (string.IsNullOrWhiteSpace(name)) return;
+                announce = name;
+                focusKey = "item|" + name;
+            }
+
+            // The open summary already covered the initial focus — baseline it so
+            // only an actual move re-announces.
+            if (_lastFocus == null) { _lastFocus = focusKey; return; }
+            if (focusKey == _lastFocus) return;
+            _lastFocus = focusKey;
+
+            API.LogInfo($"[SF6Access] Item dialog focus: {announce}");
+            ScreenReaderService.Speak(announce, interrupt: false);
+        }
+        catch { }
+    }
+
+    /// <summary>Localized name (with quantity) of the dialog's selected item.</summary>
+    private static string ReadSelectedItem()
+    {
+        var item = FlowHelper.Call(_dialog, "GetSelectedItem") as ManagedObject;
+        if (item == null) return null;
+
+        int category = FlowHelper.ReadIntField(item, "ItemCategory");
+        int id = FlowHelper.ReadIntField(item, "ItemId");
+        int num = FlowHelper.ReadIntField(item, "Num", 1);
+        if (id < 0) return null;
+
+        string name = FlowHelper.ResolveItemName(category, (uint)id);
+        if (string.IsNullOrEmpty(name)) return null;
+        return num > 1 ? $"{name} x{num}" : name;
     }
 }
