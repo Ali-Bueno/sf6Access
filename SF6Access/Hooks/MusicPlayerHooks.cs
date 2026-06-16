@@ -61,6 +61,9 @@ public class MusicPlayerHooks
         }
 
         if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
+        // The edit window (T) opens on top with its own lists — let it own
+        // announcements so the player's track poll doesn't read underneath it
+        if (MusicPlayerEditHooks.IsActive) return;
         PollTab();
         PollTrack();
     }
@@ -72,15 +75,15 @@ public class MusicPlayerHooks
         if (string.IsNullOrEmpty(text) || text == _lastTab) return;
         _lastTab = text;
 
-        // Announce the tab together with its focused track: the track poll
-        // fires the same frame with interrupt and was cutting the tab off,
-        // so the user only heard the song. Seed _lastTrack to avoid a repeat.
+        // Announce only the tab name. Seed _lastTrack with the current
+        // selection so the track poll stays quiet — on a tab switch the list
+        // still reports the loaded/playing song (stale), and reading it just
+        // repeated "Not On The Sidelines"; the real song reads as you navigate.
         string track = ReadTrack();
         if (!string.IsNullOrEmpty(track)) _lastTrack = track;
 
-        string announcement = string.IsNullOrEmpty(track) ? text : $"{text}. {track}";
-        API.LogInfo($"[SF6Access] Music tab: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        API.LogInfo($"[SF6Access] Music tab: {text}");
+        ScreenReaderService.Speak(text);
     }
 
     private static void PollTrack()

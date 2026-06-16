@@ -79,13 +79,22 @@ public class TrainingCharacterSpecificHooks
         string text = FlowHelper.FormatRowTexts(GuiTextReader.ReadControlTexts(control), 6);
         if (string.IsNullOrEmpty(text)) return;
 
-        // Row move OR in-place value edit (left/right changes e_txt_0)
-        bool changed = focus != _lastFocus || text != _lastText;
+        bool first = _lastFocus == int.MinValue;
+        bool rowChanged = focus != _lastFocus;
+        bool textChanged = text != _lastText;
+        string previous = _lastText;
         _lastFocus = focus;
         _lastText = text;
-        if (!changed) return;
+        if (!rowChanged && !textChanged) return;
 
-        API.LogInfo($"[SF6Access] Character-specific [{focus}]: {text}");
-        ScreenReaderService.Speak(text);
+        // Up/down (row move) reads the whole row; left/right (value edit on the
+        // same row) reads only the changed value segment, not the full setting again
+        string announcement = (!first && !rowChanged)
+            ? FlowHelper.DiffSegments(previous, text)
+            : text;
+        if (string.IsNullOrEmpty(announcement)) return;
+
+        API.LogInfo($"[SF6Access] Character-specific [{focus}]: {announcement}");
+        ScreenReaderService.Speak(announcement);
     }
 }
