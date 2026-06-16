@@ -18,7 +18,7 @@
 - The shop purchase dialog reads the product and price on open (e.g. "Premium Rewards. Price 100 Fighter Coins") and the focused choice (Use Fighter Coins / Cancel) as you move.
 
 ### Online & rooms
-- Custom room join / invitations screen now reads each room row as you navigate it (room comment, the room master / who invited you, entrants, room ID and rules), not just the tabs (Rooms with Friends / Rooms You've Been Invited To).
+- Custom room join / invitations screen now reads each room row as you navigate it — room name, the room master / who invited you, entrant count, room ID code and the rule string — not just the tabs (Rooms with Friends / Rooms You've Been Invited To). The first attempt for this still read nothing (it pulled the data from the wrong object); this is now fixed and confirmed working, including when there is a single invitation.
 
 ## v0.3.0 — 15/06/2026
 

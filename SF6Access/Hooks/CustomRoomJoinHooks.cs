@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using REFrameworkNET.Callbacks;
@@ -84,38 +83,17 @@ public class CustomRoomJoinHooks
         var rooms = FlowHelper.GetObjectField(_param, "Rooms");
         if (rooms == null) return;
 
-        var banner = FlowHelper.Call(rooms, "get_SelectedItem") as ManagedObject;
-        if (banner == null) return;
-
-        // Room name/comment + who hosts/invited (RoomMasterName) + entrants + rules
-        string comment = ReadScrollText(FlowHelper.GetObjectField(banner, "Comment"));
-        string master = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(banner, "RoomMasterName"));
-        string count = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(banner, "PlayerCount"));
-        string shortId = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(banner, "ShortId"));
-        string setting = ReadScrollText(FlowHelper.GetObjectField(banner, "Setting"));
-
-        var parts = new List<string>();
-        void Add(string s) { if (!string.IsNullOrWhiteSpace(s)) { s = s.Trim(); if (!parts.Contains(s)) parts.Add(s); } }
-        Add(comment);
-        Add(master);
-        Add(count);
-        Add(shortId);
-        Add(setting);
-        if (parts.Count == 0) return;
-
-        string text = string.Join(". ", parts);
-        if (text == _lastRoom) return;
+        // Rooms.get_SelectedItem returns a via.gui.SelectItem, NOT a
+        // UIPartsCustomRoomBanner — reading banner fields (RoomMasterName etc.)
+        // off it always came back null, so nothing was announced. Reading the
+        // selected item's on-screen texts works the same as the Tab and the
+        // custom-room tables: the banner exposes room name, ShortId code,
+        // entrant count (e_txt_num) and the rule string as visible gui texts.
+        string text = FlowHelper.ReadSelectedItemText(rooms);
+        if (string.IsNullOrEmpty(text) || text == _lastRoom) return;
         _lastRoom = text;
 
         API.LogInfo($"[SF6Access] Custom room row: {text}");
         ScreenReaderService.Speak(text);
-    }
-
-    /// <summary>Read a UIPartsScrollText (its inner mTextScroll), falling back to the object itself.</summary>
-    private static string ReadScrollText(ManagedObject scrollText)
-    {
-        if (scrollText == null) return null;
-        return FlowHelper.ReadGuiText(FlowHelper.GetObjectField(scrollText, "mTextScroll"))
-            ?? FlowHelper.ReadGuiText(scrollText);
     }
 }
