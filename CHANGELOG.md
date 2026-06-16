@@ -1,9 +1,20 @@
 # Changelog
 
-## v0.3.6 — 16/06/2026
+## v0.4.0 — 16/06/2026
 
-### Training
-- On the Fighting Ground guide list screens, the control-type display toggle (Classic / Modern / Dynamic), changed with L2/R2 or Z/C, is now announced with the screen reader instead of only playing a sound. This works on the Tutorials list, the Character Guides list and the Combo Trials list.
+### Battle Hub
+- Navigable menus now read the focused option as you move through them: the action menu when you walk up to another player, the arcade cabinet menu (Change Character, Spectate, Wait on P1/P2 Side, etc.), the Rival AI (V-Rival) menu, and the Avatar Random Match mode list.
+- Stage selector announces the stage name as you change it.
+- League / rank selector (used in V-Rival): the rank tier and its level are announced — e.g. "Diamond" when picking a tier, then "Diamond 3" when picking the level — read from the game's own league data instead of the "Unspecified" placeholder.
+
+### Versus
+- The VS screen now announces each player's rank (e.g. "Iron 1", "New Challenger 1", or "Master" with rating), resolved from the game's league data. This fixes the previous wrong "Master" announced for low-rank or unranked players.
+
+### Fighting Ground
+- On the Tutorials, Character Guides and Combo Trials lists, the control-type display toggle (Classic / Modern / Dynamic), changed with L2/R2 or Z/C, is now announced with the screen reader instead of only playing a sound.
+
+### News / Mailbox
+- The reward item dialog now announces the selected item or the focused button ("Receive" / "Close") as you navigate it, instead of reading the whole list only once on open.
 
 ## v0.3.5 — 16/06/2026
 
