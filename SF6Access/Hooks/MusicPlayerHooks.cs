@@ -71,20 +71,31 @@ public class MusicPlayerHooks
         string text = FlowHelper.ReadSelectedItemText(tab);
         if (string.IsNullOrEmpty(text) || text == _lastTab) return;
         _lastTab = text;
-        _lastTrack = null; // new tab → new track list, re-read it
 
-        API.LogInfo($"[SF6Access] Music tab: {text}");
-        ScreenReaderService.Speak(text);
+        // Announce the tab together with its focused track: the track poll
+        // fires the same frame with interrupt and was cutting the tab off,
+        // so the user only heard the song. Seed _lastTrack to avoid a repeat.
+        string track = ReadTrack();
+        if (!string.IsNullOrEmpty(track)) _lastTrack = track;
+
+        string announcement = string.IsNullOrEmpty(track) ? text : $"{text}. {track}";
+        API.LogInfo($"[SF6Access] Music tab: {announcement}");
+        ScreenReaderService.Speak(announcement);
     }
 
     private static void PollTrack()
     {
-        var list = FlowHelper.GetObjectField(_param, "partsList");
-        string text = FlowHelper.ReadSelectedItemText(list);
+        string text = ReadTrack();
         if (string.IsNullOrEmpty(text) || text == _lastTrack) return;
         _lastTrack = text;
 
         API.LogInfo($"[SF6Access] Music track: {text}");
         ScreenReaderService.Speak(text);
+    }
+
+    private static string ReadTrack()
+    {
+        var list = FlowHelper.GetObjectField(_param, "partsList");
+        return FlowHelper.ReadSelectedItemText(list);
     }
 }
