@@ -42,6 +42,7 @@ public class TrainingMenuHooks
     private static readonly int[] SLOT_ITEM_TYPES = { 5, 6, 8 };
     private static bool _onSlotRow;
     private static string _lastSlotText;
+    private static int _lastSlotId = int.MinValue;
 
     // OnSliderUp/Down edits: the slider's GUI text updates AFTER the handler
     // runs, so the hook only queues the slider and the read happens a few
@@ -533,6 +534,7 @@ public class TrainingMenuHooks
             int slotId = FlowHelper.ReadIntField(row, "_SlotID", -1);
             string slotInfo = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
             _lastSlotText = slotInfo;
+            _lastSlotId = slotId; // baseline so the edit poll doesn't re-announce on navigation
             API.LogInfo($"[SF6Access] Slot row: SlotID={slotId}, info={slotInfo}");
             if (!string.IsNullOrEmpty(slotInfo)) parts.Add(slotInfo);
         }
@@ -622,6 +624,16 @@ public class TrainingMenuHooks
         int slotId = FlowHelper.ReadIntField(FindRowData(), "_SlotID", -1);
         string info = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
         if (string.IsNullOrEmpty(info)) return;
+
+        // Moving between slots is navigation — AnnounceCurrentItem reads that.
+        // Only announce in-place edits on the SAME slot (toggle/count/move),
+        // otherwise the GUI lag made this fire a second "Slot N" while moving.
+        if (slotId != _lastSlotId)
+        {
+            _lastSlotId = slotId;
+            _lastSlotText = info;
+            return;
+        }
 
         string previous = _lastSlotText;
         if (info == previous) return;
@@ -747,6 +759,7 @@ public class TrainingMenuHooks
         _flowParam = null;
         _onSlotRow = false;
         _lastSlotText = null;
+        _lastSlotId = int.MinValue;
         _pendingSlider = null;
     }
 }
