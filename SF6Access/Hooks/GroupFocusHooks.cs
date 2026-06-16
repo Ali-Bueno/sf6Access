@@ -55,6 +55,7 @@ public class GroupFocusHooks
         "app.UIFlowCustomRoomTop.Param",
         "app.UIStatusMenu_Equip.Param",   // StatusMenuHooks handles the equip tab
         "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
+        "app.UIFlowCustomRoomJoin.Param",           // CustomRoomJoinHooks handles join/invitations
     };
 
     private static readonly string[] GroupFieldTypes = { "app.UIPartsGroup", "app.UIPartsGroupScroll" };

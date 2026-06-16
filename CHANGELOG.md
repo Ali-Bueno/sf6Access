@@ -10,6 +10,9 @@
 - The "reissue Fighting Pass" warning dialog is read: the warning message on open, each reward in the list (with "Sold out, already obtained" for items you already have), and the proceed button.
 - The shop purchase dialog reads the product and price on open (e.g. "Premium Rewards. Price 100 Fighter Coins") and the focused choice (Use Fighter Coins / Cancel) as you move.
 
+### Online & rooms
+- Custom room join / invitations screen now reads each room row as you navigate it (room comment, the room master / who invited you, entrants, room ID and rules), not just the tabs (Rooms with Friends / Rooms You've Been Invited To).
+
 ## v0.3.0 — 15/06/2026
 
 ### Training

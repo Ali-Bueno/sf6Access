@@ -163,7 +163,7 @@ public class MainMenuHooks
             // (Battle Hub room muted the avatar battle menu)
             else if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
                 RewardHooks.IsActive || RevivalPassWarningHooks.IsActive ||
-                OnlineShopBuyHooks.IsActive ||
+                OnlineShopBuyHooks.IsActive || CustomRoomJoinHooks.IsActive ||
                 CustomRoomHooks.IsInCustomRoomTop ||
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
