@@ -164,6 +164,7 @@ public class MainMenuHooks
             else if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
                 RewardHooks.IsActive || RevivalPassWarningHooks.IsActive ||
                 OnlineShopBuyHooks.IsActive || CustomRoomJoinHooks.IsActive ||
+                MusicPlayerHooks.IsActive ||
                 CustomRoomHooks.IsInCustomRoomTop ||
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
