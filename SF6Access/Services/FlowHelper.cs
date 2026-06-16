@@ -607,6 +607,38 @@ public static class FlowHelper
         catch { return null; }
     }
 
+    private static Method _getItemNameMethod;
+    private static bool _itemNameCached;
+    private static ManagedObject _inventoryManager;
+
+    /// <summary>
+    /// Localized inventory item name via app.InventoryManager.GetName
+    /// (e.g. a Battle Pass / mail reward). Null when it cannot be resolved.
+    /// </summary>
+    public static string ResolveItemName(int category, uint id)
+    {
+        try
+        {
+            if (!_itemNameCached)
+            {
+                _itemNameCached = true;
+                var invType = TDB.Get().FindType("app.InventoryManager");
+                _getItemNameMethod = invType?.GetMethod("GetName(app.network.api.Enum.ItemCategory, System.UInt32)")
+                    ?? invType?.GetMethod("GetName(app.ItemCategory, System.UInt32)")
+                    ?? invType?.GetMethod("GetName");
+            }
+            if (_getItemNameMethod == null) return null;
+
+            _inventoryManager ??= API.GetManagedSingleton("app.InventoryManager");
+            if (_inventoryManager == null) return null;
+
+            var name = _getItemNameMethod.InvokeBoxed(
+                typeof(string), _inventoryManager, new object[] { category, id }) as string;
+            return CleanTags(name);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Resolve a Guid stored in a field of the given object.</summary>
     public static string ResolveGuidField(ManagedObject obj, string fieldName)
     {

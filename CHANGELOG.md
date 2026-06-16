@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Rewards / Fighting Pass
+- The Rewards screen now reads as you navigate it: the tab (Fighting Pass / Challenge / Kudos / Master Pass) is announced when you switch, and the focused row of each tab is read.
+- Battle Pass rewards are announced with their name, whether they are a Free or Premium reward, and their claimed status ("Claimed" / "Not claimed").
+- Returning to an already-read reward now re-announces it (moving right then back left no longer went silent).
+- Item preview (confirm a reward, or press the preview button) reads the item name, its description, and the action button. For premium items it reads the purchase options as you move between them ("Obtain Premium Pass" / "Obtain Premium Pass & Tier +10").
+- The "reissue Fighting Pass" warning dialog is read: the warning message on open, each reward in the list (with "Sold out, already obtained" for items you already have), and the proceed button.
+- The shop purchase dialog reads the product and price on open (e.g. "Premium Rewards. Price 100 Fighter Coins") and the focused choice (Use Fighter Coins / Cancel) as you move.
+
 ## v0.3.0 — 15/06/2026
 
 ### Training

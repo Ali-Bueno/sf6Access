@@ -19,7 +19,7 @@ public class GroupFocusHooks
     {
         "app.UIFlowCustomRoom", "app.UIFlowAvatarArcade",
         "app.gallery.UIFlowGallery",      // gallery top / illustration screens
-        "app.UIFlowReward",               // rewards (fighting pass) menu
+        // app.UIFlowReward handled by RewardHooks (nested tier/kudos/challenge lists)
         "app.UICFNFightersProfile",       // fighter profile menu (incl. gear effects tab)
         "app.UICFNFightersList",          // friends / followed / search tabs
         "app.UICFNTop",                   // CFN top grid (players/clubs/replays/rankings)
@@ -54,6 +54,7 @@ public class GroupFocusHooks
     {
         "app.UIFlowCustomRoomTop.Param",
         "app.UIStatusMenu_Equip.Param",   // StatusMenuHooks handles the equip tab
+        "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
     };
 
     private static readonly string[] GroupFieldTypes = { "app.UIPartsGroup", "app.UIPartsGroupScroll" };

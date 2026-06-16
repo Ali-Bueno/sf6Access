@@ -162,6 +162,8 @@ public class MainMenuHooks
             // a silently-active tracker must not mute this generic reader
             // (Battle Hub room muted the avatar battle menu)
             else if (KeyConfigHooks.IsInKeyConfig || NewsHooks.IsInNewsMenu ||
+                RewardHooks.IsActive || RevivalPassWarningHooks.IsActive ||
+                OnlineShopBuyHooks.IsActive ||
                 CustomRoomHooks.IsInCustomRoomTop ||
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
@@ -176,6 +178,7 @@ public class MainMenuHooks
                 // announced anyway if no row announcement follows
                 if (GroupFocusHooks.ShouldSuppressFocus &&
                     !KeyConfigHooks.IsInKeyConfig && !NewsHooks.IsInNewsMenu &&
+                    !RewardHooks.IsActive &&
                     !CustomRoomHooks.IsInCustomRoomTop &&
                     !MatchingFighterSettingHooks.IsInFighterSetting &&
                     !DeathMatchSettingHooks.IsInDeathMatchSetting)
