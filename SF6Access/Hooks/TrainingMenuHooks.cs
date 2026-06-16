@@ -527,9 +527,13 @@ public class TrainingMenuHooks
         // move, on/off state, delay)
         if (_onSlotRow)
         {
-            string slotInfo = ReadReversalRowGui();
+            // The slot number from the GUI's e_txt_name is unreliable on the
+            // repainting strip (read "Slot 2"/"Slot 9" for slots 1/8) — the
+            // row's _SlotID (0-based) is authoritative, so use _SlotID + 1.
+            int slotId = FlowHelper.ReadIntField(row, "_SlotID", -1);
+            string slotInfo = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
             _lastSlotText = slotInfo;
-            API.LogInfo($"[SF6Access] Reversal row: SlotID={FlowHelper.ReadIntField(row, "_SlotID", -1)}, info={slotInfo}");
+            API.LogInfo($"[SF6Access] Slot row: SlotID={slotId}, info={slotInfo}");
             if (!string.IsNullOrEmpty(slotInfo)) parts.Add(slotInfo);
         }
 
@@ -615,7 +619,8 @@ public class TrainingMenuHooks
     /// </summary>
     private static void PollReversalSlot()
     {
-        string info = ReadReversalRowGui();
+        int slotId = FlowHelper.ReadIntField(FindRowData(), "_SlotID", -1);
+        string info = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
         if (string.IsNullOrEmpty(info)) return;
 
         string previous = _lastSlotText;
@@ -638,7 +643,7 @@ public class TrainingMenuHooks
     /// elements (e_txt_name/e_txt_center/e_txt_sub/e_txt_right/e_txt_east)
     /// carry everything the sighted player sees.
     /// </summary>
-    private static string ReadReversalRowGui()
+    private static string ReadReversalRowGui(int slotNumber = -1)
     {
         try
         {
@@ -649,14 +654,17 @@ public class TrainingMenuHooks
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
             if (control == null) return null;
 
-            string name = null, move = null, state = null, count = null, delay = null;
+            // Slot number from the authoritative _SlotID (the GUI e_txt_name is
+            // offset on the repainting strip); fall back to the GUI text.
+            string name = slotNumber > 0 ? $"Slot {slotNumber}" : null;
+            string move = null, state = null, count = null, delay = null;
             foreach (var t in GuiTextReader.ReadControlTexts(control))
             {
                 string text = t.Text?.Trim();
                 if (string.IsNullOrEmpty(text)) continue;
                 switch (t.Name)
                 {
-                    case "e_txt_name": name ??= text; break;   // "Slot 1"
+                    case "e_txt_name": if (name == null) name = text; break;   // "Slot 1"
                     case "e_txt_center": move ??= text; break; // move name or "Empty"
                     case "e_txt_sub": state ??= text; break;   // "On" / "Off"
                     case "e_txt_right": count ??= text; break; // "Count: 1"

@@ -3,7 +3,8 @@
 ## v0.3.5 — 16/06/2026
 
 ### Training
-- Recording / playback slots now read their slot number and data as you navigate them, the same way the reversal slots already did.
+- Recording / playback slots now read their slot number and data as you navigate them, the same way the reversal slots already did. The slot number is taken from the slot's own index, so it reads correctly (1 to 8) instead of being off.
+- Reversal special moves now announce their strength variant (Light / Medium / Heavy / Overdrive) and re-read it when you change it with left/right.
 
 ### Rewards / Fighting Pass
 - The Rewards screen now reads as you navigate it: the tab (Fighting Pass / Challenge / Kudos / Master Pass) is announced when you switch, and the focused row of each tab is read.
