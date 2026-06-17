@@ -18,8 +18,11 @@ namespace SF6Access.Hooks;
 ///
 /// app.esports.UIFlowResultTitle / app.UIFlowResultTimer / app.UIFlowResultRivalAi
 /// expose no via.gui.Text fields (rendered as images), so they are not read here.
-/// app.UIFlowRankGauge.Param is intentionally NOT read: its LP value animates and it
-/// is shown per player, so it re-announced on every poll (see TextParams comment).
+///
+/// app.UIFlowRankGauge.Param (post-match LP) is read with a SETTLE-ONCE rule: its LP
+/// value animates (counts up) and it is shown per player, so instead of announcing on
+/// every change, each gauge is announced a single time once its text stops changing
+/// for STABLE_POLLS consecutive polls (the count-up has finished).
 /// </summary>
 public class BattleHubResultHooks
 {
@@ -28,20 +31,27 @@ public class BattleHubResultHooks
     {
         { "app.esports.UIFlowWinMessage.Param", new[] { "mText" } },
         { "app.UIFlowRivalAISuggestion.Param", new[] { "mTextSuggestion", "mCompleteText" } },
-        // app.UIFlowRankGauge.Param removed: the LP value animates (counts up) after
-        // a match and the gauge is read for BOTH players, so the joined text changed
-        // every poll and was re-announced many times ("yarkidius. 0th. 1370 LP. 1400. 30"
-        // repeated). The LP-after-match readout needs a settle-then-announce-once design;
-        // dropped for now to kill the spam.
+        // app.UIFlowRankGauge.Param is handled separately (settle-once, see PollRankGauges).
     };
 
     private const string COUNTER_PARAM = "app.esports.UIFlowResultCounter.Param";
+
+    // Post-match LP gauge: name, rank position, current LP, LP for next rank, LP change.
+    private const string RANK_GAUGE = "app.UIFlowRankGauge.Param";
+    private static readonly string[] RankFields = { "TextName", "TextRankNum", "TextLp", "TextNextLp", "TextDifferenceLp" };
+    // Polls the gauge text must hold steady before it is announced (count-up finished).
+    private const int STABLE_POLLS = 5;
 
     private static int _pollCounter;
     private const int POLL_INTERVAL = 12;
 
     // Last announced text per param type, so a display is read once until it changes.
     private static readonly Dictionary<string, string> _lastText = new();
+
+    // Settle tracking per live RankGauge instance (keyed by object address): two
+    // gauges (both players) are each announced once when their LP stops counting.
+    private sealed class SettleState { public string LastText; public int StableCount; public bool Announced; }
+    private static readonly Dictionary<ulong, SettleState> _rankSettle = new();
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -66,6 +76,58 @@ public class BattleHubResultHooks
 
         found.TryGetValue(COUNTER_PARAM, out var counter);
         Announce(COUNTER_PARAM, counter == null ? null : BuildCounter(counter));
+
+        PollRankGauges();
+    }
+
+    /// <summary>
+    /// Announce each post-match LP gauge once, after its text has stopped changing
+    /// (the LP count-up finished). Both players' gauges are tracked independently;
+    /// state is dropped when a gauge disappears so the next match announces again.
+    /// </summary>
+    private static void PollRankGauges()
+    {
+        var present = new HashSet<ulong>();
+        foreach (var (_, param) in FlowHelper.FindFlowParamsByPrefix(RANK_GAUGE))
+        {
+            ulong addr = FlowHelper.AddressOf(param);
+            if (addr == 0) continue;
+            present.Add(addr);
+
+            if (!_rankSettle.TryGetValue(addr, out var st))
+            {
+                st = new SettleState();
+                _rankSettle[addr] = st;
+            }
+
+            string text = JoinTextFields(param, RankFields);
+            if (string.IsNullOrEmpty(text)) { st.StableCount = 0; continue; }
+
+            if (text == st.LastText)
+            {
+                st.StableCount++;
+            }
+            else
+            {
+                // Value changed again — still counting; allow a fresh announce.
+                st.LastText = text;
+                st.StableCount = 0;
+                st.Announced = false;
+            }
+
+            if (!st.Announced && st.StableCount >= STABLE_POLLS)
+            {
+                st.Announced = true;
+                API.LogInfo($"[SF6Access] Rank gauge: {text}");
+                ScreenReaderService.Speak(text, interrupt: false);
+            }
+        }
+
+        if (_rankSettle.Count == 0) return;
+        var stale = new List<ulong>();
+        foreach (var key in _rankSettle.Keys)
+            if (!present.Contains(key)) stale.Add(key);
+        foreach (var key in stale) _rankSettle.Remove(key);
     }
 
     /// <summary>Announce a param's text once; reset its memory when it disappears.</summary>
