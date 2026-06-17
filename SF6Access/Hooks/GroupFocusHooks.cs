@@ -42,6 +42,14 @@ public class GroupFocusHooks
         "app.UIFlowCabinetMenu",           // sit at an arcade cabinet (change character, start...)
         "app.UIFlowRivalAi",               // Rival AI server menu (train / fight your learning CPU)
         "app.UIFlowAvatarRandomMatch",     // avatar random match top (mode list)
+        // Battle Hub social / chat menus (L1+X). Each exposes a text list field:
+        // FixedPhraseList=PartsScrollList, StampList=PartsScrollGrid,
+        // BattleHubPlayerList=_ScrollList/_ListGroup. Stamps render as images, so
+        // that grid may stay silent — the fixed phrases and player list carry text.
+        "app.UIFlowFixedPhraseList",       // fixed phrases (social wheel)
+        "app.UIFlowStampList",             // stamps (social wheel; icon grid)
+        "app.UIFlowBattleHubPlayerList",   // player list (fast travel / send message)
+        "app.UIFlowChat",                  // Battle Hub text-chat window (RootGroup/InputGroup/ButtonsGroup)
         // app.UICFNSelectLeague / ...Detail handled by LeagueSelectHooks — their
         // grid/list cells render the rank as an icon (text is only "Unspecified"),
         // so the name must be resolved from the league data, not the focused row.
