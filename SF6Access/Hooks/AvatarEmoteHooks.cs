@@ -95,7 +95,13 @@ public class AvatarEmoteHooks
     {
         if (id == 0) return null;
 
-        // Primary: TableDataManager.TryGetEquipEmoteNameMessage(id, out message).
+        // Most promising: SetEmote's id is too large to be a MotionBankId (those are
+        // ~20000) and is not a ManageId either — it looks like the emote's INVENTORY
+        // item id. InventoryManager.Emote (EmoteInventory) resolves item ids by name.
+        string invName = ResolveViaInventory(id);
+        if (!string.IsNullOrWhiteSpace(invName)) return invName;
+
+        // Next: TableDataManager.TryGetEquipEmoteNameMessage(id, out message).
         // REFramework.NET writes the out-string back into the args array.
         if (_tryGetEmoteNameMessage != null)
         {
@@ -127,6 +133,33 @@ public class AvatarEmoteHooks
             catch { }
         }
         return null;
+    }
+
+    private static Method _getEmoteInventory;   // app.InventoryManager.get_Emote() [static]
+    private static Method _emoteInvGetName;      // EmoteInventory.GetName(uint)
+    private static ManagedObject _emoteInventory;
+    private static bool _invCached;
+
+    /// <summary>Resolve an emote item id to its name via InventoryManager's EmoteInventory.</summary>
+    private static string ResolveViaInventory(uint id)
+    {
+        try
+        {
+            if (!_invCached)
+            {
+                _invCached = true;
+                _getEmoteInventory = TDB.Get().FindType("app.InventoryManager")?.GetMethod("get_Emote");
+                _emoteInvGetName = TDB.Get().FindType("app.InventoryManager.EmoteInventory")?.GetMethod("GetName(System.UInt32)");
+            }
+            if (_getEmoteInventory == null || _emoteInvGetName == null) return null;
+
+            _emoteInventory ??= _getEmoteInventory.InvokeBoxed(typeof(object), null, System.Array.Empty<object>()) as ManagedObject;
+            if (_emoteInventory == null) return null;
+
+            string name = _emoteInvGetName.InvokeBoxed(typeof(string), _emoteInventory, new object[] { id }) as string;
+            return string.IsNullOrWhiteSpace(name) ? null : FlowHelper.CleanTags(name);
+        }
+        catch { return null; }
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
