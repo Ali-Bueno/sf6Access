@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Battle Hub
+- The social wheel now reads as you navigate it: the phrase list announces each focused phrase, and the sticker list announces each focused sticker name.
+- The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.
+- Walking up to another player and opening the access menu now also announces that player's profile — name, title, LP and MR — alongside the menu options.
+
+### Online match results
+- After an online match the post-match displays are announced: the winner's victory quote and the win count / win rate.
+- The post-match rank gauge is announced once with your rank, your LP (or MR at Master) and the change from the match — e.g. "Gold 1. 1400 LP. +30". It is read from the final result data, so it speaks the finished value immediately instead of waiting for the on-screen LP count-up, and no longer repeats itself while the number animates.
+
 ## v0.4.0 — 16/06/2026
 
 ### Battle Hub
