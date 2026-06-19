@@ -84,6 +84,8 @@ public class AvatarEmoteHooks
         _lastTick = now;
 
         string name = ResolveEmoteName(id);
+        // Diagnostic: confirms SetEmote fires and whether the id resolves to a name.
+        API.LogInfo($"[SF6Access] Avatar emote (id={id}): {name ?? "<unresolved>"}");
         if (string.IsNullOrWhiteSpace(name)) return;
 
         lock (_lock) _pending.Add(name);
