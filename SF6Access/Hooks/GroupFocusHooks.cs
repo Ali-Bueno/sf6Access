@@ -50,6 +50,7 @@ public class GroupFocusHooks
         "app.UIFlowStampList",             // stamps (social wheel; icon grid)
         "app.UIFlowBattleHubPlayerList",   // player list (fast travel / send message)
         "app.UIFlowChat",                  // Battle Hub text-chat window (RootGroup/InputGroup/ButtonsGroup)
+        "app.UIFlowTextList",              // preset text picker (room Comment submenu — PartsList)
         // app.UICFNSelectLeague / ...Detail handled by LeagueSelectHooks — their
         // grid/list cells render the rank as an icon (text is only "Unspecified"),
         // so the name must be resolved from the league data, not the focused row.
