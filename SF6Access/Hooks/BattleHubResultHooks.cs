@@ -19,10 +19,12 @@ namespace SF6Access.Hooks;
 /// app.esports.UIFlowResultTitle / app.UIFlowResultTimer / app.UIFlowResultRivalAi
 /// expose no via.gui.Text fields (rendered as images), so they are not read here.
 ///
-/// app.UIFlowRankGauge.Param (post-match LP) is read with a SETTLE-ONCE rule: its LP
-/// value animates (counts up) and it is shown per player, so instead of announcing on
-/// every change, each gauge is announced a single time once its text stops changing
-/// for STABLE_POLLS consecutive polls (the count-up has finished).
+/// app.UIFlowRankGauge.Param (post-match LP) is read DATA-DRIVEN: the on-screen LP
+/// text animates (counts up), but the param already holds the final result as data
+/// in RankInfoAfter (league_point / league_rank / master_rating) plus RankInfoBefore
+/// for the delta. So each gauge is announced once, as soon as that data is populated,
+/// with no dependency on the count-up animation. The rank name is resolved through
+/// the shared LeagueRankResolver (no hardcoded tiers).
 /// </summary>
 public class BattleHubResultHooks
 {
@@ -36,11 +38,7 @@ public class BattleHubResultHooks
 
     private const string COUNTER_PARAM = "app.esports.UIFlowResultCounter.Param";
 
-    // Post-match LP gauge: name, rank position, current LP, LP for next rank, LP change.
     private const string RANK_GAUGE = "app.UIFlowRankGauge.Param";
-    private static readonly string[] RankFields = { "TextName", "TextRankNum", "TextLp", "TextNextLp", "TextDifferenceLp" };
-    // Polls the gauge text must hold steady before it is announced (count-up finished).
-    private const int STABLE_POLLS = 5;
 
     private static int _pollCounter;
     private const int POLL_INTERVAL = 12;
@@ -48,10 +46,9 @@ public class BattleHubResultHooks
     // Last announced text per param type, so a display is read once until it changes.
     private static readonly Dictionary<string, string> _lastText = new();
 
-    // Settle tracking per live RankGauge instance (keyed by object address): two
-    // gauges (both players) are each announced once when their LP stops counting.
-    private sealed class SettleState { public string LastText; public int StableCount; public bool Announced; }
-    private static readonly Dictionary<ulong, SettleState> _rankSettle = new();
+    // RankGauge instances already announced (keyed by object address): both
+    // players' gauges are announced once each; cleared when a gauge disappears.
+    private static readonly HashSet<ulong> _rankAnnounced = new();
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -81,9 +78,10 @@ public class BattleHubResultHooks
     }
 
     /// <summary>
-    /// Announce each post-match LP gauge once, after its text has stopped changing
-    /// (the LP count-up finished). Both players' gauges are tracked independently;
-    /// state is dropped when a gauge disappears so the next match announces again.
+    /// Announce each post-match LP gauge once from its final DATA (RankInfoAfter),
+    /// not the animating on-screen text — so it reads the finished value with no
+    /// count-up wait. Both players' gauges are announced once each; the announced
+    /// set is pruned when a gauge disappears so the next match announces again.
     /// </summary>
     private static void PollRankGauges()
     {
@@ -93,41 +91,56 @@ public class BattleHubResultHooks
             ulong addr = FlowHelper.AddressOf(param);
             if (addr == 0) continue;
             present.Add(addr);
+            if (_rankAnnounced.Contains(addr)) continue;
 
-            if (!_rankSettle.TryGetValue(addr, out var st))
-            {
-                st = new SettleState();
-                _rankSettle[addr] = st;
-            }
+            // Data may populate a poll or two after the gauge appears — retry until ready.
+            string text = BuildRankResult(param);
+            if (string.IsNullOrEmpty(text)) continue;
 
-            string text = JoinTextFields(param, RankFields);
-            if (string.IsNullOrEmpty(text)) { st.StableCount = 0; continue; }
-
-            if (text == st.LastText)
-            {
-                st.StableCount++;
-            }
-            else
-            {
-                // Value changed again — still counting; allow a fresh announce.
-                st.LastText = text;
-                st.StableCount = 0;
-                st.Announced = false;
-            }
-
-            if (!st.Announced && st.StableCount >= STABLE_POLLS)
-            {
-                st.Announced = true;
-                API.LogInfo($"[SF6Access] Rank gauge: {text}");
-                ScreenReaderService.Speak(text, interrupt: false);
-            }
+            _rankAnnounced.Add(addr);
+            API.LogInfo($"[SF6Access] Rank gauge: {text}");
+            ScreenReaderService.Speak(text, interrupt: false);
         }
 
-        if (_rankSettle.Count == 0) return;
+        if (_rankAnnounced.Count == 0) return;
         var stale = new List<ulong>();
-        foreach (var key in _rankSettle.Keys)
+        foreach (var key in _rankAnnounced)
             if (!present.Contains(key)) stale.Add(key);
-        foreach (var key in stale) _rankSettle.Remove(key);
+        foreach (var key in stale) _rankAnnounced.Remove(key);
+    }
+
+    /// <summary>
+    /// "{name}. {rank}. {value} LP/MR. {+/-delta}" from the gauge's final data
+    /// (RankInfoAfter, with RankInfoBefore for the change). Null until populated.
+    /// </summary>
+    private static string BuildRankResult(ManagedObject param)
+    {
+        var after = FlowHelper.GetObjectField(param, "RankInfoAfter");
+        if (after == null) return null;
+
+        int mr = FlowHelper.ReadIntField(after, "master_rating", 0);
+        int lp = FlowHelper.ReadIntField(after, "league_point", int.MinValue);
+        bool master = mr > 0;
+        if (!master && lp == int.MinValue) return null; // data not ready yet
+
+        var parts = new List<string>();
+
+        string name = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "TextName"));
+        if (!string.IsNullOrWhiteSpace(name)) parts.Add(name.Trim());
+
+        string rank = LeagueRankResolver.Resolve(FlowHelper.ReadIntField(after, "league_rank", 0), tierOnly: false);
+        if (!string.IsNullOrEmpty(rank)) parts.Add(rank);
+
+        int afterVal = master ? mr : lp;
+        parts.Add($"{afterVal} {(master ? "MR" : "LP")}");
+
+        // Change vs before the match.
+        var before = FlowHelper.GetObjectField(param, "RankInfoBefore");
+        int beforeVal = FlowHelper.ReadIntField(before, master ? "master_rating" : "league_point", afterVal);
+        int delta = afterVal - beforeVal;
+        if (delta != 0) parts.Add(delta > 0 ? $"+{delta}" : delta.ToString());
+
+        return parts.Count > 0 ? string.Join(". ", parts) : null;
     }
 
     /// <summary>Announce a param's text once; reset its memory when it disappears.</summary>
