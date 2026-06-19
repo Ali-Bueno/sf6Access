@@ -83,9 +83,12 @@ public class AvatarEmoteHooks
         _lastId = id;
         _lastTick = now;
 
+        // NOTE: emotes are ExActions; SetEmote's id is an ExAction/animation id that
+        // does not map to a localized emote name through any reachable table (tried
+        // ManageId / inventory item id / wheel MotionBankId — all different id spaces).
+        // So this currently resolves to null and announces nothing; kept as the capture
+        // point if an ExActionId->name path is ever found. See memory social-chat-readout.
         string name = ResolveEmoteName(id);
-        // Diagnostic: confirms SetEmote fires and whether the id resolves to a name.
-        API.LogInfo($"[SF6Access] Avatar emote (id={id}): {name ?? "<unresolved>"}");
         if (string.IsNullOrWhiteSpace(name)) return;
 
         lock (_lock) _pending.Add(name);
