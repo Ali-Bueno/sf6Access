@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Story & dialogue
+- Cutscene / scene subtitles now follow the in-game Subtitles option: they are only read by the screen reader when subtitles are enabled, so you can turn them off if you prefer the voiced lines alone.
+- Battle Hub NPC dialogue (the "Special Talk" conversations) is now read line by line — speaker name and line — the same way scene subtitles are, and it also follows the Subtitles option.
+
 ### Battle Hub
 - The social wheel now reads as you navigate it: the phrase list announces each focused phrase, and the sticker list announces each focused sticker name.
 - The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.

@@ -988,4 +988,32 @@ public static class FlowHelper
         if (string.IsNullOrEmpty(text)) return text;
         return Regex.Replace(text, @"<[^>]+>", "").Trim();
     }
+
+    private static Method _getOptionOnOff;
+    private static bool _subtitleOptCached;
+    // app.Option.ValueType.SubTitleDisplay — the "Subtitles" on/off display option.
+    private const int SUBTITLE_DISPLAY_OPTION = 450;
+
+    /// <summary>
+    /// True when the game's Subtitles option is enabled. Read via
+    /// app.Option.GetOptionValueOnOff(SubTitleDisplay) so dialogue/subtitle readers
+    /// follow the player's setting. Fails OPEN (returns true) if the option cannot be
+    /// read, so accessibility is never silently lost.
+    /// </summary>
+    public static bool AreSubtitlesEnabled()
+    {
+        try
+        {
+            if (!_subtitleOptCached)
+            {
+                _subtitleOptCached = true;
+                _getOptionOnOff = TDB.Get().FindType("app.Option")
+                    ?.GetMethod("GetOptionValueOnOff(app.Option.ValueType)");
+            }
+            if (_getOptionOnOff == null) return true;
+            var r = _getOptionOnOff.InvokeBoxed(typeof(bool), null, new object[] { SUBTITLE_DISPLAY_OPTION });
+            return r is bool b ? b : true;
+        }
+        catch { return true; }
+    }
 }

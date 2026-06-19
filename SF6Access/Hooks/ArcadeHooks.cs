@@ -138,6 +138,11 @@ public class ArcadeHooks
         if (string.IsNullOrEmpty(dialog) || dialog == _lastDialog) return;
         _lastDialog = dialog;
 
+        // Cutscene subtitles follow the in-game Subtitles option: when the player
+        // has them off, don't read them (the dialogue is voiced). Tracked even when
+        // suppressed (lastDialog set above) so toggling back on doesn't re-read old lines.
+        if (!FlowHelper.AreSubtitlesEnabled()) return;
+
         // Read every line including the first — cutscene dialogue must not
         // wait for a "change". Each new line interrupts the previous one,
         // matching the button-advance pacing.
