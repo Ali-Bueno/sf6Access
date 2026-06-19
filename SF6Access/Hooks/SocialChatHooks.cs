@@ -118,6 +118,10 @@ public class SocialChatHooks
         string rawMessage = CallStr(chatInfo, "get_Message") ?? FlowHelper.ReadStringField(chatInfo, "Message");
         string speaker = ResolveSpeaker(chatInfo);
 
+        // Diagnostic: confirm which path fires when a phrase/chat is used and whether
+        // the getters read the content (field reads came back empty before).
+        API.LogInfo($"[SF6Access] Social via {source}: format={format}, speaker='{speaker}', raw='{rawMessage}'");
+
         string uniqueId = CallStr(chatInfo, "get_UniqueId") ?? FlowHelper.ReadStringField(chatInfo, "UniqueId");
         if (!string.IsNullOrEmpty(uniqueId) && !MarkSeen(uniqueId)) return;
 
@@ -131,6 +135,7 @@ public class SocialChatHooks
     /// <summary>The own send path: announce the social text directly from SendMessage.</summary>
     private static void OnSendMessage(int format, string message)
     {
+        API.LogInfo($"[SF6Access] Social SendMessage: format={format}, raw='{message}'");
         string text = ResolveText(format, message);
         if (string.IsNullOrWhiteSpace(text)) return;
         lock (_lock) _pending.Add(text);
