@@ -10,10 +10,11 @@
 - The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.
 - Walking up to another player and opening the access menu now also announces that player's profile — name, title, LP and MR — alongside the menu options.
 - The room Comment submenu (the preset comment picker) now reads each preset comment as you navigate the list.
+- The text chat window (opened with T) now announces itself when it opens (the channel and destination, e.g. "Chat. To: Hub") and reads each element of the input bar as you move along it — Message, Send, Phrases and Stickers — which were silent icon buttons before. The phrases, stickers and typed/received text were already read.
 
 ### Versus
 - The VS screen now announces each player's rank (e.g. "Iron 1", "New Challenger 1", or "Master" with rating), resolved from the game's league data. This fixes the previous wrong "Master" announced for low-rank or unranked players.
-- The VS screen now also announces each player's control type (Classic / Modern / Dynamic) alongside their name and rank — e.g. "INGRID LeosKhai Classic Diamond 2 vs INGRID ... Modern Diamond 3". Only human-controlled sides report it, so a CPU opponent doesn't add noise.
+- The VS screen now also announces each player's control type (Classic / Modern / Dynamic) alongside their name and rank — e.g. "INGRID LeosKhai Classic Diamond 2 vs INGRID ... Modern Diamond 3". Only human-controlled sides report it, so a CPU opponent doesn't add noise. The control-type name is read from the game, so it is announced in your game's language.
 
 ### Story & dialogue
 - Cutscene / scene subtitles now follow the in-game Subtitles option: they are only read by the screen reader when subtitles are enabled, so you can turn them off if you prefer the voiced lines alone.
