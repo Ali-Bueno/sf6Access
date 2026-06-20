@@ -20,6 +20,7 @@ public static class ObjectDumper
 
     private const int VK_F8 = 0x77;
     private const int VK_F9 = 0x78;
+    private const int VK_SHIFT = 0x10;
     private static bool _lastKeyState;
     private static bool _lastF8State;
     private static bool _isDumping;
@@ -59,12 +60,16 @@ public static class ObjectDumper
 
         if (keyDown && !_lastKeyState && !_isDumping)
         {
+            // Plain F9 = focused dump of the current menu/state (small, fast).
+            // Shift+F9 = the heavy full dump (singletons + TDB scan) for the rare
+            // case of hunting a singleton or method that isn't on screen.
+            bool full = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
             _isDumping = true;
             try
             {
-                string path = DumpEverything();
-                ScreenReaderService.Speak("Full dump complete");
-                API.LogInfo($"[SF6Access] Full dump saved to {path}");
+                string path = full ? DumpEverything() : DumpCurrentState();
+                ScreenReaderService.Speak(full ? "Full dump complete" : "Menu dump complete");
+                API.LogInfo($"[SF6Access] {(full ? "Full" : "Menu")} dump saved to {path}");
             }
             catch (Exception ex)
             {
@@ -83,6 +88,10 @@ public static class ObjectDumper
         if (f8Down && !_lastF8State)
         {
             _autoDumpEnabled = !_autoDumpEnabled;
+            // One file per GAME SESSION: _autoDumpPath is set once (lazily) and
+            // kept across enable/disable toggles, so re-enabling appends to the
+            // same file instead of spawning a new one. A game relaunch reloads
+            // the plugin (fresh static state) and starts a new file.
             ScreenReaderService.Speak(_autoDumpEnabled ? "Auto dump enabled" : "Auto dump disabled");
             API.LogInfo($"[SF6Access] Auto dump {(_autoDumpEnabled ? "enabled" : "disabled")}");
         }
@@ -155,6 +164,27 @@ public static class ObjectDumper
         _autoDumpPath ??= Path.Combine(DumpDir, $"sf6access_autodump_{DateTime.Now:HHmmss}.txt");
         File.AppendAllText(_autoDumpPath, sb.ToString());
         API.LogInfo($"[SF6Access] Auto dump appended: {typeName}");
+    }
+
+    /// <summary>
+    /// Focused snapshot of just the current menu / game state: the active flow
+    /// handles (with their param field values) and every on-screen GUI text.
+    /// This is what menu-accessibility research needs — small and fast, without
+    /// the managed-singleton and TDB scans the full dump carries.
+    /// </summary>
+    private static string DumpCurrentState()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"=== SF6 MENU STATE - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        sb.AppendLine();
+
+        DumpFlowHandles(sb);
+        DumpGuiTexts(sb);
+
+        string path = Path.Combine(DumpDir, $"sf6access_state_{DateTime.Now:HHmmss}.txt");
+        Directory.CreateDirectory(DumpDir);
+        File.WriteAllText(path, sb.ToString());
+        return path;
     }
 
     private static string DumpEverything()

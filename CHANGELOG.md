@@ -1,39 +1,35 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 20/06/2026
+
+### Battle Hub
+- Navigable menus now read the focused option as you move through them: the action menu when you walk up to another player, the arcade cabinet menu (Change Character, Spectate, Wait on P1/P2 Side, etc.), the Rival AI (V-Rival) menu, and the Avatar Random Match mode list.
+- Stage selector announces the stage name as you change it.
+- League / rank selector (used in V-Rival): the rank tier and its level are announced — e.g. "Diamond" when picking a tier, then "Diamond 3" when picking the level — read from the game's own league data instead of the "Unspecified" placeholder.
+- The social wheel now reads as you navigate it: the phrase list announces each focused phrase, and the sticker list announces each focused sticker name.
+- The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.
+- Walking up to another player and opening the access menu now also announces that player's profile — name, title, LP and MR — alongside the menu options.
+- The room Comment submenu (the preset comment picker) now reads each preset comment as you navigate the list.
 
 ### Versus
+- The VS screen now announces each player's rank (e.g. "Iron 1", "New Challenger 1", or "Master" with rating), resolved from the game's league data. This fixes the previous wrong "Master" announced for low-rank or unranked players.
 - The VS screen now also announces each player's control type (Classic / Modern / Dynamic) alongside their name and rank — e.g. "INGRID LeosKhai Classic Diamond 2 vs INGRID ... Modern Diamond 3". Only human-controlled sides report it, so a CPU opponent doesn't add noise.
 
 ### Story & dialogue
 - Cutscene / scene subtitles now follow the in-game Subtitles option: they are only read by the screen reader when subtitles are enabled, so you can turn them off if you prefer the voiced lines alone.
 - Battle Hub NPC dialogue (the "Special Talk" conversations) is now read line by line — speaker name and line — the same way scene subtitles are, and it also follows the Subtitles option.
 
-### Battle Hub
-- The social wheel now reads as you navigate it: the phrase list announces each focused phrase, and the sticker list announces each focused sticker name.
-- The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.
-- Walking up to another player and opening the access menu now also announces that player's profile — name, title, LP and MR — alongside the menu options.
-- The room Comment submenu (the preset comment picker) now reads each preset comment as you navigate the list.
-
 ### Online match results
 - After an online match the post-match displays are announced: the winner's victory quote and the win count / win rate.
 - The post-match rank gauge is announced once with your rank, your LP (or MR at Master) and the change from the match — e.g. "Gold 1. 1400 LP. +30". It is read from the final result data, so it speaks the finished value immediately instead of waiting for the on-screen LP count-up, and no longer repeats itself while the number animates.
-
-## v0.4.0 — 16/06/2026
-
-### Battle Hub
-- Navigable menus now read the focused option as you move through them: the action menu when you walk up to another player, the arcade cabinet menu (Change Character, Spectate, Wait on P1/P2 Side, etc.), the Rival AI (V-Rival) menu, and the Avatar Random Match mode list.
-- Stage selector announces the stage name as you change it.
-- League / rank selector (used in V-Rival): the rank tier and its level are announced — e.g. "Diamond" when picking a tier, then "Diamond 3" when picking the level — read from the game's own league data instead of the "Unspecified" placeholder.
-
-### Versus
-- The VS screen now announces each player's rank (e.g. "Iron 1", "New Challenger 1", or "Master" with rating), resolved from the game's league data. This fixes the previous wrong "Master" announced for low-rank or unranked players.
 
 ### Fighting Ground
 - On the Tutorials, Character Guides and Combo Trials lists, the control-type display toggle (Classic / Modern / Dynamic), changed with L2/R2 or Z/C, is now announced with the screen reader instead of only playing a sound.
 
 ### News / Mailbox
-- The reward item dialog now announces the selected item or the focused button ("Receive" / "Close") as you navigate it, instead of reading the whole list only once on open.
+- The news headline list now reads each headline as you scroll through it, instead of only the first item.
+- Opening a news article (with Confirm) now reads it aloud — the title and full body — instead of opening silently.
+- The reward item dialog now announces the selected item or the focused button ("Receive" / "Close") as you navigate it, instead of reading the whole list only once on open, and it now speaks immediately when it opens instead of waiting behind the article being read.
 
 ## v0.3.5 — 16/06/2026
 

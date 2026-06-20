@@ -109,7 +109,10 @@ public class ItemListDialogHooks
             _lastSummary = text;
 
             API.LogInfo($"[SF6Access] Item/reward dialog: {text}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            // Interrupt: the dialog pops over the article, whose long body may
+            // still be reading — queuing behind it left the dialog effectively
+            // silent until the article finished.
+            ScreenReaderService.Speak(text, interrupt: true);
         }
         catch { }
     }
@@ -149,7 +152,7 @@ public class ItemListDialogHooks
             _lastFocus = focusKey;
 
             API.LogInfo($"[SF6Access] Item dialog focus: {announce}");
-            ScreenReaderService.Speak(announce, interrupt: false);
+            ScreenReaderService.Speak(announce, interrupt: true);
         }
         catch { }
     }
