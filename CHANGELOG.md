@@ -13,6 +13,7 @@
 - The social wheel now reads as you navigate it: the phrase list announces each focused phrase, and the sticker list announces each focused sticker name.
 - The text chat window and the player list (fast travel / send message) now read the focused option as you move through them.
 - Walking up to another player and opening the access menu now also announces that player's profile — name, title, LP and MR — alongside the menu options.
+- The room Comment submenu (the preset comment picker) now reads each preset comment as you navigate the list.
 
 ### Online match results
 - After an online match the post-match displays are announced: the winner's victory quote and the win count / win rate.
