@@ -20,14 +20,6 @@ namespace SF6Access.Hooks;
 /// </summary>
 public class TutorialControlTypeHooks
 {
-    // UI11410.TabInputType: Classic=0, Modern=1, Dynamic=2.
-    private static readonly string[][] ControlTypeNames =
-    {
-        new[] { "Classic", "Modern", "Dynamic" },   // En
-        new[] { "Clásico", "Moderno", "Dinámico" }, // Es
-        new[] { "Clássico", "Moderno", "Dinâmico" }, // Pt
-    };
-
     // Screens that expose a TextControlType label refreshed by UpdateControlType().
     private static readonly string[] LabelParamTypes =
     {
@@ -82,10 +74,10 @@ public class TutorialControlTypeHooks
             if (param == null) return;
 
             int value = FlowHelper.ReadByteField(param, "CurrentSelectTabInputType", -1);
-            if (value < 0 || value > 2) return;
+            string name = ControlTypeNames.Resolve(value);
+            if (name == null) return;
 
-            var names = ControlTypeNames[(int)FlowHelper.GetDisplayLang()];
-            Announce(thisAddr, names[value]);
+            Announce(thisAddr, name);
         }
         catch (Exception ex)
         {

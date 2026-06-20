@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Versus
+- The VS screen now also announces each player's control type (Classic / Modern / Dynamic) alongside their name and rank — e.g. "INGRID LeosKhai Classic Diamond 2 vs INGRID ... Modern Diamond 3". Only human-controlled sides report it, so a CPU opponent doesn't add noise.
+
 ### Story & dialogue
 - Cutscene / scene subtitles now follow the in-game Subtitles option: they are only read by the screen reader when subtitles are enabled, so you can turn them off if you prefer the voiced lines alone.
 - Battle Hub NPC dialogue (the "Special Talk" conversations) is now read line by line — speaker name and line — the same way scene subtitles are, and it also follows the Subtitles option.

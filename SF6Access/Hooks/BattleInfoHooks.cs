@@ -289,6 +289,13 @@ public class BattleInfoHooks
             string cpuLevel = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(pd, "mTextCPULevel"));
             if (!string.IsNullOrWhiteSpace(cpuLevel)) bits.Add($"CPU {cpuLevel.Trim()}");
 
+            // Control type (Classic / Modern / Dynamic) per side, human players only
+            // (CPU sides default to NORMAL and would read a spurious "Classic"). The
+            // on-screen indicator is the UIPartsTypeIcon image, so resolve the
+            // EConfigInputType field instead.
+            string control = ReadControlType(pd);
+            if (!string.IsNullOrEmpty(control)) bits.Add(control);
+
             // Ranked tier + division (the on-screen rank is an icon, no text);
             // resolved from the game's league data. Confirmed in logs:
             // league_rank 6 → "Iron 1", 39 → "New Challenger 1".
@@ -342,6 +349,23 @@ public class BattleInfoHooks
             if (string.IsNullOrEmpty(name)) return null;
 
             return isMaster ? $"{name} {masterRating}" : name;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Localized control type ("Classic"/"Modern"/"Dynamic") for a VSInfo player,
+    /// from the EConfigInputType mInputType field (NORMAL=0/CASUAL=1/SUPER_EASY=2;
+    /// NOT_SPECIFIED=-1 reads as 255 and is rejected). Only human-controlled sides
+    /// (mIsPlayer) report it — CPU sides carry a default NORMAL that is just noise.
+    /// </summary>
+    private static string ReadControlType(ManagedObject pd)
+    {
+        try
+        {
+            if (FlowHelper.ReadByteField(pd, "mIsPlayer", 0) == 0) return null;
+            int inputType = FlowHelper.ReadByteField(pd, "mInputType", -1);
+            return ControlTypeNames.Resolve(inputType);
         }
         catch { return null; }
     }
