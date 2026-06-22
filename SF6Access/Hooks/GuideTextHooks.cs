@@ -105,6 +105,15 @@ public class GuideTextHooks
                     continue;
                 }
 
+                // Status menu appends the InputGuide tooltip to its slot/item
+                // announcements itself — don't double-announce it here.
+                if (gui.Owner != null && gui.Owner.Contains("InputGuide") &&
+                    StatusMenuHooks.IsInStatusMenu)
+                {
+                    gui.PendingText = null;
+                    continue;
+                }
+
                 API.LogInfo($"[SF6Access] Guide [{gui.Owner}]: {announcement}");
                 ScreenReaderService.Speak(announcement, interrupt: false);
                 gui.PendingText = null;

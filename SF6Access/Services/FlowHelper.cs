@@ -697,6 +697,143 @@ public static class FlowHelper
         catch { return newText; }
     }
 
+    private static ManagedObject _tableDataMgr;
+
+    /// <summary>
+    /// Resolve a localized World Tour master message from a master id, e.g.
+    /// "StyleNameID" → "Luke's Style", "MasterUINameID" → "Luke". The master's
+    /// name is rendered as a texture in-game (no text element), so this table
+    /// lookup is the only way to recover it as speakable text. Read through the
+    /// MasterProfileUserDataDict (a managed dictionary) rather than the native
+    /// TryGetMasterProfileUserData(out ...), whose out-param invoke access-violates.
+    /// </summary>
+    public static string ResolveMasterMessage(uint masterId, string messageFieldName)
+    {
+        if (masterId == 0) return null;
+        try
+        {
+            _tableDataMgr ??= API.GetManagedSingleton("app.TableDataManager");
+            if (_tableDataMgr == null) return null;
+
+            // Interface property getters don't dispatch on IL2CPP concrete types —
+            // read the backing field directly.
+            var dict = GetObjectField(_tableDataMgr, "MasterProfileUserDataDict");
+            if (dict == null) return null;
+
+            // Missing key throws a managed KeyNotFoundException (caught), not an AV.
+            // The dict value is a RecordHolder<MasterProfileUserDataRecord> wrapper,
+            // so unwrap to the actual record before reading the message field.
+            var holder = Call(dict, "get_Item", masterId) as ManagedObject;
+            if (holder == null) return null;
+
+            var record = UnwrapRecord(holder, "MasterProfileUserDataRecord");
+            if (record == null) return null;
+
+            var msg = GetObjectField(record, messageFieldName);
+            return ResolveGuidField(msg, "GUID");
+        }
+        catch { return null; }
+    }
+
+    private static ManagedObject _wtMasterMgr;
+    private static Method _getFighterNameMethod;
+    private static bool _fighterNameCached;
+    private static Method _getMasterIdFromStyle;
+    private static bool _masterIdFromStyleCached;
+
+    /// <summary>
+    /// Resolve a World Tour style id to its master's localized fighter name
+    /// ("Ryu") via WTMasterManager.GetMasterIdFromStyleId → ResolveMasterFighterName.
+    /// Used to name the currently-equipped style without entering its list.
+    /// </summary>
+    public static string ResolveStyleFighterName(uint styleId)
+    {
+        if (styleId == 0) return null;
+        try
+        {
+            _wtMasterMgr ??= API.GetManagedSingleton("app.worldtour.WTMasterManager");
+            if (_wtMasterMgr == null) return null;
+
+            if (!_masterIdFromStyleCached)
+            {
+                _masterIdFromStyleCached = true;
+                _getMasterIdFromStyle = TDB.Get().FindType("app.worldtour.WTMasterManager")
+                    ?.GetMethod("GetMasterIdFromStyleId(System.UInt32)");
+            }
+            if (_getMasterIdFromStyle == null) return null;
+
+            var res = _getMasterIdFromStyle.InvokeBoxed(typeof(uint), _wtMasterMgr,
+                new object[] { styleId });
+            uint masterId = res == null ? 0u : Convert.ToUInt32(res);
+            return ResolveMasterFighterName(masterId);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Resolve a World Tour master's name as the underlying fighter's localized
+    /// name ("Ryu"). The master's own name message is itself a texture WLTAG (no
+    /// text), but WTMasterManager maps master id → udWTMasterUserData.FighterId
+    /// (a CHARA_ID), which IDScriptExtensions.GetFighterNameText renders as text.
+    /// </summary>
+    public static string ResolveMasterFighterName(uint masterId)
+    {
+        if (masterId == 0) return null;
+        try
+        {
+            _wtMasterMgr ??= API.GetManagedSingleton("app.worldtour.WTMasterManager");
+            if (_wtMasterMgr == null) return null;
+
+            var map = GetObjectField(_wtMasterMgr, "MasterDataMap");
+            if (map == null) return null;
+
+            var userData = Call(map, "get_Item", masterId) as ManagedObject;
+            if (userData == null) return null;
+
+            int fighterId = ReadIntField(userData, "FighterId");
+            if (fighterId < 0) return null;
+
+            if (!_fighterNameCached)
+            {
+                _fighterNameCached = true;
+                _getFighterNameMethod = TDB.Get().FindType("app.IDScriptExtensions")
+                    ?.GetMethod("GetFighterNameText(app.CHARA_ID)");
+            }
+            if (_getFighterNameMethod == null) return null;
+
+            string name = _getFighterNameMethod.InvokeBoxed(typeof(string), null,
+                new object[] { (byte)fighterId }) as string;
+            return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Unwrap a generic RecordHolder&lt;T&gt; to its inner record: return the first
+    /// managed field whose type name contains <paramref name="recordTypeName"/>.
+    /// </summary>
+    private static ManagedObject UnwrapRecord(ManagedObject holder, string recordTypeName)
+    {
+        if (holder == null) return null;
+        try
+        {
+            var td = holder.GetTypeDefinition();
+            var fields = td?.GetFields();
+            if (fields == null) return null;
+            foreach (var f in fields)
+            {
+                string ftype = f.Type?.FullName;
+                if (ftype != null && ftype.Contains(recordTypeName))
+                {
+                    var v = holder.GetField(f.Name) as ManagedObject;
+                    if (v != null) return v;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private static Method _platformMsgMethod;
     private static bool _platformMsgCached;
 
