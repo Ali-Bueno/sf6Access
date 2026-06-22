@@ -121,6 +121,20 @@ public class DialogFlowHooks
             }
         }
 
+        // Style-obtained dialog: the body reads "...obtained 's Battle Style..."
+        // with the master's name drawn as a texture. Resolve it from the param's
+        // MasterId and splice it in (and prefer the full body GUI text, which the
+        // Message/Text field truncates to the first sentence).
+        if (foundType != null && foundType.Contains("Enrolling"))
+        {
+            string body = ReadEnrollingBody() ?? message;
+            int masterId = FlowHelper.ReadIntField(param, "MasterId", 0);
+            string master = masterId > 0 ? FlowHelper.ResolveMasterFighterName((uint)masterId) : null;
+            if (!string.IsNullOrWhiteSpace(master) && !string.IsNullOrEmpty(body))
+                body = body.Replace("'s Battle Style", $"{master}'s Battle Style");
+            if (!string.IsNullOrEmpty(body)) message = body;
+        }
+
         // Tips windows show page indicators (e.g. "1 / 3")
         string page = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "Page"));
         string pageTotal = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "PageTotal"));
@@ -143,6 +157,21 @@ public class DialogFlowHooks
 
         API.LogInfo($"[SF6Access] Dialog [{foundType}]: {announcement}");
         ScreenReaderService.Speak(announcement, interrupt: isMessageBox);
+    }
+
+    /// <summary>Full body text of the style-obtained dialog ("Enrolling" GUI,
+    /// element "e_text_body") — the param's Message field truncates it.</summary>
+    private static string ReadEnrollingBody()
+    {
+        try
+        {
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews("Enrolling"))
+                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
+                    if (t.Name == "e_text_body" && !string.IsNullOrWhiteSpace(t.Text))
+                        return t.Text.Replace('\n', ' ').Trim();
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>Announce the focused button when navigating a message box.</summary>
