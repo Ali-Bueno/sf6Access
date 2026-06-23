@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using REFrameworkNET.Callbacks;
@@ -35,6 +36,31 @@ public class StatusMenuHooks
     private static string _lastItemName;
     private static string _lastMasterText;
 
+    // Stats panel (mEquipStatus): announced once on entering the equip tab and
+    // re-read on the G key. The item grid announces each focused item's stats.
+    private static bool _statsAnnounced;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")]
+    private static extern System.IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
+    private const int VK_G = 0x47;
+    private static bool _lastGState;
+
+    /// <summary>True only when the game window is the foreground app — so the G
+    /// shortcut never fires while the user is typing in another window.</summary>
+    private static bool IsGameForeground()
+    {
+        try
+        {
+            GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
+            return pid == (uint)System.Environment.ProcessId;
+        }
+        catch { return false; }
+    }
+
     // English fallbacks when on-screen tab/slot labels can't be read
     // (UIStatusMenu.MenuType and UIStatusMenu_Equip.TopFocusType enum order)
     private static readonly string[] TabNames =
@@ -64,6 +90,12 @@ public class StatusMenuHooks
             TryActivate();
             return;
         }
+
+        // G re-reads the full stats panel on demand (only with the game focused,
+        // so it never fires while the user types in another window)
+        bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
+        if (gDown && !_lastGState && IsGameForeground()) AnnounceStatsSummary(interrupt: true);
+        _lastGState = gDown;
 
         if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
         {
@@ -97,6 +129,7 @@ public class StatusMenuHooks
         _lastPresetIndex = -2;
         _lastItemName = null;
         _lastMasterText = null;
+        _statsAnnounced = false;
         _isActive = true;
 
         API.LogInfo($"[SF6Access] Status menu active (equip={_equipParam != null})");
@@ -121,6 +154,14 @@ public class StatusMenuHooks
             PollMasterTab();
 
         if (_equipParam == null) return;
+
+        // Read the combat stats once on entering the equip tab (after the tab
+        // name), so the player hears their avatar's stats without hunting for them
+        if (!_statsAnnounced)
+        {
+            _statsAnnounced = true;
+            AnnounceStatsSummary(interrupt: false);
+        }
 
         int groupFocus = FlowHelper.ReadIntField(_equipParam, "GroupFocus");
         bool groupChanged = groupFocus != _lastGroupFocus && _lastGroupFocus != -2;
@@ -226,6 +267,10 @@ public class StatusMenuHooks
 
         API.LogInfo($"[SF6Access] Status menu item [{idx}]: {name}");
         ScreenReaderService.Speak(name);
+
+        // Announce only the stats this item grants (the equipped totals are
+        // available on demand via G). Styles aren't gear items — skip them.
+        if (!IsStyleSlot()) AnnounceItemStats(name);
     }
 
     /// <summary>Preset (my set) list rows.</summary>
@@ -424,6 +469,28 @@ public class StatusMenuHooks
         return m.Success && uint.TryParse(m.Groups[1].Value, out uint id) ? id : 0;
     }
 
+    /// <summary>Speak the equipped avatar's stats summary (totals + perks).</summary>
+    private static void AnnounceStatsSummary(bool interrupt)
+    {
+        if (_equipParam == null) return;
+        string summary = AvatarStatsReader.ReadSummary(_statusParam, _equipParam);
+        if (string.IsNullOrWhiteSpace(summary)) return;
+
+        API.LogInfo($"[SF6Access] Status stats: {summary}");
+        ScreenReaderService.Speak(summary, interrupt);
+    }
+
+    /// <summary>Announce only the stats the focused gear item grants.</summary>
+    private static void AnnounceItemStats(string itemName)
+    {
+        string text = AvatarStatsReader.FormatStats(
+            AvatarStatsReader.ReadItemStats(_equipParam, itemName));
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        API.LogInfo($"[SF6Access] Status item stats: {text}");
+        ScreenReaderService.Speak(text, interrupt: false);
+    }
+
     private static void Reset()
     {
         API.LogInfo("[SF6Access] Status menu ended");
@@ -433,5 +500,6 @@ public class StatusMenuHooks
         _masterParam = null;
         _lastItemName = null;
         _lastMasterText = null;
+        _statsAnnounced = false;
     }
 }

@@ -371,6 +371,67 @@ public static class GuiTextReader
         return filtered;
     }
 
+    private static object _playObjectRuntimeType;
+
+    /// <summary>
+    /// Diagnostic: write the full via.gui element tree under a control to a
+    /// StringBuilder — every PlayObject leaf (Text, Texture, etc.) with its name,
+    /// runtime type, message and local position, plus nested controls. Reveals the
+    /// icon/texture element names that identify image-only labels (e.g. the avatar
+    /// stat icons) so values can be mapped to stats. Dev tooling only.
+    /// </summary>
+    public static void DumpControlTree(ManagedObject control, System.Text.StringBuilder sb, int depth)
+    {
+        CacheTypes();
+        if (control == null || sb == null || depth > MAX_DEPTH) return;
+        if (_playObjectRuntimeType == null)
+        {
+            try { _playObjectRuntimeType = TDB.Get().FindType("via.gui.PlayObject")?.GetRuntimeType(); }
+            catch { }
+        }
+
+        string indent = new string(' ', depth * 2);
+
+        // Leaf play objects directly under this control (text + image elements)
+        var leaves = GetChildren(control, _playObjectRuntimeType ?? _textRuntimeType);
+        int leafCount = FlowHelper.GetListCount(leaves);
+        for (int i = 0; i < leafCount; i++)
+        {
+            var leaf = FlowHelper.GetListItem(leaves, i);
+            if (leaf == null) continue;
+            try
+            {
+                string name = FlowHelper.Call(leaf, "get_Name") as string;
+                string type = leaf.GetTypeDefinition()?.FullName ?? "?";
+                string msg = FlowHelper.Call(leaf, "get_Message") as string;
+                var vis = FlowHelper.Call(leaf, "get_Visible");
+                bool visible = !(vis is bool vb) || vb;
+                var (x, y) = ReadLocalPosition(leaf);
+                string msgPart = string.IsNullOrEmpty(msg) ? "" : $" msg=\"{msg}\"";
+                sb.AppendLine($"{indent}  [{type}] {name}{(visible ? "" : " [hidden]")} pos=({x:0},{y:0}){msgPart}");
+            }
+            catch { }
+        }
+
+        // Recurse into child controls
+        var children = GetChildren(control, _controlRuntimeType);
+        int childCount = FlowHelper.GetListCount(children);
+        for (int i = 0; i < childCount; i++)
+        {
+            var child = FlowHelper.GetListItem(children, i);
+            if (child == null) continue;
+            try
+            {
+                string name = FlowHelper.Call(child, "get_Name") as string;
+                string type = child.GetTypeDefinition()?.FullName ?? "?";
+                var (x, y) = ReadLocalPosition(child);
+                sb.AppendLine($"{indent}- {name} <{type}> pos=({x:0},{y:0})");
+                DumpControlTree(child, sb, depth + 1);
+            }
+            catch { }
+        }
+    }
+
     private static void WalkControl(ManagedObject control, string owner, bool visibleOnly,
         List<GuiText> results, int depth, bool resolveMessageIds = false, int maxTexts = MAX_TEXTS)
     {
