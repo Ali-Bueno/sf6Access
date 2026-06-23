@@ -72,6 +72,8 @@ public class GroupFocusHooks
     {
         "app.UIFlowCustomRoomTop.Param",
         "app.UIStatusMenu_Equip.Param",   // StatusMenuHooks handles the equip tab
+        "app.UIStatusMenu_SpecialMoves.Param", // StatusActionSkillHooks handles these tabs
+        "app.UIStatusMenu_SuperArts.Param",
         "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
         "app.UIFlowCustomRoomJoin.Param",           // CustomRoomJoinHooks handles join/invitations
     };

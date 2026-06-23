@@ -407,8 +407,10 @@ public static class GuiTextReader
                 var vis = FlowHelper.Call(leaf, "get_Visible");
                 bool visible = !(vis is bool vb) || vb;
                 var (x, y) = ReadLocalPosition(leaf);
+                string play = FlowHelper.Call(leaf, "get_PlayState") as string;
                 string msgPart = string.IsNullOrEmpty(msg) ? "" : $" msg=\"{msg}\"";
-                sb.AppendLine($"{indent}  [{type}] {name}{(visible ? "" : " [hidden]")} pos=({x:0},{y:0}){msgPart}");
+                string playPart = string.IsNullOrEmpty(play) ? "" : $" play=\"{play}\"";
+                sb.AppendLine($"{indent}  [{type}] {name}{(visible ? "" : " [hidden]")} pos=({x:0},{y:0}){playPart}{msgPart}");
             }
             catch { }
         }
@@ -425,11 +427,47 @@ public static class GuiTextReader
                 string name = FlowHelper.Call(child, "get_Name") as string;
                 string type = child.GetTypeDefinition()?.FullName ?? "?";
                 var (x, y) = ReadLocalPosition(child);
-                sb.AppendLine($"{indent}- {name} <{type}> pos=({x:0},{y:0})");
+                string play = FlowHelper.Call(child, "get_PlayState") as string;
+                string playPart = string.IsNullOrEmpty(play) ? "" : $" play=\"{play}\"";
+                sb.AppendLine($"{indent}- {name} <{type}> pos=({x:0},{y:0}){playPart}");
                 DumpControlTree(child, sb, depth + 1);
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Index N of the "c_item_N" SelectItem under a control whose PlayState marks
+    /// it selected (e.g. a dialog's focused Yes/No button). -1 if none found.
+    /// </summary>
+    public static int FindSelectedItemIndex(ManagedObject control, string selectedState = "SELECT", int depth = 0)
+    {
+        CacheTypes();
+        if (control == null || depth > MAX_DEPTH) return -1;
+
+        try
+        {
+            var children = GetChildren(control, _controlRuntimeType);
+            int count = FlowHelper.GetListCount(children);
+            for (int i = 0; i < count; i++)
+            {
+                var child = FlowHelper.GetListItem(children, i);
+                if (child == null) continue;
+
+                string name = FlowHelper.Call(child, "get_Name") as string;
+                string play = FlowHelper.Call(child, "get_PlayState") as string;
+                if (name != null && name.StartsWith("c_item_") &&
+                    string.Equals(play, selectedState, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(name.Substring("c_item_".Length), out int idx)) return idx;
+                }
+
+                int nested = FindSelectedItemIndex(child, selectedState, depth + 1);
+                if (nested >= 0) return nested;
+            }
+        }
+        catch { }
+        return -1;
     }
 
     private static void WalkControl(ManagedObject control, string owner, bool visibleOnly,

@@ -86,6 +86,20 @@ public static class StatusStatsDiagnostic
             sb.AppendLine();
         }
 
+        // Confirm/attention popups (e.g. "Switch moves?") — dump the full control
+        // tree (with PlayState) of any dialog/attention GUI so its Yes/No buttons
+        // and their selection state can be located.
+        sb.AppendLine("########## DIALOG / ATTENTION GUIs ##########");
+        foreach (var keyword in new[] { "Attention", "Dialog", "Confirm", "MessageBox" })
+        {
+            foreach (var (owner, view) in GuiTextReader.FindGuiViews(keyword))
+            {
+                sb.AppendLine($"--- GUI: {owner} ---");
+                GuiTextReader.DumpControlTree(view, sb, 1);
+                sb.AppendLine();
+            }
+        }
+
         string path = Path.Combine(ObjectDumper.DumpDir, $"sf6access_statstats_{DateTime.Now:HHmmss}.txt");
         File.WriteAllText(path, sb.ToString());
         return path;
