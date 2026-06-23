@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
@@ -39,6 +40,12 @@ public class StatusMenuHooks
     // Stats panel (mEquipStatus): announced once on entering the equip tab and
     // re-read on the G key. The item grid announces each focused item's stats.
     private static bool _statsAnnounced;
+
+    // Unique-moves popup (UniqueMovesWindow) opened from the Style slot — a
+    // move list with name / command / description that overlays the equip screen.
+    private static bool _uniqueWindowWasOpen;
+    private static int _lastUniqueIndex = -2;
+    private static string _lastUniqueState;
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
@@ -130,6 +137,9 @@ public class StatusMenuHooks
         _lastItemName = null;
         _lastMasterText = null;
         _statsAnnounced = false;
+        _uniqueWindowWasOpen = false;
+        _lastUniqueIndex = -2;
+        _lastUniqueState = null;
         _isActive = true;
 
         API.LogInfo($"[SF6Access] Status menu active (equip={_equipParam != null})");
@@ -162,6 +172,10 @@ public class StatusMenuHooks
             _statsAnnounced = true;
             AnnounceStatsSummary(interrupt: false);
         }
+
+        // The unique-moves popup overlays the equip screen — when it's open read
+        // it and skip the normal slot/grid polling underneath.
+        if (PollUniqueMovesWindow()) return;
 
         int groupFocus = FlowHelper.ReadIntField(_equipParam, "GroupFocus");
         bool groupChanged = groupFocus != _lastGroupFocus && _lastGroupFocus != -2;
@@ -469,6 +483,119 @@ public class StatusMenuHooks
         return m.Success && uint.TryParse(m.Groups[1].Value, out uint id) ? id : 0;
     }
 
+    /// <summary>
+    /// Read the unique-moves popup (UniqueMovesWindow) when it is shown over the
+    /// equip screen: announces the focused move's name, command and description.
+    /// Returns true while the popup is open so the caller skips normal polling.
+    /// </summary>
+    private static bool PollUniqueMovesWindow()
+    {
+        var window = FlowHelper.GetObjectField(_equipParam, "UniqueMovesWindow");
+        bool open = window != null && IsWidgetShown(window);
+        if (!open)
+        {
+            _uniqueWindowWasOpen = false;
+            _lastUniqueIndex = -2;
+            _lastUniqueState = null;
+            return false;
+        }
+
+        var list = FlowHelper.GetObjectField(window, "mPartsList");
+        int idx = FlowHelper.CallInt(list, "get_SelectedIndex");
+        string state = ReadUniqueMoveState(window, list, idx);
+
+        bool firstOpen = !_uniqueWindowWasOpen;
+        _uniqueWindowWasOpen = true;
+
+        bool moved = idx != _lastUniqueIndex || firstOpen;
+        bool toggled = !moved && state != _lastUniqueState; // enabled/disabled in place
+        if (!moved && !toggled) return true;
+        _lastUniqueIndex = idx;
+        _lastUniqueState = state;
+
+        // Move name (from the detail panel, already localized)
+        var detail = FlowHelper.GetObjectField(window, "mPartsDetail");
+        string name = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(detail, "mTextMoveName"));
+        if (string.IsNullOrWhiteSpace(name))
+            name = FlowHelper.ReadSelectedItemText(list); // fall back to the focused row
+        if (string.IsNullOrWhiteSpace(name)) return true;
+
+        // State goes right after the name — enabling/disabling is the window's purpose
+        string head = string.IsNullOrEmpty(state) ? name.Trim() : $"{name.Trim()}, {state}";
+
+        // On a toggle (no cursor move) announce just the name + new state
+        if (toggled)
+        {
+            API.LogInfo($"[SF6Access] Unique move toggled [{idx}]: {head}");
+            ScreenReaderService.Speak(head, interrupt: true);
+            return true;
+        }
+
+        var parts = new List<string> { head };
+        string command = ReadUniqueMoveCommand(list);
+        if (!string.IsNullOrWhiteSpace(command)) parts.Add(command);
+        string desc = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(detail, "mTextDescription"));
+        if (!string.IsNullOrWhiteSpace(desc)) parts.Add(desc.Trim());
+
+        string text = string.Join(". ", parts);
+        API.LogInfo($"[SF6Access] Unique move [{idx}]: {text}");
+        ScreenReaderService.Speak(text, interrupt: !firstOpen);
+        return true;
+    }
+
+    /// <summary>"On"/"Off" for the focused unique move, via UniqueMovesListWidget.IsEquip.</summary>
+    private static string ReadUniqueMoveState(ManagedObject window, ManagedObject list, int idx)
+    {
+        try
+        {
+            // GetFocusSkill is the reliable focused entry; fall back to SkillList[idx]
+            var skill = FlowHelper.Call(window, "GetFocusSkill") as ManagedObject;
+            if (skill == null)
+                skill = FlowHelper.GetListItem(FlowHelper.GetObjectField(window, "SkillList"), idx);
+            if (skill == null) return null;
+
+            int skillId = FlowHelper.ReadIntField(skill, "SkillId", -1);
+            if (skillId < 0) return null;
+
+            var eq = FlowHelper.Call(window, "IsEquip", (uint)skillId);
+            if (eq is not bool on) return null;
+
+            return FlowHelper.GetDisplayLang() switch
+            {
+                FlowHelper.UiLang.Es => on ? "activado" : "desactivado",
+                FlowHelper.UiLang.Pt => on ? "ativado" : "desativado",
+                _ => on ? "on" : "off",
+            };
+        }
+        catch { return null; }
+    }
+
+    /// <summary>The focused move row's command input ("M", "HH"), input tags spoken.</summary>
+    private static string ReadUniqueMoveCommand(ManagedObject list)
+    {
+        try
+        {
+            var item = FlowHelper.Call(list, "get_SelectedItem") as ManagedObject;
+            foreach (var t in GuiTextReader.ReadControlTexts(item))
+            {
+                if (t.Name == "e_text_command" && !string.IsNullOrWhiteSpace(t.Raw))
+                    return FlowHelper.SpeakableIcons(t.Raw).Trim();
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>True when the unique-moves popup is shown. Prefers the widget's
+    /// get_IsShow; if that getter does not dispatch on the concrete type, falls
+    /// back to detecting the popup's GUI (StatusMenu_UniqueSkill) in the scene.</summary>
+    private static bool IsWidgetShown(ManagedObject widget)
+    {
+        var shown = FlowHelper.Call(widget, "get_IsShow");
+        if (shown is bool b) return b;
+        return GuiTextReader.FindGuiViews("UniqueSkill").Count > 0;
+    }
+
     /// <summary>Speak the equipped avatar's stats summary (totals + perks).</summary>
     private static void AnnounceStatsSummary(bool interrupt)
     {
@@ -501,5 +628,8 @@ public class StatusMenuHooks
         _lastItemName = null;
         _lastMasterText = null;
         _statsAnnounced = false;
+        _uniqueWindowWasOpen = false;
+        _lastUniqueIndex = -2;
+        _lastUniqueState = null;
     }
 }
