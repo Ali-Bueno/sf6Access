@@ -30,8 +30,18 @@ public static class AvatarStatsReader
     /// <summary>The avatar's current equipped totals, read from WTPlayerData.Status.CalcStatus.</summary>
     public static List<Stat> ReadEquippedStats(ManagedObject statusParam)
     {
+        var playerData = FlowHelper.GetObjectField(statusParam, "PlayerData");
+        return ReadStatsFromPlayerData(playerData);
+    }
+
+    /// <summary>
+    /// The avatar's equipped totals from a WTPlayerData directly (e.g. the global
+    /// WTPlayerManager.LocalPlayerData) — for screens with no equip param.
+    /// </summary>
+    public static List<Stat> ReadStatsFromPlayerData(ManagedObject playerData)
+    {
         var result = new List<Stat>();
-        var calc = GetCalcStatus(statusParam);
+        var calc = GetCalcStatusFromPlayerData(playerData);
         if (calc == null) return result;
 
         foreach (int type in CombatStatTypes)
@@ -115,9 +125,8 @@ public static class AvatarStatsReader
     }
 
     /// <summary>WTPlayerData.Status.CalcStatus (the computed equipped-total array).</summary>
-    private static ManagedObject GetCalcStatus(ManagedObject statusParam)
+    private static ManagedObject GetCalcStatusFromPlayerData(ManagedObject playerData)
     {
-        var playerData = FlowHelper.GetObjectField(statusParam, "PlayerData");
         var status = FlowHelper.GetObjectField(playerData, "Status");
         return FlowHelper.GetObjectField(status, "CalcStatus");
     }

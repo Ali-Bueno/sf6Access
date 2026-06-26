@@ -42,6 +42,15 @@ public class GroupFocusHooks
         "app.UIFlowCabinetMenu",           // sit at an arcade cabinet (change character, start...)
         "app.UIFlowRivalAi",               // Rival AI server menu (train / fight your learning CPU)
         "app.UIFlowAvatarRandomMatch",     // avatar random match top (mode list)
+        "app.UIFlowAvatarMatchingSetting", // avatar Battle Settings (Control Type / Button
+                                           // Preset / Control Settings) + matching setting tabs;
+                                           // values render as text (Modern / Custom 1)
+        "app.training.UIWorldTourTrainingMenu", // avatar (World Tour) training menu — its
+                                           // own type, separate from normal training
+                                           // (TrainingManager); exposes _OptionGroup /
+                                           // _TabSimpleList / _TrainingScrollGrid. Options
+                                           // (Opponent state, Block, Counter...) and their
+                                           // spin values were silent on left/right.
         // Battle Hub social / chat menus (L1+X). Each exposes a text list field:
         // FixedPhraseList=PartsScrollList, StampList=PartsScrollGrid,
         // BattleHubPlayerList=_ScrollList/_ListGroup. Stamps render as images, so
@@ -74,6 +83,8 @@ public class GroupFocusHooks
         "app.UIStatusMenu_Equip.Param",   // StatusMenuHooks handles the equip tab
         "app.UIStatusMenu_SpecialMoves.Param", // StatusActionSkillHooks handles these tabs
         "app.UIStatusMenu_SuperArts.Param",
+        "app.UIStatusMenu_MySetActionSkill.Param", // StatusMySetActionSkillHooks handles the Move Set screen
+        "app.UIStatusMenu_Skill.Param",            // StatusSkillHooks handles the skill tree
         "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
         "app.UIFlowCustomRoomJoin.Param",           // CustomRoomJoinHooks handles join/invitations
     };
@@ -276,6 +287,14 @@ public class GroupFocusHooks
     {
         var results = new List<(string, string, bool)>();
         var td = param?.GetTypeDefinition();
+
+        // The avatar Battle Settings overlay reuses the big matching-setting param,
+        // whose TabList drives tabs that aren't active in that overlay — tracking it
+        // announced phantom tabs ("Customize Challenges"...) on Q/E that do nothing
+        // in-game, and re-read the content row after each. Skip the tab list here.
+        string paramTypeName = td?.FullName ?? "";
+        bool skipTabFields = paramTypeName.Contains("UIFlowAvatarMatchingSetting");
+
         int depth = 0;
         while (td != null && depth++ < 6)
         {
@@ -296,6 +315,7 @@ public class GroupFocusHooks
                             if (!isGroup && !isList) continue;
 
                             string cleanName = field.Name?.Replace("<", "").Replace(">k__BackingField", "");
+                            if (skipTabFields && cleanName != null && cleanName.Contains("Tab")) continue;
                             results.Add((fieldType, cleanName, isList));
                         }
                         catch { }

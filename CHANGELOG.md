@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### World Tour — Avatar Status menu
+- Skills tab (skill tree): the tree is now navigable. Each node announces its name, its state (acquired / available / locked / unavailable), category, cost and description. Switching skill trees announces the tree number, and the G key announces your available skill points and your coins. The "Unlock this skill?" confirmation reads the skill, its cost and the Yes/No buttons. The "Reset Skills" dialog reads its heading, the reset resource you have (which is separate from your coins) and its Yes / No / View Skills buttons.
+- Special Moves and Super Arts tabs: empty move-set slots no longer go silent when several are in a row (each is read with its slot), and the move command is now read in your control scheme, including Modern/Casual inputs. The set-type tab (Grounded / Aerial / Super Arts) is announced when you switch it with Tab.
+- Move Set screen: the preset list, the directional move slots (each with its trigger input and the assigned move, or "Empty"), and the Grounded / Aerial / Super Arts tab are now read.
+- The Special Moves and Super Arts screens are also read inside Avatar Training, which uses a separate menu.
+
+### World Tour
+- Avatar Arcade top screen: the selected mode's description is now read as you move through the course list, and the G key announces your avatar's equipped style (name and rank) along with its combat stats (Vitality, Punch, Kick, Throw, Unique Attack, Defense).
+- Avatar Training menu: its options (opponent state, block, counter, input/attack display, etc.) and their values are now read as you navigate and change them.
+- Avatar Battle Settings: Control Type, Button Preset and Control Settings are now read as you move through them and as you change their values.
+
 ## v0.4.0 — 20/06/2026
 
 ### Battle Hub

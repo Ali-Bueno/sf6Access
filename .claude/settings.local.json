@@ -11,7 +11,8 @@
       "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access\\\\sf6 code' -name *AvatarCreateEditParam*.cs)",
       "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access' -type f -name *dump* -o -name *TODO*)",
       "Bash(find 'D:\\\\code\\\\re engine\\\\sf6Access\\\\SF6Access' -not -path */obj/* -not -path */bin/* -type f)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "PowerShell($log = \"D:\\\\games\\\\steam\\\\steamapps\\\\common\\\\Street Fighter 6\\\\re2_framework_log.txt\"; \\(Get-Item $log\\).LastWriteTime; \\(Get-Content $log | Measure-Object -Line\\).Lines; \\(Select-String -Path $log -Pattern \"\\\\[SF6Access\\\\]\" | Measure-Object\\).Count)"
     ]
   }
 }

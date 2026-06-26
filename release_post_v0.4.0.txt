@@ -1,0 +1,16 @@
+Hey everyone!
+
+I just released v0.4.0 of the Street Fighter 6 accessibility mod, with a bunch of improvements:
+
+- Battle Hub: navigable menus, the social wheel, player profiles and the text chat (open it with T) are now read - including the chat's input bar (Message, Send, Phrases, Stickers).
+- News / Mailbox: the headline list reads as you scroll, opening an article reads it aloud, and the reward dialog speaks right away.
+- VS screen: each player's rank and control type (Classic / Modern / Dynamic) are announced - and the control type is read in your game's language.
+- Plus subtitle/NPC dialogue reading, post-match results, and more.
+
+More details in the changelog:
+https://github.com/Ali-Bueno/sf6Access/blob/main/CHANGELOG.md
+
+Direct download:
+https://github.com/Ali-Bueno/sf6Access/releases/latest/download/SF6Access.zip
+
+As always, if a menu isn't read properly, press F8 in game to generate a dump and send it my way. Thanks for testing and for all the feedback!

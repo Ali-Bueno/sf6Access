@@ -12,15 +12,23 @@ namespace SF6Access.Hooks;
 /// a "Moves Learned" list on the right, with a detail panel. The generic group
 /// reader announced these inconsistently (and leaked the unfilled "SA {0}" label),
 /// so they are read here from the typed widgets instead.
+///
+/// Avatar Training uses a parallel widget family (UIAvatarTrainingDummyStatusMenu_*)
+/// with the SAME field/method names and eMenuState values, so the same logic reads
+/// it once its param types are watched too.
 /// </summary>
 public class StatusActionSkillHooks
 {
-    // Both tabs share UIStatusMenu_ActionSkillEquipBase, so the same field/method
-    // names work for either param.
+    // All four tabs share the ActionSkillEquipBase shape (MenuState +
+    // mSkillPanelList_Set/_Select + mSkillDetail), so the same field/method names
+    // work for every param. The avatar-training dummy menu is a separate type
+    // family, hence its own entries.
     private static readonly string[] ParamTypes =
     {
         "app.UIStatusMenu_SpecialMoves.Param",
         "app.UIStatusMenu_SuperArts.Param",
+        "app.UIAvatarTrainingDummyStatusMenu_SpecialMoves.Param",
+        "app.UIAvatarTrainingDummyStatusMenu_SuperArts.Param",
     };
 
     // eMenuState: 0=SET_LIST (Move Set slots), 1=CHOICE_LIST (Moves Learned),
@@ -42,6 +50,7 @@ public class StatusActionSkillHooks
     private static bool _attentionOpen;
     private static string _lastAttentionButton;
     private static int _loggedState = -99;
+    private static int _lastSetType = int.MinValue;  // WTActionSkillSetType tab (Grounded/Air/Super Arts)
 
     public static bool IsActive => _isActive;
 
@@ -76,6 +85,7 @@ public class StatusActionSkillHooks
             _lastText = null;
             _attentionOpen = false;
             _lastAttentionButton = null;
+            _lastSetType = int.MinValue;
         }
 
         PollState();
@@ -102,6 +112,7 @@ public class StatusActionSkillHooks
         _lastText = null;
         _attentionOpen = false;
         _lastAttentionButton = null;
+        _lastSetType = int.MinValue;
         _isActive = true;
         API.LogInfo("[SF6Access] Status action-skill tab active");
         PollState();
@@ -134,13 +145,25 @@ public class StatusActionSkillHooks
             state == STATE_CHOICE ? "mSkillPanelList_Select" : "mSkillPanelList_Set");
         int idx = FlowHelper.CallInt(list, "get_SelectedIndex");
 
+        // The set-type tab (Grounded / Air / Super Arts) switches with Tab. It
+        // changes neither MenuState nor the row index, so the dedup below swallows
+        // it and the switch reads as silence — detect it on its own.
+        int setType = FlowHelper.ReadIntField(_param, "SetType", -1);
+        bool setTypeChanged = setType != _lastSetType && _lastSetType != int.MinValue;
+        _lastSetType = setType;
+
         bool first = _lastState == -2;
         bool sectionChanged = state != _lastState && !first;
-        if (idx == _lastIndex && state == _lastState && !first) return;
+        if (idx == _lastIndex && state == _lastState && !first && !setTypeChanged) return;
         _lastState = state;
         _lastIndex = idx;
 
         var parts = new List<string>();
+        if (setTypeChanged)
+        {
+            string setName = ReadSetTypeName(setType);
+            if (!string.IsNullOrEmpty(setName)) parts.Add(setName);
+        }
         if (first || sectionChanged) parts.Add(SectionName(state));
 
         // Name + command from the focused row; description from the detail panel
@@ -150,11 +173,24 @@ public class StatusActionSkillHooks
         string command = FindText(rowTexts, "e_text_command");
         string spokenCommand = string.IsNullOrWhiteSpace(command) ? null : FlowHelper.SpeakableIcons(command).Trim();
 
+        // e_text_command is empty in two cases: on Modern (Casual) controls the
+        // input lives in a separate "casual command" text with a different element
+        // name, and on assigned slots the classic command renders as a hidden image.
+        // Fall back to the panel's typed command fields so the slot's input/trigger
+        // (neutral/forward/back special) is still spoken in the player's own scheme.
+        if (string.IsNullOrWhiteSpace(spokenCommand))
+            spokenCommand = ReadPanelCommand(item);
+
         if (string.IsNullOrWhiteSpace(name))
         {
             // Empty Move Set slot: announce its trigger input (e.g. "down plus
-            // special move") so the player knows which slot they're on, not just "empty"
+            // special move") so the player knows which slot they're on, not just
+            // "empty". When the trigger can't be read, fall back to the slot
+            // position — without something distinct per slot, a run of identical
+            // "Empty" announcements is dropped by the reader's duplicate filter
+            // (the 2nd/3rd consecutive empty went silent).
             if (!string.IsNullOrWhiteSpace(spokenCommand)) parts.Add(spokenCommand);
+            else parts.Add($"{SlotWord()} {idx + 1}");
             parts.Add(EmptyWord());
         }
         else
@@ -174,14 +210,34 @@ public class StatusActionSkillHooks
         }
 
         string text = string.Join(". ", parts);
-        // Don't dedupe the first read after (re)entering the list — returning from
-        // the confirm dialog lands on the just-equipped move, whose text matches
-        // the last announcement and was being swallowed ("silent after confirming").
-        if (text == _lastText && !sectionChanged && !first) return;
+        // No text dedup here: the index/state gate above already prevents re-reading
+        // the same item, and deduping on text instead swallowed legitimate moves to
+        // a DIFFERENT slot that happens to share text — a run of identical empty
+        // slots stopped announcing "Empty" after the first (and previously caused
+        // "silent after confirming", since the post-dialog item matched _lastText).
         _lastText = text;
 
         API.LogInfo($"[SF6Access] Action skill [{state}/{idx}]: {text}");
         ScreenReaderService.Speak(text, interrupt: !first);
+    }
+
+    /// <summary>
+    /// The slot's input read from the panel's typed command texts, used when the GUI
+    /// element walk found nothing. mTextCasualCommand holds the Modern (Casual) input;
+    /// mTextCommand the classic one. The game only fills the text for the active
+    /// scheme, so the first non-empty one is the right one to speak.
+    /// </summary>
+    private static string ReadPanelCommand(ManagedObject panel)
+    {
+        if (panel == null) return null;
+        foreach (var field in new[] { "mTextCasualCommand", "mTextCommand" })
+        {
+            string raw = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(panel, field));
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            string spoken = FlowHelper.SpeakableIcons(raw).Trim();
+            if (!string.IsNullOrWhiteSpace(spoken)) return spoken;
+        }
+        return null;
     }
 
     /// <summary>The first text of a named element in a focused row's texts (raw kept for command tags).</summary>
@@ -299,6 +355,29 @@ public class StatusActionSkillHooks
             _ => "locked",
         };
 
+    /// <summary>
+    /// Name of the current move set-type tab (Grounded / Air / Super Arts), switched
+    /// with Tab. Prefer the game's own localized tab label; fall back to the
+    /// WTStyleDefine.WTActionSkillSetType enum (Ground=1, Air=2, SuperArts=3).
+    /// </summary>
+    private static string ReadSetTypeName(int setType)
+    {
+        var tab = FlowHelper.GetObjectField(_param, "mSetTypeTab");
+        var item = FlowHelper.Call(tab, "get_SelectedItem") as ManagedObject;
+        if (item != null)
+        {
+            foreach (var t in GuiTextReader.ReadControlTexts(item, visibleOnly: true))
+                if (!string.IsNullOrWhiteSpace(t.Text)) return t.Text.Trim();
+        }
+        return setType switch
+        {
+            1 => "Grounded",
+            2 => "Air",
+            3 => "Super Arts",
+            _ => null,
+        };
+    }
+
     private static string SectionName(int state)
         => FlowHelper.GetDisplayLang() switch
         {
@@ -313,6 +392,14 @@ public class StatusActionSkillHooks
             FlowHelper.UiLang.Es => "Vacío",
             FlowHelper.UiLang.Pt => "Vazio",
             _ => "Empty",
+        };
+
+    private static string SlotWord()
+        => FlowHelper.GetDisplayLang() switch
+        {
+            FlowHelper.UiLang.Es => "Ranura",
+            FlowHelper.UiLang.Pt => "Espaço",
+            _ => "Slot",
         };
 
     private static void Reset()
