@@ -47,6 +47,10 @@ public class ScreenRegistry
         UiDispatcher.Register(new AvatarArcadeTopHooks());
         UiDispatcher.Register(new StatusSkillHooks());
 
+        // New screen readers built on the foundation
+        UiDispatcher.Register(new AvatarResultHooks());
+        UiDispatcher.Register(new WTMPauseHooks());
+
         API.LogInfo("[SF6Access] ScreenRegistry: adapters registered");
     }
 }

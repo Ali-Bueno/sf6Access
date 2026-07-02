@@ -61,6 +61,10 @@ public class GroupFocusHooks
         "app.UIFlowChat",                  // Battle Hub text-chat window (RootGroup/InputGroup/ButtonsGroup)
         "app.UIFlowTextList",              // preset text picker (room Comment submenu — PartsList)
         "app.UIFlowWTDeviceEmoteShortCut", // emote wheel (tabs/buttons/lists; cells may be icons)
+        "app.UIFlowWTMPauseMenu",          // World Tour master-fight pause menu: Main (_menuTab),
+                                           // Escape (_simpleList), Item/PerkList/BattleInfo lists, and
+                                           // the move tabs OtherMoves/SpecialMoves/SuperArts
+                                           // (mSkillList/ActionSkillList + category/set-type tabs)
         // app.UICFNSelectLeague / ...Detail handled by LeagueSelectHooks — their
         // grid/list cells render the rank as an icon (text is only "Unspecified"),
         // so the name must be resolved from the league data, not the focused row.
@@ -87,6 +91,13 @@ public class GroupFocusHooks
         "app.UIStatusMenu_Skill.Param",            // StatusSkillHooks handles the skill tree
         "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
         "app.UIFlowCustomRoomJoin.Param",           // CustomRoomJoinHooks handles join/invitations
+        // WTMPauseHooks handles these WT master-fight pause submenus (the generic
+        // reader gave template junk / bare numbers); Main/PerkList/BattleInfo stay generic.
+        "app.UIFlowWTMPauseMenu.SpecialMoves.Param",
+        "app.UIFlowWTMPauseMenu.SuperArts.Param",
+        "app.UIFlowWTMPauseMenu.OtherMoves.Param",
+        "app.UIFlowWTMPauseMenu.Item.Param",
+        "app.UIFlowWTMPauseMenu.Escape.Param",
     };
 
     private static readonly string[] GroupFieldTypes = { "app.UIPartsGroup", "app.UIPartsGroupScroll" };
