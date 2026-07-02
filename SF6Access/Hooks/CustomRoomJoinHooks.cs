@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,64 +10,50 @@ namespace SF6Access.Hooks;
 /// as you navigate it. The generic GroupFocus reader announced the tabs but not
 /// the room rows (room name + who invited you), which live on UIPartsCustomRoomBanner
 /// fields (RoomMasterName, Comment, PlayerCount, ShortId, Setting).
+/// Migrated to ScreenAdapter (IsActive kept for MainMenuHooks suppression).
 /// </summary>
-public class CustomRoomJoinHooks
+public sealed class CustomRoomJoinHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowCustomRoomJoin.Param";
+    private static CustomRoomJoinHooks _self;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    /// <summary>Consumed by MainMenuHooks to suppress the generic focus reader.</summary>
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static string _lastTab;
-    private static string _lastRoom;
+    protected override string ParamType => "app.UIFlowCustomRoomJoin.Param";
 
-    public static bool IsActive => _active;
+    private string _lastTab;
+    private string _lastRoom;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    public CustomRoomJoinHooks()
     {
-        API.LogInfo("[SF6Access] CustomRoomJoinHooks initialized");
+        _self = this;
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
+        _lastTab = null;
+        _lastRoom = null;
+        API.LogInfo("[SF6Access] Custom room join/invitations active");
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (changed) { _lastTab = null; _lastRoom = null; } // menu recreated — re-read
-            if (current != null && !_active)
-            {
-                _active = true;
-                _param = current;
-                _lastTab = null;
-                _lastRoom = null;
-                API.LogInfo("[SF6Access] Custom room join/invitations active");
-            }
-            else if (current == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastTab = null;
-                _lastRoom = null;
-                API.LogInfo("[SF6Access] Custom room join/invitations ended");
-            }
-            else if (current != null) _param = current;
-        }
+    protected override void OnExit()
+    {
+        _lastTab = null;
+        _lastRoom = null;
+        API.LogInfo("[SF6Access] Custom room join/invitations ended");
+    }
 
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
+    protected override void Poll()
+    {
         PollTab();
         PollRoom();
     }
 
-    private static void PollTab()
+    private void PollTab()
     {
-        var tab = FlowHelper.GetObjectField(_param, "Tab");
+        var tab = FlowHelper.GetObjectField(Param, "Tab");
         string text = FlowHelper.ReadSelectedItemText(tab);
         if (string.IsNullOrEmpty(text) || text == _lastTab) return;
         _lastTab = text;
@@ -78,9 +63,9 @@ public class CustomRoomJoinHooks
         ScreenReaderService.Speak(text);
     }
 
-    private static void PollRoom()
+    private void PollRoom()
     {
-        var rooms = FlowHelper.GetObjectField(_param, "Rooms");
+        var rooms = FlowHelper.GetObjectField(Param, "Rooms");
         if (rooms == null) return;
 
         // Rooms.get_SelectedItem returns a via.gui.SelectItem, NOT a

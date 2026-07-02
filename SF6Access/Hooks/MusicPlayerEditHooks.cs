@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -10,64 +9,45 @@ namespace SF6Access.Hooks;
 /// opened with T). It has two song lists — partsAllScroll (all tracks, to add)
 /// and partsEditScroll (the playlist's current tracks) — switched via
 /// partsGroupSwitch. Announces the focused side and the focused track as you move.
+/// Migrated to ScreenAdapter (IsActive kept for MusicPlayerHooks).
 /// </summary>
-public class MusicPlayerEditHooks
+public sealed class MusicPlayerEditHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowMusicPlayer_EditWindow.Param";
+    private static MusicPlayerEditHooks _self;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    /// <summary>Consumed by MusicPlayerHooks so the player pauses under this window.</summary>
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static int _lastSide = -2;
-    private static string _lastTrack;
+    protected override string ParamType => "app.UIFlowMusicPlayer_EditWindow.Param";
 
-    public static bool IsActive => _active;
+    private int _lastSide = -2;
+    private string _lastTrack;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    public MusicPlayerEditHooks()
     {
-        API.LogInfo("[SF6Access] MusicPlayerEditHooks initialized");
+        _self = this;
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (changed) { _lastSide = -2; _lastTrack = null; }
-            if (current != null && !_active)
-            {
-                _active = true;
-                _param = current;
-                _lastSide = -2;
-                _lastTrack = null;
-                API.LogInfo("[SF6Access] Music edit window active");
-            }
-            else if (current == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastSide = -2;
-                _lastTrack = null;
-                API.LogInfo("[SF6Access] Music edit window ended");
-            }
-            else if (current != null) _param = current;
-        }
-
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollRow();
+        _lastSide = -2;
+        _lastTrack = null;
+        API.LogInfo("[SF6Access] Music edit window active");
     }
 
-    private static void PollRow()
+    protected override void OnExit()
     {
-        var all = FlowHelper.GetObjectField(_param, "partsAllScroll");
-        var edit = FlowHelper.GetObjectField(_param, "partsEditScroll");
+        _lastSide = -2;
+        _lastTrack = null;
+        API.LogInfo("[SF6Access] Music edit window ended");
+    }
+
+    protected override void Poll()
+    {
+        var all = FlowHelper.GetObjectField(Param, "partsAllScroll");
+        var edit = FlowHelper.GetObjectField(Param, "partsEditScroll");
 
         // Whichever side holds focus is the one being navigated
         int side = IsFocused(edit) ? 1 : IsFocused(all) ? 0 : -1;

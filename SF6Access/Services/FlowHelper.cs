@@ -771,6 +771,31 @@ public static class FlowHelper
     }
 
     /// <summary>
+    /// Localized fighter name from a CHARA_ID (a byte enum), e.g. 1 → "Ryu",
+    /// via app.IDScriptExtensions.GetFighterNameText. Shares the cached method
+    /// with <see cref="ResolveMasterFighterName"/>.
+    /// </summary>
+    public static string ResolveFighterName(int charaId)
+    {
+        if (charaId <= 0) return null;
+        try
+        {
+            if (!_fighterNameCached)
+            {
+                _fighterNameCached = true;
+                _getFighterNameMethod = TDB.Get().FindType("app.IDScriptExtensions")
+                    ?.GetMethod("GetFighterNameText(app.CHARA_ID)");
+            }
+            if (_getFighterNameMethod == null) return null;
+
+            string name = _getFighterNameMethod.InvokeBoxed(typeof(string), null,
+                new object[] { (byte)charaId }) as string;
+            return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Resolve a World Tour master's name as the underlying fighter's localized
     /// name ("Ryu"). The master's own name message is itself a texture WLTAG (no
     /// text), but WTMasterManager maps master id → udWTMasterUserData.FighterId

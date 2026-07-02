@@ -65,6 +65,45 @@ other files in `docs/`. For per-screen type/field reference see [`sf6-screens.md
 - `AvatarStatsReader.cs` — World Tour avatar stats.
 - `ObjectDumper.cs` / `ScreenshotService.cs` — research tools (see Dump tools).
 
+## Screen adapter architecture (menu hooks) — `Services/Ui/`
+
+Most menu/screen hooks share one shape: search `_Handles` for a flow Param, activate, then each frame
+read the focused row / changed value and announce it (diff-gated). Historically every hook re-wrote
+that scaffold (poll counter, `_isActive` lifecycle, its own `[Callback]`, and a hand-rolled
+first/changed/diff gate). The `Services/Ui/` layer removes that duplication with a reusable
+bottom layer + a central dispatcher, following `reference/ui-accessibility/generic-strategy.md`.
+
+- **`UiDispatcher`** — the single `[Callback(LateUpdateBehavior.Post)]` that ticks every registered
+  adapter. This central tick is *required*: REFramework.NET discovers `[Callback]` methods by attribute
+  scan, so a base class cannot supply an inherited callback — one dispatcher driving instances is what
+  enables a base class at all. Exposes `AnyAdapterActive` (for suppressing the generic reader).
+- **`ScreenRegistry`** — the `[PluginEntryPoint]` that instantiates and registers adapters. Adding a
+  screen is one line here.
+- **`ScreenAdapter`** (abstract) — owns the poll lifecycle: `Locate()` searches every `SearchInterval`
+  frames while inactive; once active, `OnPoll()` runs every `ReadInterval`; on close, `OnDeactivate()`.
+  **`SingleParamScreenAdapter`** is the 80 % case — bound to one Param type, it does `FindFlowParam` +
+  `TrackFlowParam` stale-instance re-bind for you; the subclass writes only `OnBind` (cache child
+  widgets + announce entry, called on open *and* on Param recreate), `OnExit`, and `Poll`.
+- **Archetype readers** ("how each control sounds", reused across screens):
+  - `GroupFocusPoller` — focused row of a `UIPartsGroup`/list/grid (list-item archetype).
+  - `ValueTextWatcher` — a set of `via.gui.Text` fields → announce only the changed value
+    (slider/checkbox/dropdown archetype); `Compose(...)` joins fields for an entry announcement.
+  - `TabWatcher` — tab index → label on change (tab-bar archetype).
+  - `ChangeGate` — the first/changed/diff-gate-before-speak decision for one focused `(index, text)`
+    source (moving rows speaks the whole row; editing a value speaks only the `DiffSegments` result).
+
+**Migrating a hook:** drop its `[Callback]`/`[PluginEntryPoint]`, make it extend
+`ScreenAdapter`/`SingleParamScreenAdapter`, move its per-widget reads onto the archetype readers, and
+register it in `ScreenRegistry`. Legacy hooks that still own a `[Callback]` run untouched alongside the
+dispatcher, so migration is incremental. Before converting, grep for external references to the hook's
+public statics (`IsInX` suppression flags etc.) and preserve them. Reference examples:
+`Hooks/MatchingSettingHooks.cs` (single-Param) and `Hooks/OptionSubScreenHooks.cs` (multi-Param).
+
+**Not every hook fits.** Method-hook–based hooks (their core is `method.AddHook(false)` on game
+methods — combat/combo readouts, subtitle advance, social chat, side-select Left/Right) are a different
+pattern and stay as-is. The adapter base is for the poll-a-flow-Param screens, which are the bulk of
+the duplication.
+
 ## Critical IL2CPP gotchas (SF6 / RE Engine)
 
 - **Attribute hooks (`[MethodHook]`) do NOT fire for interface dispatch.** Use dynamic hooks:

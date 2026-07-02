@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,60 +12,45 @@ namespace SF6Access.Hooks;
 /// left/right value edits went silent because they don't move focus. Each row
 /// keeps its current option in mSpinIndexCount[row], and the option label is
 /// mMessData[row].TextList[index] — poll the array and announce the row whose
-/// index changed.
+/// index changed. Migrated to ScreenAdapter (IsActive kept for FocusValueHooks).
 /// </summary>
-public class ArcadeSettingHooks
+public sealed class ArcadeSettingHooks : SingleParamScreenAdapter
 {
-    private const string FLOW_PARAM = "app.UIFlowUI11101.Param";
-
-    private static ManagedObject _param;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
-
-    // Current spin index per row, to detect left/right edits
-    private static readonly Dictionary<int, int> _lastSpin = new();
+    private static ArcadeSettingHooks _self;
 
     /// <summary>True while the arcade settings menu owns value announcements,
     /// so the generic FocusValueHooks watcher doesn't double-read.</summary>
-    public static bool IsActive => _param != null;
+    public static bool IsActive => _self != null && _self.Active;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override string ParamType => "app.UIFlowUI11101.Param";
+
+    public ArcadeSettingHooks()
     {
-        API.LogInfo("[SF6Access] ArcadeSettingHooks initialized");
+        _self = this;
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    // Current spin index per row, to detect left/right edits
+    private readonly Dictionary<int, int> _lastSpin = new();
+
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.FindFlowParam(FLOW_PARAM);
-            if (current == null)
-            {
-                if (_param != null) { _param = null; _lastSpin.Clear(); }
-            }
-            else if (_param == null || FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_param))
-            {
-                _param = current;
-                _lastSpin.Clear(); // re-baseline on (re-)entry
-                API.LogInfo("[SF6Access] Arcade settings active");
-            }
-        }
-
-        if (_param == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollValueChanges();
+        _lastSpin.Clear(); // re-baseline on (re-)entry
+        API.LogInfo("[SF6Access] Arcade settings active");
     }
 
-    private static void PollValueChanges()
+    protected override void OnExit()
+    {
+        _lastSpin.Clear();
+    }
+
+    protected override void Poll()
     {
         try
         {
-            var spinArr = FlowHelper.GetObjectField(_param, "mSpinIndexCount");
-            var messArr = FlowHelper.GetObjectField(_param, "mMessData");
+            var spinArr = FlowHelper.GetObjectField(Param, "mSpinIndexCount");
+            var messArr = FlowHelper.GetObjectField(Param, "mMessData");
             if (spinArr == null || messArr == null) return;
 
             int count = FlowHelper.GetListCount(spinArr);

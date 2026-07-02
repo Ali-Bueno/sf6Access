@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -9,36 +8,31 @@ namespace SF6Access.Hooks;
 /// Accessibility for the training shortcut settings menu (app.UIFlowShortcutSetting).
 /// Param fields (verified via F9 dump): _MenuList (UIPartsGroupScroll with _FocusIndex)
 /// and ShortcutData (app.ShortcutSettingData[] with ItemMessage/GuideMessage Guids).
+/// Migrated to ScreenAdapter.
 /// </summary>
-public class ShortcutSettingHooks
+public sealed class ShortcutSettingHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowShortcutSetting.Param";
+    private const string PARAM = "app.UIFlowShortcutSetting.Param";
+    protected override string ParamType => PARAM;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
-
-    private static ManagedObject _param;
-    private static ManagedObject _menuList;
-    private static ManagedObject _shortcutData;
-    private static int _lastFocusIndex = -2;
-    private static string _lastRowText;
-    private static bool? _lastRowState;
+    private ManagedObject _menuList;
+    private ManagedObject _shortcutData;
+    private int _lastFocusIndex = -2;
+    private string _lastRowText;
+    private bool? _lastRowState;
 
     // PlayState strings the game assigns to each row's on/off switch control
     // (Param constants SWITCH_STATE_ON / SWITCH_STATE_OFF, read once from TDB)
-    private static string _stateOn;
-    private static string _stateOff;
+    private readonly string _stateOn;
+    private readonly string _stateOff;
 
-    public static bool IsInShortcutSetting => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ShortcutSettingHooks()
     {
+        SearchInterval = 60;
+        ReadInterval = 5;
         try
         {
-            var td = TDB.Get().FindType(PARAM_TYPE);
+            var td = TDB.Get().FindType(PARAM);
             _stateOn = td?.GetField("SWITCH_STATE_ON")?.GetDataBoxed(typeof(string), 0, false) as string;
             _stateOff = td?.GetField("SWITCH_STATE_OFF")?.GetDataBoxed(typeof(string), 0, false) as string;
         }
@@ -46,52 +40,31 @@ public class ShortcutSettingHooks
         API.LogInfo($"[SF6Access] ShortcutSettingHooks initialized (on='{_stateOn}', off='{_stateOff}')");
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-                TryActivate(); // menu was recreated — re-bind param and child caches
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-            PollFocus();
-    }
-
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        _param = param;
-        _menuList = FlowHelper.GetObjectField(param, "_MenuList");
-        _shortcutData = FlowHelper.GetObjectField(param, "ShortcutData");
+        _menuList = FlowHelper.GetObjectField(Param, "_MenuList");
+        _shortcutData = FlowHelper.GetObjectField(Param, "ShortcutData");
         _lastFocusIndex = -2;
-        _isActive = true;
 
         API.LogInfo($"[SF6Access] Shortcut settings active (menuList={_menuList != null}, " +
             $"data={FlowHelper.GetListCount(_shortcutData)} items)");
 
-        PollFocus();
+        PollFocus(); // baseline the focused row without announcing
     }
 
-    private static void PollFocus()
+    protected override void OnExit()
+    {
+        API.LogInfo("[SF6Access] Shortcut settings ended");
+        _menuList = null;
+        _shortcutData = null;
+        _lastFocusIndex = -2;
+        _lastRowText = null;
+        _lastRowState = null;
+    }
+
+    protected override void Poll() => PollFocus();
+
+    private void PollFocus()
     {
         if (_menuList == null) return;
 
@@ -118,7 +91,7 @@ public class ShortcutSettingHooks
     /// PlayState (the switch itself is graphical); row text changes too on
     /// some rows and is preferred because it's localized.
     /// </summary>
-    private static void PollRowStateChange()
+    private void PollRowStateChange()
     {
         string text = ReadFocusedRowText();
         if (!string.IsNullOrEmpty(text) && _lastRowText != null && text != _lastRowText)
@@ -145,7 +118,7 @@ public class ShortcutSettingHooks
         ScreenReaderService.Speak(label);
     }
 
-    private static ManagedObject FocusedRowControl()
+    private ManagedObject FocusedRowControl()
     {
         try
         {
@@ -156,14 +129,14 @@ public class ShortcutSettingHooks
         catch { return null; }
     }
 
-    private static string ReadFocusedRowText()
+    private string ReadFocusedRowText()
     {
         return GuiTextReader.ReadControlTextJoined(FocusedRowControl());
     }
 
     /// <summary>True/false when the row's switch PlayState matches the game's
     /// SWITCH_STATE_ON/OFF constants, null when undetermined.</summary>
-    private static bool? ReadFocusedRowState()
+    private bool? ReadFocusedRowState()
     {
         if (string.IsNullOrEmpty(_stateOn) && string.IsNullOrEmpty(_stateOff)) return null;
         var control = FocusedRowControl();
@@ -179,7 +152,7 @@ public class ShortcutSettingHooks
         return null;
     }
 
-    private static void AnnounceItem(int index)
+    private void AnnounceItem(int index)
     {
         var data = FlowHelper.GetListItem(_shortcutData, index);
         if (data == null)
@@ -210,17 +183,5 @@ public class ShortcutSettingHooks
 
         API.LogInfo($"[SF6Access] Shortcut [{index}]: {announcement}");
         ScreenReaderService.Speak(announcement);
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Shortcut settings ended");
-        _isActive = false;
-        _param = null;
-        _menuList = null;
-        _shortcutData = null;
-        _lastFocusIndex = -2;
-        _lastRowText = null;
-        _lastRowState = null;
     }
 }

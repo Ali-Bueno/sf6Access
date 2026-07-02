@@ -1,96 +1,81 @@
-using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
 /// <summary>
-/// Accessibility for the options sub-screens that open from the audio tab:
+/// Options sub-screens opened from the audio tab:
 /// - app.UIFlowCharacterVoiceLanguage.Param: per-character voice selection
 ///   (UIPartsFighterSelectSimple grid, mSelectIndex + selected tile text)
 /// - app.UIFlowCharaBgmSetting.UIParam: character music settings — character
 ///   list (FocusCharaId) + assigned BGM grid
 /// - app.UIFlowCharaBgmSelect.UIParam: BGM track picker (mBgmList grid whose
 ///   rows resolve to mDispBgmDataList[i].TitleMessage.GUID)
+///
+/// Built on the ScreenAdapter foundation (multi-Param variant): the base owns the
+/// poll lifecycle, this class resolves whichever of the three sub-screens is open
+/// and reads its focused row via ChangeGate. Registered in ScreenRegistry.
 /// </summary>
-public class OptionSubScreenHooks
+public sealed class OptionSubScreenHooks : ScreenAdapter
 {
     private const string VOICE_PARAM = "app.UIFlowCharacterVoiceLanguage.Param";
     private const string BGM_SETTING_PARAM = "app.UIFlowCharaBgmSetting.UIParam";
     private const string BGM_SELECT_PARAM = "app.UIFlowCharaBgmSelect.UIParam";
-    private static readonly string[] WatchedTypes = { VOICE_PARAM, BGM_SETTING_PARAM, BGM_SELECT_PARAM };
+    private static readonly string[] Types = { VOICE_PARAM, BGM_SETTING_PARAM, BGM_SELECT_PARAM };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    public override string[] OwnedTypes => Types;
 
-    private static bool _isActive;
-    private static ManagedObject _voiceParam;
-    private static ManagedObject _bgmSettingParam;
-    private static ManagedObject _bgmSelectParam;
-
-    // Voice screen state
-    private static int _lastVoiceIndex = -2;
-    private static string _lastVoiceText;
-
-    // BGM setting screen state
-    private static int _lastBgmSettingChara = -2;
-    private static int _lastBgmSettingRow = -2;
-    private static string _lastBgmSettingText;
-
-    // BGM select screen state
-    private static int _lastBgmSelectRow = -2;
-
-    private static Method _getFighterNameMethod;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public OptionSubScreenHooks()
     {
-        _getFighterNameMethod = TDB.Get().FindType("app.IDScriptExtensions")
-            ?.GetMethod("GetFighterNameText(app.CHARA_ID)");
-        API.LogInfo("[SF6Access] OptionSubScreenHooks initialized");
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _voiceParam;
+    private ManagedObject _bgmSettingParam;
+    private ManagedObject _bgmSelectParam;
+
+    private readonly ChangeGate _voice = new();
+    private readonly ChangeGate _bgmSetting = new();
+    private int _lastBgmSettingChara = -2;
+    private int _lastBgmSelectRow = -2;
+
+    protected override bool Locate()
     {
-        _pollCounter++;
+        var found = FlowHelper.FindFlowParams(Types);
+        found.TryGetValue(VOICE_PARAM, out _voiceParam);
+        found.TryGetValue(BGM_SETTING_PARAM, out _bgmSettingParam);
+        found.TryGetValue(BGM_SELECT_PARAM, out _bgmSelectParam);
+        return _voiceParam != null || _bgmSettingParam != null || _bgmSelectParam != null;
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var found = FlowHelper.FindFlowParams(WatchedTypes);
-            found.TryGetValue(VOICE_PARAM, out _voiceParam);
-            found.TryGetValue(BGM_SETTING_PARAM, out _bgmSettingParam);
-            found.TryGetValue(BGM_SELECT_PARAM, out _bgmSelectParam);
+    protected override void OnActivate()
+    {
+        ResetState();
+        API.LogInfo($"[SF6Access] Option sub-screen active (voice={_voiceParam != null}, " +
+            $"bgmSetting={_bgmSettingParam != null}, bgmSelect={_bgmSelectParam != null})");
+    }
 
-            bool active = _voiceParam != null || _bgmSettingParam != null || _bgmSelectParam != null;
-            if (active && !_isActive)
-            {
-                _isActive = true;
-                ResetState();
-                API.LogInfo($"[SF6Access] Option sub-screen active (voice={_voiceParam != null}, " +
-                    $"bgmSetting={_bgmSettingParam != null}, bgmSelect={_bgmSelectParam != null})");
-            }
-            else if (!active && _isActive)
-            {
-                _isActive = false;
-                ResetState();
-                API.LogInfo("[SF6Access] Option sub-screen ended");
-            }
-        }
+    protected override void OnDeactivate()
+    {
+        _voiceParam = null;
+        _bgmSettingParam = null;
+        _bgmSelectParam = null;
+        ResetState();
+        API.LogInfo("[SF6Access] Option sub-screen ended");
+    }
 
-        if (!_isActive || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        // The track picker overlays the BGM settings screen: prefer it while open
+    protected override void OnPoll()
+    {
+        // The track picker overlays the BGM settings screen: prefer it while open.
         if (_bgmSelectParam != null) { PollBgmSelect(); return; }
         if (_bgmSettingParam != null) { PollBgmSetting(); return; }
         if (_voiceParam != null) PollVoiceScreen();
     }
 
     /// <summary>Character grid of the voice selection screen.</summary>
-    private static void PollVoiceScreen()
+    private void PollVoiceScreen()
     {
         var grid = FlowHelper.GetObjectField(_voiceParam, "FighterSelectSimple");
         if (grid == null) return;
@@ -98,31 +83,20 @@ public class OptionSubScreenHooks
         int idx = FlowHelper.ReadIntField(grid, "mSelectIndex", int.MinValue);
         if (idx == int.MinValue) return;
 
-        // The tile text holds the fighter name and its current voice value
+        // The tile text holds the fighter name and its current voice value.
         string text = FlowHelper.ReadSelectedItemText(grid)
             ?? FlowHelper.ReadSelectedItemText(FlowHelper.GetObjectField(grid, "mScrollGrid"));
 
-        bool first = _lastVoiceIndex == -2;
-        bool indexChanged = idx != _lastVoiceIndex;
-        bool textChanged = !string.IsNullOrEmpty(text) && text != _lastVoiceText;
-        string previous = _lastVoiceText;
-
-        _lastVoiceIndex = idx;
-        if (!string.IsNullOrEmpty(text)) _lastVoiceText = text;
-
-        if (first || string.IsNullOrEmpty(text)) return;
-        if (!indexChanged && !textChanged) return;
-
-        // Same tile, voice value flipped: announce only what changed
-        string announcement = indexChanged ? text : FlowHelper.DiffSegments(previous, text);
+        string announcement = _voice.Evaluate(idx, text);
+        if (announcement == null) return;
         API.LogInfo($"[SF6Access] Voice screen [{idx}]: {announcement}");
         ScreenReaderService.Speak(announcement);
     }
 
     /// <summary>Character music settings: character list + assigned BGM grid.</summary>
-    private static void PollBgmSetting()
+    private void PollBgmSetting()
     {
-        // Focused character (data field, not UI) — resolve the localized name
+        // Focused character (data field, not UI) — resolve the localized name.
         int charaId = FlowHelper.ReadIntField(_bgmSettingParam, "FocusCharaId", int.MinValue);
         if (charaId != int.MinValue && charaId != _lastBgmSettingChara)
         {
@@ -130,7 +104,7 @@ public class OptionSubScreenHooks
             _lastBgmSettingChara = charaId;
             if (!first)
             {
-                string name = ResolveFighterName(charaId);
+                string name = FlowHelper.ResolveFighterName(charaId);
                 if (!string.IsNullOrEmpty(name))
                 {
                     API.LogInfo($"[SF6Access] BGM setting chara: {name} (id={charaId})");
@@ -140,7 +114,7 @@ public class OptionSubScreenHooks
             }
         }
 
-        // Assigned-track grid on the right side
+        // Assigned-track grid on the right side.
         var bgmList = FlowHelper.GetObjectField(_bgmSettingParam, "mBgmList");
         if (bgmList == null) return;
 
@@ -148,25 +122,14 @@ public class OptionSubScreenHooks
         if (row < 0) return;
 
         string text = FlowHelper.ReadSelectedItemText(bgmList);
-
-        bool firstRow = _lastBgmSettingRow == -2;
-        bool rowChanged = row != _lastBgmSettingRow;
-        bool textChanged = !string.IsNullOrEmpty(text) && text != _lastBgmSettingText;
-        string previousText = _lastBgmSettingText;
-
-        _lastBgmSettingRow = row;
-        if (!string.IsNullOrEmpty(text)) _lastBgmSettingText = text;
-
-        if (firstRow || string.IsNullOrEmpty(text)) return;
-        if (!rowChanged && !textChanged) return;
-
-        string announcement = rowChanged ? text : FlowHelper.DiffSegments(previousText, text);
+        string announcement = _bgmSetting.Evaluate(row, text);
+        if (announcement == null) return;
         API.LogInfo($"[SF6Access] BGM setting row [{row}]: {announcement}");
         ScreenReaderService.Speak(announcement);
     }
 
     /// <summary>BGM track picker grid.</summary>
-    private static void PollBgmSelect()
+    private void PollBgmSelect()
     {
         var bgmList = FlowHelper.GetObjectField(_bgmSelectParam, "mBgmList");
         if (bgmList == null) return;
@@ -178,7 +141,7 @@ public class OptionSubScreenHooks
         _lastBgmSelectRow = row;
         if (first) return;
 
-        // Track title from the data record (localized Guid), grid text as fallback
+        // Track title from the data record (localized Guid), grid text as fallback.
         string title = ReadBgmTitle(row) ?? FlowHelper.ReadSelectedItemText(bgmList);
         if (string.IsNullOrEmpty(title)) return;
 
@@ -186,7 +149,7 @@ public class OptionSubScreenHooks
         ScreenReaderService.Speak(title);
     }
 
-    private static string ReadBgmTitle(int row)
+    private string ReadBgmTitle(int row)
     {
         try
         {
@@ -198,24 +161,11 @@ public class OptionSubScreenHooks
         catch { return null; }
     }
 
-    private static string ResolveFighterName(int charaId)
+    private void ResetState()
     {
-        if (_getFighterNameMethod == null || charaId <= 0) return null;
-        try
-        {
-            return _getFighterNameMethod.InvokeBoxed(
-                typeof(string), null, new object[] { (byte)charaId }) as string;
-        }
-        catch { return null; }
-    }
-
-    private static void ResetState()
-    {
-        _lastVoiceIndex = -2;
-        _lastVoiceText = null;
+        _voice.Reset();
+        _bgmSetting.Reset();
         _lastBgmSettingChara = -2;
-        _lastBgmSettingRow = -2;
-        _lastBgmSettingText = null;
         _lastBgmSelectRow = -2;
     }
 }

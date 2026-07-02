@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,11 +13,10 @@ namespace SF6Access.Hooks;
 /// tell whether the cursor was on the text field, the phrase list or the sticker
 /// list. GroupFocus still handles the content (typed text echo, the opened phrase
 /// list, log messages); this only supplies the missing element LABELS, announced
-/// once per focus move so it never fights the text echo.
+/// once per focus move so it never fights the text echo. Migrated to ScreenAdapter.
 /// </summary>
-public class ChatMenuHooks
+public sealed class ChatMenuHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowChat.Menu.Param";
     private const string CHAT_GUI = "BattleHubChatMenu";
 
     // Localized labels for the chat input-bar elements (icons, no in-game text).
@@ -30,52 +28,35 @@ public class ChatMenuHooks
         new[] { "Mensagem", "Enviar", "Frases", "Stickers" },    // Pt
     };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 15;
-    private const int POLL_READ_INTERVAL = 5;
+    protected override string ParamType => "app.UIFlowChat.Menu.Param";
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static ManagedObject _rootGroup;
-    private static ManagedObject _inputGroup;
-    private static ManagedObject _buttonsGroup;
-    private static string _lastFocusKey;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ChatMenuHooks()
     {
-        API.LogInfo("[SF6Access] ChatMenuHooks initialized");
+        SearchInterval = 15;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _rootGroup;
+    private ManagedObject _inputGroup;
+    private ManagedObject _buttonsGroup;
+    private string _lastFocusKey;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param != null && !_active)
-            {
-                _active = true;
-                _param = param;
-                _rootGroup = FlowHelper.GetObjectField(param, "RootGroup");
-                _inputGroup = FlowHelper.GetObjectField(param, "InputGroup");
-                _buttonsGroup = FlowHelper.GetObjectField(param, "ButtonsGroup");
-                _lastFocusKey = null;
-                AnnounceOpen();
-            }
-            else if (param == null && _active)
-            {
-                _active = false;
-                _param = _rootGroup = _inputGroup = _buttonsGroup = null;
-                _lastFocusKey = null;
-            }
-        }
-
-        if (_active && _pollCounter % POLL_READ_INTERVAL == 0)
-            PollInputBarFocus();
+        _rootGroup = FlowHelper.GetObjectField(Param, "RootGroup");
+        _inputGroup = FlowHelper.GetObjectField(Param, "InputGroup");
+        _buttonsGroup = FlowHelper.GetObjectField(Param, "ButtonsGroup");
+        _lastFocusKey = null;
+        AnnounceOpen();
     }
+
+    protected override void OnExit()
+    {
+        _rootGroup = _inputGroup = _buttonsGroup = null;
+        _lastFocusKey = null;
+    }
+
+    protected override void Poll() => PollInputBarFocus();
 
     /// <summary>Speak the chat header + "To:" destination from the window's GUI.</summary>
     private static void AnnounceOpen()
@@ -112,7 +93,7 @@ public class ChatMenuHooks
     /// section's own focus picks the leaf (TextInput/SendButton, Phrases/Stickers).
     /// Log focus is left to GroupFocus (it reads the messages).
     /// </summary>
-    private static void PollInputBarFocus()
+    private void PollInputBarFocus()
     {
         if (_rootGroup == null) return;
         try

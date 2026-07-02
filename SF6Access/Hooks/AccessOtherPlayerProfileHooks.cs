@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -18,47 +17,33 @@ namespace SF6Access.Hooks;
 ///   e_text_lp_num (league points), e_text_mr_num (master rating).
 /// Reading is gated on the access menu being active so the profile GUIs are not
 /// picked up in unrelated CFN contexts (and to avoid Battle Hub ambient noise).
+/// Migrated to ScreenAdapter.
 /// </summary>
-public class AccessOtherPlayerProfileHooks
+public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
 {
-    private const string MENU_PARAM = "app.UIFlowAccessOtherPlayerMenu.FlowParam";
     private const string PANEL_GUI = "BattleHubContactPanel_OtherPlayer";
     private const string PROFILE_GUI = "CFNFighterProfileSimpleTop";
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 15;
+    protected override string ParamType => "app.UIFlowAccessOtherPlayerMenu.FlowParam";
 
-    private static bool _active;
-    private static bool _announced;
-    private static int _retries;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public AccessOtherPlayerProfileHooks()
     {
-        API.LogInfo("[SF6Access] AccessOtherPlayerProfileHooks initialized");
+        SearchInterval = 15;
+        ReadInterval = 15;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private bool _announced;
+    private int _retries;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
-        if (_pollCounter % POLL_INTERVAL != 0) return;
+        // Menu just appeared: the profile GUIs fill a few frames later — retry.
+        _announced = false;
+        _retries = 12;
+    }
 
-        var param = FlowHelper.FindFlowParam(MENU_PARAM);
-        if (param == null)
-        {
-            _active = false;
-            _announced = false;
-            return;
-        }
-
-        if (!_active)
-        {
-            // Menu just appeared: the profile GUIs fill a few frames later — retry.
-            _active = true;
-            _announced = false;
-            _retries = 12;
-        }
+    protected override void Poll()
+    {
         if (_announced) return;
 
         string text = BuildProfile();

@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,60 +11,45 @@ namespace SF6Access.Hooks;
 /// product and price on open (GUI view "OnlineShopBuyDialog") and the focused
 /// choice (Use Fighter Coins / Cancel) as the cursor moves through ChoiceList.
 /// The generic GroupFocus reader only saw an empty ChoiceList here.
+/// Migrated to ScreenAdapter (IsActive kept for MainMenuHooks).
 /// </summary>
-public class OnlineShopBuyHooks
+public sealed class OnlineShopBuyHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowOnlineShopGoodsBuy.UIFlowParam";
+    private static OnlineShopBuyHooks _self;
+
+    /// <summary>Consumed by MainMenuHooks to suppress the generic focus reader.</summary>
+    public static bool IsActive => _self != null && _self.Active;
+
     private const string DIALOG_GUI = "OnlineShopBuyDialog";
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 15;
-    private const int POLL_READ_INTERVAL = 6;
+    protected override string ParamType => "app.UIFlowOnlineShopGoodsBuy.UIFlowParam";
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static string _lastChoice;
+    private string _lastChoice;
 
-    public static bool IsActive => _active;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public OnlineShopBuyHooks()
     {
-        API.LogInfo("[SF6Access] OnlineShopBuyHooks initialized");
+        _self = this;
+        SearchInterval = 15;
+        ReadInterval = 6;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param != null && !_active)
-            {
-                _active = true;
-                _param = param;
-                _lastChoice = null;
-                API.LogInfo("[SF6Access] Shop buy dialog opened");
-                AnnounceProduct();
-            }
-            else if (param == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastChoice = null;
-                API.LogInfo("[SF6Access] Shop buy dialog closed");
-            }
-            else if (param != null) _param = param;
-        }
-
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollChoice();
+        _lastChoice = null;
+        API.LogInfo("[SF6Access] Shop buy dialog opened");
+        AnnounceProduct();
     }
+
+    protected override void OnExit()
+    {
+        _lastChoice = null;
+        API.LogInfo("[SF6Access] Shop buy dialog closed");
+    }
+
+    protected override void Poll() => PollChoice();
 
     /// <summary>Read the product name + price from the dialog GUI on open.</summary>
-    private static void AnnounceProduct()
+    private void AnnounceProduct()
     {
         var texts = ReadDialogTexts();
         if (texts.Count == 0) return;
@@ -99,7 +83,7 @@ public class OnlineShopBuyHooks
     }
 
     /// <summary>Announce the focused choice (Use Fighter Coins / Cancel...).</summary>
-    private static void PollChoice()
+    private void PollChoice()
     {
         var (idx, text) = ReadChoice();
         if (string.IsNullOrEmpty(text)) return;
@@ -113,9 +97,9 @@ public class OnlineShopBuyHooks
     }
 
     /// <summary>The focused ChoiceList option (index + text).</summary>
-    private static (int idx, string text) ReadChoice()
+    private (int idx, string text) ReadChoice()
     {
-        var choiceList = FlowHelper.GetObjectField(_param, "ChoiceList");
+        var choiceList = FlowHelper.GetObjectField(Param, "ChoiceList");
         if (choiceList == null) return (-1, null);
 
         int idx = FlowHelper.CallInt(choiceList, "get_SelectedIndex", -1);

@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -10,78 +9,43 @@ namespace SF6Access.Hooks;
 /// Accessibility for the retro game (Game Center / emulator) pause menu —
 /// app.UIFlowEmulatorPauseMenu.Param. The param exposes only outSelectedIndex
 /// (no UIParts lists), so the focused option's text is read from the pause
-/// menu's own GUI; "Option N" is the last-resort fallback so blind players
-/// can at least count their way to the exit entry.
+/// menu's own GUI; "Option N" is the last-resort fallback so blind players can
+/// at least count their way to the exit entry. Migrated to ScreenAdapter.
 /// </summary>
-public class EmulatorPauseHooks
+public sealed class EmulatorPauseHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowEmulatorPauseMenu.Param";
+    protected override string ParamType => "app.UIFlowEmulatorPauseMenu.Param";
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
-
-    private static ManagedObject _param;
-    private static int _lastIndex = -2;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public EmulatorPauseHooks()
     {
-        API.LogInfo("[SF6Access] EmulatorPauseHooks initialized");
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private int _lastIndex = -2;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
+        _lastIndex = -2;
+        API.LogInfo("[SF6Access] Emulator pause menu opened");
+        ScreenReaderService.Speak("Pause menu");
+    }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
+    protected override void OnExit()
+    {
+        _lastIndex = -2;
+        API.LogInfo("[SF6Access] Emulator pause menu closed");
+    }
 
-        // Re-bind when the game recreated the Param (stale instance → silent)
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-            {
-                _param = current;
-                _lastIndex = -2;
-            }
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        int idx = FlowHelper.ReadIntField(_param, "outSelectedIndex");
-        if (idx < 0) return;
-        if (idx == _lastIndex) return;
+    protected override void Poll()
+    {
+        int idx = FlowHelper.ReadIntField(Param, "outSelectedIndex");
+        if (idx < 0 || idx == _lastIndex) return;
         _lastIndex = idx;
 
         string label = ReadOptionText(idx) ?? $"Option {idx + 1}";
         API.LogInfo($"[SF6Access] Emulator pause [{idx}]: {label}");
         ScreenReaderService.Speak(label);
-    }
-
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        _param = param;
-        _lastIndex = -2;
-        _isActive = true;
-
-        API.LogInfo("[SF6Access] Emulator pause menu opened");
-        ScreenReaderService.Speak("Pause menu");
     }
 
     /// <summary>The pause menu's on-screen option texts, by index.</summary>
@@ -99,13 +63,5 @@ public class EmulatorPauseHooks
         }
         catch { }
         return null;
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Emulator pause menu closed");
-        _isActive = false;
-        _param = null;
-        _lastIndex = -2;
     }
 }

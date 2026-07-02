@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -17,75 +16,49 @@ namespace SF6Access.Hooks;
 /// or on the button, so navigating the list announces the selected item and
 /// moving to the button announces its label ("Receive" / "Close"). Without this
 /// the dialog read as one undifferentiated block and the user could not tell
-/// which element the cursor was on.
+/// which element the cursor was on. Migrated to ScreenAdapter.
 /// </summary>
-public class ItemListDialogHooks
+public sealed class ItemListDialogHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowItemListDialog.FlowParam";
     private const string DIALOG_GUI = "ItemListDialog";
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 20;
-    private const int POLL_READ_INTERVAL = 6;
+    protected override string ParamType => "app.UIFlowItemListDialog.FlowParam";
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static ManagedObject _dialog;
-    private static string _lastSummary;
-    private static string _lastFocus;
-
-    /// <summary>True while the reward/item dialog is up, so other generic
-    /// readers can stand down if needed.</summary>
-    public static bool IsActive => _active;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ItemListDialogHooks()
     {
-        API.LogInfo("[SF6Access] ItemListDialogHooks initialized");
+        SearchInterval = 20;
+        ReadInterval = 6;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _dialog;
+    private string _lastSummary;
+    private string _lastFocus;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
+        _dialog = FlowHelper.GetObjectField(Param, "Dialog");
+        _lastSummary = null;
+        _lastFocus = null;
+        API.LogInfo("[SF6Access] Item/reward dialog opened");
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param != null && !_active)
-            {
-                _active = true;
-                _param = param;
-                _dialog = FlowHelper.GetObjectField(param, "Dialog");
-                _lastSummary = null;
-                _lastFocus = null;
-                API.LogInfo("[SF6Access] Item/reward dialog opened");
-            }
-            else if (param == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _dialog = null;
-                _lastSummary = null;
-                _lastFocus = null;
-                API.LogInfo("[SF6Access] Item/reward dialog closed");
-            }
-            else if (param != null)
-            {
-                _param = param;
-                _dialog ??= FlowHelper.GetObjectField(param, "Dialog");
-            }
-        }
+    protected override void OnExit()
+    {
+        _dialog = null;
+        _lastSummary = null;
+        _lastFocus = null;
+        API.LogInfo("[SF6Access] Item/reward dialog closed");
+    }
 
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void Poll()
+    {
         // Whole picture once on open (item names + button), then focus tracking.
         AnnounceSummary();
         PollFocus();
     }
 
     /// <summary>The full dialog text, announced once when it appears.</summary>
-    private static void AnnounceSummary()
+    private void AnnounceSummary()
     {
         try
         {
@@ -119,7 +92,7 @@ public class ItemListDialogHooks
 
     /// <summary>Announce the focused element (selected item or the button) as the
     /// cursor moves through the dialog.</summary>
-    private static void PollFocus()
+    private void PollFocus()
     {
         if (_dialog == null) return;
         try
@@ -158,7 +131,7 @@ public class ItemListDialogHooks
     }
 
     /// <summary>Localized name (with quantity) of the dialog's selected item.</summary>
-    private static string ReadSelectedItem()
+    private string ReadSelectedItem()
     {
         var item = FlowHelper.Call(_dialog, "GetSelectedItem") as ManagedObject;
         if (item == null) return null;

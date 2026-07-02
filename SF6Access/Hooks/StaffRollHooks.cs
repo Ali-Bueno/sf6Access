@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,66 +10,44 @@ namespace SF6Access.Hooks;
 /// Arcade story). app.UIStaffroll.Param holds LineDataList (each LineData has
 /// Str0-Str3 text rows) plus the indices of the lines currently on screen.
 /// Announces each credit line once, in order, as it scrolls into view.
+/// Migrated to ScreenAdapter.
 /// </summary>
-public class StaffRollHooks
+public sealed class StaffRollHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIStaffroll.Param";
+    protected override string ParamType => "app.UIStaffroll.Param";
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 12;
+    public StaffRollHooks()
+    {
+        SearchInterval = 30;
+        ReadInterval = 12;
+    }
+
     private const int MAX_LINES_PER_POLL = 3;
+    private int _lastAnnouncedIndex = -1;
 
-    private static ManagedObject _param;
-    private static int _lastAnnouncedIndex = -1;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override void OnBind()
     {
-        API.LogInfo("[SF6Access] StaffRollHooks initialized");
+        _lastAnnouncedIndex = -1;
+        API.LogInfo("[SF6Access] Staff roll started");
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnExit()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param == null && _param != null)
-            {
-                _param = null;
-                _lastAnnouncedIndex = -1;
-                API.LogInfo("[SF6Access] Staff roll ended");
-            }
-            else if (param != null && _param == null)
-            {
-                _param = param;
-                _lastAnnouncedIndex = -1;
-                API.LogInfo("[SF6Access] Staff roll started");
-            }
-            else
-            {
-                _param = param;
-            }
-        }
-
-        if (_param == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollLines();
+        _lastAnnouncedIndex = -1;
+        API.LogInfo("[SF6Access] Staff roll ended");
     }
 
-    private static void PollLines()
+    protected override void Poll()
     {
         try
         {
-            var list = FlowHelper.GetObjectField(_param, "LineDataList");
+            var list = FlowHelper.GetObjectField(Param, "LineDataList");
             int count = FlowHelper.GetListCount(list);
             if (count == 0) return;
 
             // Frontier of lines that have scrolled into view (newest at bottom)
-            int frontier = FlowHelper.ReadIntField(_param, "BottomDataIndex", -1);
-            if (frontier < 0) frontier = FlowHelper.ReadIntField(_param, "TopDataIndex", -1);
+            int frontier = FlowHelper.ReadIntField(Param, "BottomDataIndex", -1);
+            if (frontier < 0) frontier = FlowHelper.ReadIntField(Param, "TopDataIndex", -1);
             if (frontier < 0) return;
             if (frontier >= count) frontier = count - 1;
 

@@ -1,7 +1,6 @@
-using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
+using REFrameworkNET;
 
 namespace SF6Access.Hooks;
 
@@ -11,19 +10,18 @@ namespace SF6Access.Hooks;
 /// Group/TabList only wrap whole tab panels — the actual rows live in nested
 /// parts per tab: fighter capture settings (spin rows), title plate grid and
 /// new-challenger customize (spin rows).
+/// Migrated to ScreenAdapter (IsInFighterSetting kept for MainMenuHooks).
 /// </summary>
-public class MatchingFighterSettingHooks
+public sealed class MatchingFighterSettingHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowMatchingFighterSetting.Param";
+    private static MatchingFighterSettingHooks _self;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    /// <summary>Consumed by MainMenuHooks to suppress the generic focus reader.</summary>
+    public static bool IsInFighterSetting => _self != null && _self.Active;
 
-    private static ManagedObject _param;
+    protected override string ParamType => "app.UIFlowMatchingFighterSetting.Param";
 
-    private static readonly GroupFocusPoller FocusPoller = new(
+    private readonly GroupFocusPoller _focus = new(
         "MatchingFighterSetting", announceFirst: true,
         new GroupFocusPoller.Source(null, "Group"),
         new GroupFocusPoller.Source(null, "TabList", isList: true),
@@ -33,62 +31,24 @@ public class MatchingFighterSettingHooks
         new GroupFocusPoller.Source("MatchingTitleSetting", "mTabScrollList", isList: true),
         new GroupFocusPoller.Source("MatchingNewChallengerCustomize", "mGroup"));
 
-    public static bool IsInFighterSetting => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public MatchingFighterSettingHooks()
     {
-        API.LogInfo("[SF6Access] MatchingFighterSettingHooks initialized");
+        _self = this;
+        SearchInterval = 60;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-            {
-                // Menu was recreated — re-bind the param
-                _param = current;
-                FocusPoller.Reset();
-            }
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-            FocusPoller.Poll(_param);
-    }
-
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        _param = param;
-        FocusPoller.Reset();
-        _isActive = true;
+        _focus.Reset();
         API.LogInfo("[SF6Access] MatchingFighterSetting active");
     }
 
-    private static void Reset()
+    protected override void OnExit()
     {
+        _focus.Reset();
         API.LogInfo("[SF6Access] MatchingFighterSetting ended");
-        _isActive = false;
-        _param = null;
-        FocusPoller.Reset();
     }
+
+    protected override void Poll() => _focus.Poll(Param);
 }

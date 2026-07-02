@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,44 +11,32 @@ namespace SF6Access.Hooks;
 /// The screen text lives under CtrlRankUp; the arrived rank is also held as data
 /// in ListData (LeagueRankWithLevelUserDataRecord) — the on-screen rank itself is
 /// an icon, so the localized rank name is read from the record's message Guid.
+/// Migrated to ScreenAdapter.
 /// </summary>
-public class RankUpHooks
+public sealed class RankUpHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowRankUp.Param";
+    protected override string ParamType => "app.UIFlowRankUp.Param";
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 15;
-
-    private static ManagedObject _param;
-    private static bool _announced;
-    private static int _retries;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public RankUpHooks()
     {
-        API.LogInfo("[SF6Access] RankUpHooks initialized");
+        SearchInterval = 15;
+        ReadInterval = 15;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private bool _announced;
+    private int _retries;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
-        if (_pollCounter % POLL_INTERVAL != 0) return;
+        _announced = false;
+        _retries = 10;
+    }
 
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null)
-        {
-            _param = null;
-            _announced = false;
-            return;
-        }
-
-        bool fresh = _param == null;
-        _param = param;
-        if (fresh) { _announced = false; _retries = 10; }
+    protected override void Poll()
+    {
         if (_announced) return;
 
-        string text = BuildAnnouncement(param);
+        string text = BuildAnnouncement(Param);
         if (string.IsNullOrEmpty(text))
         {
             // Texts/data load a beat after the screen appears — retry, then stop.

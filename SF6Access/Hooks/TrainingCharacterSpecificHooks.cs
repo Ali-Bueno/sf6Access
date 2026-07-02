@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,64 +10,45 @@ namespace SF6Access.Hooks;
 /// It inherits the menu's _SecondaryList (UIPartsGroupScroll); each focused row
 /// is a character setting (e_txt_chara + e_txt_name + e_txt_0 value) read via the
 /// shared row formatter. While active the parent TrainingMenuHooks pauses so the
-/// stale main-menu row isn't announced on top.
+/// stale main-menu row isn't announced on top. Migrated to ScreenAdapter
+/// (IsActive kept for TrainingMenuHooks).
 /// </summary>
-public class TrainingCharacterSpecificHooks
+public sealed class TrainingCharacterSpecificHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.training.UIFlowTrainingMenu_All.Param";
+    private static TrainingCharacterSpecificHooks _self;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    /// <summary>Consumed by TrainingMenuHooks to pause its own row reads.</summary>
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static int _lastFocus = int.MinValue;
-    private static string _lastText;
+    protected override string ParamType => "app.training.UIFlowTrainingMenu_All.Param";
 
-    public static bool IsActive => _active;
+    private int _lastFocus = int.MinValue;
+    private string _lastText;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    public TrainingCharacterSpecificHooks()
     {
-        API.LogInfo("[SF6Access] TrainingCharacterSpecificHooks initialized");
+        _self = this;
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (changed) { _lastFocus = int.MinValue; _lastText = null; }
-            if (current != null && !_active)
-            {
-                _active = true;
-                _param = current;
-                _lastFocus = int.MinValue;
-                _lastText = null;
-                API.LogInfo("[SF6Access] Character-specific settings active");
-            }
-            else if (current == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastFocus = int.MinValue;
-                _lastText = null;
-                API.LogInfo("[SF6Access] Character-specific settings ended");
-            }
-            else if (current != null) _param = current;
-        }
-
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollRow();
+        _lastFocus = int.MinValue;
+        _lastText = null;
+        API.LogInfo("[SF6Access] Character-specific settings active");
     }
 
-    private static void PollRow()
+    protected override void OnExit()
     {
-        var list = FlowHelper.GetObjectField(_param, "_SecondaryList");
+        _lastFocus = int.MinValue;
+        _lastText = null;
+        API.LogInfo("[SF6Access] Character-specific settings ended");
+    }
+
+    protected override void Poll()
+    {
+        var list = FlowHelper.GetObjectField(Param, "_SecondaryList");
         if (list == null) return;
 
         int focus = FlowHelper.ReadIntField(list, "_FocusIndex", int.MinValue);

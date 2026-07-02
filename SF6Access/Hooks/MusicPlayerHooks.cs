@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -10,57 +9,43 @@ namespace SF6Access.Hooks;
 /// menu and from training. Announces the playlist tab (All / Playlist 1-5) as
 /// you switch it with L/R and the focused track as you move through the list.
 /// Tabs live on partsTab (UIPartsSimpleList), tracks on partsList (UIPartsScrollList).
+/// Migrated to ScreenAdapter (IsActive kept for MainMenuHooks).
 /// </summary>
-public class MusicPlayerHooks
+public sealed class MusicPlayerHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowMusicPlayer.Param";
+    private static MusicPlayerHooks _self;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    /// <summary>Consumed by MainMenuHooks to suppress the generic focus reader.</summary>
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static string _lastTab;
-    private static string _lastTrack;
+    protected override string ParamType => "app.UIFlowMusicPlayer.Param";
 
-    public static bool IsActive => _active;
+    private string _lastTab;
+    private string _lastTrack;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    public MusicPlayerHooks()
     {
-        API.LogInfo("[SF6Access] MusicPlayerHooks initialized");
+        _self = this;
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
+        _lastTab = null;
+        _lastTrack = null;
+        API.LogInfo("[SF6Access] Music player active");
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (changed) { _lastTab = null; _lastTrack = null; }
-            if (current != null && !_active)
-            {
-                _active = true;
-                _param = current;
-                _lastTab = null;
-                _lastTrack = null;
-                API.LogInfo("[SF6Access] Music player active");
-            }
-            else if (current == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastTab = null;
-                _lastTrack = null;
-                API.LogInfo("[SF6Access] Music player ended");
-            }
-            else if (current != null) _param = current;
-        }
+    protected override void OnExit()
+    {
+        _lastTab = null;
+        _lastTrack = null;
+        API.LogInfo("[SF6Access] Music player ended");
+    }
 
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
+    protected override void Poll()
+    {
         // The edit window (T) opens on top with its own lists — let it own
         // announcements so the player's track poll doesn't read underneath it
         if (MusicPlayerEditHooks.IsActive) return;
@@ -68,9 +53,9 @@ public class MusicPlayerHooks
         PollTrack();
     }
 
-    private static void PollTab()
+    private void PollTab()
     {
-        var tab = FlowHelper.GetObjectField(_param, "partsTab");
+        var tab = FlowHelper.GetObjectField(Param, "partsTab");
         string text = FlowHelper.ReadSelectedItemText(tab);
         if (string.IsNullOrEmpty(text) || text == _lastTab) return;
         _lastTab = text;
@@ -86,7 +71,7 @@ public class MusicPlayerHooks
         ScreenReaderService.Speak(text);
     }
 
-    private static void PollTrack()
+    private void PollTrack()
     {
         string text = ReadTrack();
         if (string.IsNullOrEmpty(text) || text == _lastTrack) return;
@@ -96,9 +81,9 @@ public class MusicPlayerHooks
         ScreenReaderService.Speak(text);
     }
 
-    private static string ReadTrack()
+    private string ReadTrack()
     {
-        var list = FlowHelper.GetObjectField(_param, "partsList");
+        var list = FlowHelper.GetObjectField(Param, "partsList");
         return FlowHelper.ReadSelectedItemText(list);
     }
 }
