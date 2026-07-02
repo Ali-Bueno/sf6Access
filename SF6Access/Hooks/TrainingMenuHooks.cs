@@ -39,7 +39,9 @@ public class TrainingMenuHooks
     // Slot-strip rows whose GUI repaints all tiles at once (unreadable as plain
     // row text) — read the focused slot's named texts instead. app.training.ItemType:
     // PLAY_SLOT_ITEM=5, RECORD_SLOT_ITEM=6 (recording slots), REVERSAL_ITEM=8.
-    private static readonly int[] SLOT_ITEM_TYPES = { 5, 6, 8 };
+    // 19 is the reversal list's 2nd slot, which reports a different _Type (and a
+    // bogus _SlotID) than the other reversal slots — verified via the log.
+    private static readonly int[] SLOT_ITEM_TYPES = { 5, 6, 8, 19 };
     private static bool _onSlotRow;
     private static string _lastSlotText;
     private static int _lastSlotId = int.MinValue;
@@ -528,9 +530,8 @@ public class TrainingMenuHooks
         // move, on/off state, delay)
         if (_onSlotRow)
         {
-            // The slot number from the GUI's e_txt_name is unreliable on the
-            // repainting strip (read "Slot 2"/"Slot 9" for slots 1/8) — the
-            // row's _SlotID (0-based) is authoritative, so use _SlotID + 1.
+            // ReadReversalRowGui reads the slot number from the on-screen tile;
+            // _SlotID + 1 is only a fallback (it is bogus on the reversal 2nd slot).
             int slotId = FlowHelper.ReadIntField(row, "_SlotID", -1);
             string slotInfo = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
             _lastSlotText = slotInfo;
@@ -666,9 +667,11 @@ public class TrainingMenuHooks
                 ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
             if (control == null) return null;
 
-            // Slot number from the authoritative _SlotID (the GUI e_txt_name is
-            // offset on the repainting strip); fall back to the GUI text.
-            string name = slotNumber > 0 ? $"Slot {slotNumber}" : null;
+            // Prefer the on-screen tile label (e_txt_name): the log confirmed it
+            // matches the visible slot for every slot, including the reversal 2nd
+            // slot whose row data reports a bogus _SlotID. Fall back to the row's
+            // _SlotID + 1 only when the GUI label is missing.
+            string name = null;
             string move = null, state = null, count = null, delay = null;
             foreach (var t in GuiTextReader.ReadControlTexts(control))
             {
@@ -676,13 +679,14 @@ public class TrainingMenuHooks
                 if (string.IsNullOrEmpty(text)) continue;
                 switch (t.Name)
                 {
-                    case "e_txt_name": if (name == null) name = text; break;   // "Slot 1"
+                    case "e_txt_name": name ??= text; break;   // "Slot 1"
                     case "e_txt_center": move ??= text; break; // move name or "Empty"
                     case "e_txt_sub": state ??= text; break;   // "On" / "Off"
                     case "e_txt_right": count ??= text; break; // "Count: 1"
                     case "e_txt_east": delay ??= text; break;  // "Delay: 0F"
                 }
             }
+            if (string.IsNullOrEmpty(name) && slotNumber > 0) name = $"Slot {slotNumber}";
 
             var parts = new System.Collections.Generic.List<string>();
             if (!string.IsNullOrEmpty(name)) parts.Add(name);
