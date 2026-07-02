@@ -41,6 +41,12 @@ public class ScreenRegistry
         UiDispatcher.Register(new OnlineShopBuyHooks());
         UiDispatcher.Register(new ShortcutSettingHooks());
 
+        // Batch 4 — remaining single-param poll screens (some with a G shortcut)
+        UiDispatcher.Register(new StatusMySetActionSkillHooks());
+        UiDispatcher.Register(new CommandListHooks());
+        UiDispatcher.Register(new AvatarArcadeTopHooks());
+        UiDispatcher.Register(new StatusSkillHooks());
+
         API.LogInfo("[SF6Access] ScreenRegistry: adapters registered");
     }
 }

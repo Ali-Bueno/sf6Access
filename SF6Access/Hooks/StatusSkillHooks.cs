@@ -1,9 +1,8 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,27 +12,34 @@ namespace SF6Access.Hooks;
 /// info is exposed as plain text in the StatusMenu_Skill GUI (e_text_title /
 /// e_text_detail / e_text_cost / e_text_category), so read that on focus change,
 /// plus the current tree number (1/5, switched with L/R) from CurrentTreeNo.
+/// Migrated to ScreenAdapter (ReadInterval 1 so the G key is polled every frame;
+/// the tree itself is read every few frames).
 /// </summary>
-public class StatusSkillHooks
+public sealed class StatusSkillHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIStatusMenu_Skill.Param";
-
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
-
     // eMenuState.ShowConfirm — the "Unlock this skill?" dialog opened with confirm.
     private const int STATE_SHOW_CONFIRM = 4;
     // eMenuState.ResetConfirm — the "Reset Skills" dialog opened with R.
     private const int STATE_RESET_CONFIRM = 8;
+    // How often (frames) to re-read the focused tree node.
+    private const int TREE_POLL_EVERY = 5;
 
-    private static ManagedObject _param;
-    private static string _lastNode;
-    private static int _lastTree = int.MinValue;
-    private static int _lastMenuState = int.MinValue;
-    private static int _lastConfirmBtn = int.MinValue;
-    private static bool _resetGaugeSpoken;
+    protected override string ParamType => "app.UIStatusMenu_Skill.Param";
+
+    public StatusSkillHooks()
+    {
+        // Re-verify the param often (fast close detection) and poll every frame so
+        // the G shortcut's key edge is never missed.
+        SearchInterval = 5;
+        ReadInterval = 1;
+    }
+
+    private int _frame;
+    private string _lastNode;
+    private int _lastTree = int.MinValue;
+    private int _lastMenuState = int.MinValue;
+    private int _lastConfirmBtn = int.MinValue;
+    private bool _resetGaugeSpoken;
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
@@ -42,7 +48,7 @@ public class StatusSkillHooks
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
     private const int VK_G = 0x47;
-    private static bool _lastGState;
+    private bool _lastGState;
 
     /// <summary>True only when the game window is the foreground app — so the G
     /// shortcut never fires while the user is typing in another window.</summary>
@@ -56,61 +62,47 @@ public class StatusSkillHooks
         catch { return false; }
     }
 
-    public static bool IsActive => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override void OnBind()
     {
-        API.LogInfo("[SF6Access] StatusSkillHooks initialized");
+        _lastNode = null;
+        _lastTree = int.MinValue;
+        _lastMenuState = int.MinValue;
+        _lastConfirmBtn = int.MinValue;
+        _resetGaugeSpoken = false;
+        API.LogInfo("[SF6Access] Skill tree active");
+        PollTree();
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnExit()
     {
-        _pollCounter++;
+        API.LogInfo("[SF6Access] Skill tree ended");
+        _lastNode = null;
+        _lastTree = int.MinValue;
+        _lastMenuState = int.MinValue;
+        _lastConfirmBtn = int.MinValue;
+    }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL == 0) TryActivate();
-            return;
-        }
+    protected override void Poll()
+    {
+        _frame++;
 
         // G announces the available skill points on demand (game-focused only).
         bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
         if (gDown && !_lastGState && IsGameForeground()) AnnouncePoints();
         _lastGState = gDown;
 
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        var current = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (current == null) { Reset(); return; }
-        _param = current;
-        Poll();
+        if (_frame % TREE_POLL_EVERY == 0) PollTree();
     }
 
-    private static void TryActivate()
+    private void PollTree()
     {
-        var p = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (p == null) return;
-        _param = p;
-        _lastNode = null;
-        _lastTree = int.MinValue;
-        _lastMenuState = int.MinValue;
-        _lastConfirmBtn = int.MinValue;
-        _isActive = true;
-        API.LogInfo("[SF6Access] Skill tree active");
-        Poll();
-    }
-
-    private static void Poll()
-    {
-        if (_param == null) return;
+        if (Param == null) return;
 
         // The "Unlock this skill?" confirm dialog (F on a node) is a sub-state of
         // this param with its own GUI — read it instead of the tree underneath.
         // Track entry INTO a sub-state by MenuState change (a shared "open" flag
         // got stuck between the F and R dialogs and muted the reset announcement).
-        int menuState = FlowHelper.ReadIntField(_param, "MenuState", -1);
+        int menuState = FlowHelper.ReadIntField(Param, "MenuState", -1);
         bool justOpened = menuState != _lastMenuState;
         if (justOpened)
         {
@@ -123,7 +115,7 @@ public class StatusSkillHooks
         if (menuState == STATE_RESET_CONFIRM) { PollResetConfirm(justOpened); return; }
 
         // Tree tab (1/5) — switched with L/R. Announce the new tree on change.
-        int tree = FlowHelper.ReadIntField(_param, "CurrentTreeNo", int.MinValue);
+        int tree = FlowHelper.ReadIntField(Param, "CurrentTreeNo", int.MinValue);
         bool firstTree = _lastTree == int.MinValue;
         if (tree != int.MinValue && tree != _lastTree)
         {
@@ -182,9 +174,9 @@ public class StatusSkillHooks
     /// "Acquired" / "Locked" / "Available" for the focused tree node, from the
     /// focused panel's TreeSkillState (the authoritative data, not the visual).
     /// </summary>
-    private static string ReadNodeState()
+    private string ReadNodeState()
     {
-        var panel = FlowHelper.Call(_param, "GetFocusPanel") as ManagedObject;
+        var panel = FlowHelper.Call(Param, "GetFocusPanel") as ManagedObject;
         if (panel == null) return null;
 
         // SkillTreeDef.TreeSkillState: CanOpen=0, Win=1, Locked=2, ReadyLocked=3, Lose=4
@@ -204,13 +196,13 @@ public class StatusSkillHooks
     /// Announce the available skill points (mTreeCount RemainingValue: now/max). The
     /// points are earned by leveling up in World Tour and spent to unlock skills.
     /// </summary>
-    private static void AnnouncePoints()
+    private void AnnouncePoints()
     {
-        if (_param == null) return;
+        if (Param == null) return;
         // DispCost is the player's available skill-point counter (22 with points,
         // 0 once spent). mTreeCount is a separate tree/phase count (read "2/5") —
         // not the points, so it must NOT be used here.
-        int points = FlowHelper.ReadIntField(_param, "DispCost", int.MinValue);
+        int points = FlowHelper.ReadIntField(Param, "DispCost", int.MinValue);
         int money = ReadMoney();
         API.LogInfo($"[SF6Access] Skill points: DispCost={points} money={money}");
 
@@ -244,7 +236,7 @@ public class StatusSkillHooks
     /// The "Unlock this skill?" confirm dialog (StatusMenu_SkillOpenConfirm):
     /// announce the skill + cost + question on open, then the focused Yes/No button.
     /// </summary>
-    private static void PollConfirm(bool justOpened)
+    private void PollConfirm(bool justOpened)
     {
         string name = null, detail = null, cost = null;
         ManagedObject view = null;
@@ -292,7 +284,7 @@ public class StatusSkillHooks
     /// the title on open and the focused button (Yes / No / View Skills). The title
     /// and body render as images, so the heading is spoken from a localized string.
     /// </summary>
-    private static void PollResetConfirm(bool justOpened)
+    private void PollResetConfirm(bool justOpened)
     {
         ManagedObject view = null;
         string gaugeNow = null, gaugeMax = null;
@@ -324,7 +316,7 @@ public class StatusSkillHooks
             var parts = new List<string> { ResetTitle() };
             // The game blocks reset on a tree where nothing's been spent / the cost
             // can't be paid — tell the player instead of leaving "Yes" silently dead.
-            bool canReset = FlowHelper.ReadByteField(_param, "CanResetAtCurrentTree", 0) != 0;
+            bool canReset = FlowHelper.ReadByteField(Param, "CanResetAtCurrentTree", 0) != 0;
             if (!canReset) parts.Add(CantResetWord());
             // The reset resource gauge (what's actually required to reset).
             if (gaugeReady) parts.Add($"{ResetResourceWord()}: {gaugeNow} / {gaugeMax}");
@@ -475,15 +467,4 @@ public class StatusSkillHooks
             FlowHelper.UiLang.Pt => "Não",
             _ => "No",
         };
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Skill tree ended");
-        _isActive = false;
-        _param = null;
-        _lastNode = null;
-        _lastTree = int.MinValue;
-        _lastMenuState = int.MinValue;
-        _lastConfirmBtn = int.MinValue;
-    }
 }

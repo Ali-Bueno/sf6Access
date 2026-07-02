@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,74 +13,43 @@ namespace SF6Access.Hooks;
 /// left (empty names render as "－－－－" dashes → silent), a Grounded/Aerial/SA
 /// set-type tab switched with Tab (image labels → silent), and the slot panels
 /// on the right (separate Modern grid / Classic list). Read here from the typed
-/// widgets instead.
+/// widgets instead. Migrated to ScreenAdapter.
 /// </summary>
-public class StatusMySetActionSkillHooks
+public sealed class StatusMySetActionSkillHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIStatusMenu_MySetActionSkill.Param";
+    protected override string ParamType => "app.UIStatusMenu_MySetActionSkill.Param";
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
-
-    private static ManagedObject _param;
-    private static int _lastSetType = int.MinValue;
-    private static int _lastPresetIdx = int.MinValue;
-    private static int _lastSlotIdx = int.MinValue;
-    private static string _lastText;
-
-    public static bool IsActive => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public StatusMySetActionSkillHooks()
     {
-        API.LogInfo("[SF6Access] StatusMySetActionSkillHooks initialized");
+        SearchInterval = 60;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private int _lastSetType = int.MinValue;
+    private int _lastPresetIdx = int.MinValue;
+    private int _lastSlotIdx = int.MinValue;
+    private string _lastText;
+
+    protected override void OnBind()
     {
-        _pollCounter++;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL == 0) TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        var current = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (current == null) { Reset(); return; }
-        if (FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_param))
-        {
-            _param = current;
-            ResetState();
-        }
-
-        Poll();
-    }
-
-    private static void TryActivate()
-    {
-        var p = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (p == null) return;
-
-        _param = p;
         ResetState();
-        _isActive = true;
         API.LogInfo("[SF6Access] My Set action-skill screen active");
         Poll();
     }
 
-    private static void Poll()
+    protected override void OnExit()
     {
-        if (_param == null) return;
+        API.LogInfo("[SF6Access] My Set action-skill screen ended");
+        ResetState();
+    }
+
+    protected override void Poll()
+    {
+        if (Param == null) return;
 
         // 1) Set-type tab (Grounded / Aerial / SA) — switched with Tab. It changes
         // nothing in the slot/preset indices, so announce it on its own.
-        int setType = FlowHelper.ReadIntField(_param, "SetType", -1);
+        int setType = FlowHelper.ReadIntField(Param, "SetType", -1);
         bool setTypeChanged = setType != _lastSetType && _lastSetType != int.MinValue;
         bool first = _lastSetType == int.MinValue;
         _lastSetType = setType;
@@ -105,7 +73,7 @@ public class StatusMySetActionSkillHooks
         int slotIdx = FlowHelper.CallInt(slotList, "get_SelectedIndex");
 
         // 3) Focused preset in the left list.
-        var presetList = FlowHelper.GetObjectField(_param, "mPresetList");
+        var presetList = FlowHelper.GetObjectField(Param, "mPresetList");
         int presetIdx = FlowHelper.CallInt(presetList, "get_SelectedIndex");
 
         if (slotIdx != _lastSlotIdx || presetIdx != _lastPresetIdx)
@@ -133,19 +101,19 @@ public class StatusMySetActionSkillHooks
     /// The slot list in use for the player's control type: the Modern grid when it
     /// holds the focus, otherwise the Classic list.
     /// </summary>
-    private static ManagedObject ActiveSlotList()
+    private ManagedObject ActiveSlotList()
     {
-        var modern = FlowHelper.GetObjectField(_param, "mSkillPanelList_Modern");
+        var modern = FlowHelper.GetObjectField(Param, "mSkillPanelList_Modern");
         if (modern != null && FlowHelper.CallInt(modern, "get_SelectedIndex") >= 0)
             return modern;
-        return FlowHelper.GetObjectField(_param, "mSkillPanelList_Classic") ?? modern;
+        return FlowHelper.GetObjectField(Param, "mSkillPanelList_Classic") ?? modern;
     }
 
     /// <summary>
     /// Announce the focused move-set slot: its trigger input (neutral/forward/back
     /// + special) and the assigned move, or "Empty" when the slot is unfilled.
     /// </summary>
-    private static void AnnounceSlot(ManagedObject slotList)
+    private void AnnounceSlot(ManagedObject slotList)
     {
         var item = FlowHelper.Call(slotList, "get_SelectedItem") as ManagedObject;
         if (item == null) return;
@@ -175,7 +143,7 @@ public class StatusMySetActionSkillHooks
         ScreenReaderService.Speak(text);
     }
 
-    private static void AnnouncePreset(ManagedObject presetList)
+    private void AnnouncePreset(ManagedObject presetList)
     {
         var item = FlowHelper.Call(presetList, "get_SelectedItem") as ManagedObject;
         if (item == null) return;
@@ -208,9 +176,9 @@ public class StatusMySetActionSkillHooks
     /// own localized tab label; fall back to the WTActionSkillSetType enum
     /// (Ground=1, Air=2, SuperArts=3).
     /// </summary>
-    private static string ReadSetTypeName(int setType)
+    private string ReadSetTypeName(int setType)
     {
-        var tab = FlowHelper.GetObjectField(_param, "mSetTypeTab");
+        var tab = FlowHelper.GetObjectField(Param, "mSetTypeTab");
         var item = FlowHelper.Call(tab, "get_SelectedItem") as ManagedObject;
         if (item != null)
         {
@@ -250,19 +218,11 @@ public class StatusMySetActionSkillHooks
             _ => "Empty",
         };
 
-    private static void ResetState()
+    private void ResetState()
     {
         _lastSetType = int.MinValue;
         _lastPresetIdx = int.MinValue;
         _lastSlotIdx = int.MinValue;
         _lastText = null;
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] My Set action-skill screen ended");
-        _isActive = false;
-        _param = null;
-        ResetState();
     }
 }

@@ -1,9 +1,8 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,30 +13,35 @@ namespace SF6Access.Hooks;
 /// the shared InputGuide widget) announced on entry / mode swap, and the avatar's
 /// equipped style + combat stats on the G key (read from the global
 /// WTPlayerManager.LocalPlayerData, since this screen has no equip param).
+/// Migrated to ScreenAdapter (ReadInterval 1 so the G key is polled every frame).
 /// </summary>
-public class AvatarArcadeTopHooks
+public sealed class AvatarArcadeTopHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UIFlowAvatarArcadeTop.Param";
     private const string PLAYER_MANAGER = "app.worldtour.WTPlayerManager";
 
     // GUI owner names whose texts we read for this screen.
     private const string ARCADE_GUI = "AvatarArcadeTop";
     private const string INPUT_GUIDE_GUI = "InputGuide";
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    protected override string ParamType => "app.UIFlowAvatarArcadeTop.Param";
 
-    private static ManagedObject _param;
-    private static int _lastIndex = -2;
-    private static string _lastDescription;
+    public AvatarArcadeTopHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 1;   // the G shortcut needs per-frame edge detection
+    }
+
+    private int _frame;
+    private int _lastIndex = -2;
+    private string _lastDescription;
 
     // Description is announced a few frames after the selection change so it
     // follows (and isn't cut off by) the row name spoken by GroupFocusHooks.
-    private static string _pendingDescription;
-    private static int _pendingDescriptionFrame = -1;
+    private string _pendingDescription;
+    private int _pendingDescriptionFrame = -1;
     private const int DESC_DELAY_FRAMES = 12;
+    // Selection description is only re-read every few frames (cheap gate).
+    private const int DESC_POLL_EVERY = 5;
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
@@ -46,7 +50,7 @@ public class AvatarArcadeTopHooks
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
     private const int VK_G = 0x47;
-    private static bool _lastGState;
+    private bool _lastGState;
 
     /// <summary>True only when the game window is the foreground app — so the G
     /// shortcut never fires while the user is typing in another window.</summary>
@@ -60,72 +64,44 @@ public class AvatarArcadeTopHooks
         catch { return false; }
     }
 
-    public static bool IsInAvatarArcadeTop => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override void OnBind()
     {
-        API.LogInfo("[SF6Access] AvatarArcadeTopHooks initialized");
+        _lastIndex = -2;
+        _lastDescription = null;
+        _pendingDescription = null;
+        API.LogInfo("[SF6Access] Avatar Arcade top active");
+        PollDescription();
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnExit()
     {
-        _pollCounter++;
+        _lastIndex = -2;
+        _lastDescription = null;
+        _pendingDescription = null;
+    }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL == 0) TryActivate();
-            return;
-        }
+    protected override void Poll()
+    {
+        _frame++;
 
         // G re-reads the avatar style + stats panel on demand (game-focused only)
         bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
         if (gDown && !_lastGState && IsGameForeground()) AnnounceStatsSummary();
         _lastGState = gDown;
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            _param = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool _);
-            if (_param == null) { Reset(); return; }
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-            PollDescription();
+        if (_frame % DESC_POLL_EVERY == 0) PollDescription();
 
         FlushPendingDescription();
     }
 
     /// <summary>Speak the deferred description once its delay has elapsed.</summary>
-    private static void FlushPendingDescription()
+    private void FlushPendingDescription()
     {
-        if (_pendingDescription == null || _pollCounter < _pendingDescriptionFrame) return;
+        if (_pendingDescription == null || _frame < _pendingDescriptionFrame) return;
         string desc = _pendingDescription;
         _pendingDescription = null;
         API.LogInfo($"[SF6Access] Avatar Arcade description: {desc}");
         ScreenReaderService.Speak(desc, interrupt: false);
-    }
-
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        _param = param;
-        _lastIndex = -2;
-        _lastDescription = null;
-        _isActive = true;
-        API.LogInfo("[SF6Access] Avatar Arcade top active");
-        PollDescription();
-    }
-
-    private static void Reset()
-    {
-        _isActive = false;
-        _param = null;
-        _lastIndex = -2;
-        _lastDescription = null;
-        _pendingDescription = null;
     }
 
     /// <summary>
@@ -135,11 +111,11 @@ public class AvatarArcadeTopHooks
     /// spoken here, and only when it actually changes (to avoid repeating a static
     /// mode description across rows that share it).
     /// </summary>
-    private static void PollDescription()
+    private void PollDescription()
     {
         try
         {
-            var list = FlowHelper.GetObjectField(_param, "MainList");
+            var list = FlowHelper.GetObjectField(Param, "MainList");
             int idx = list != null ? FlowHelper.CallInt(list, "get_SelectedIndex") : -1;
 
             bool first = _lastIndex == -2;
@@ -153,7 +129,7 @@ public class AvatarArcadeTopHooks
             // Defer: announce after the focus reader speaks the row name so this
             // queued line isn't cut off by that interrupting announcement.
             _pendingDescription = description;
-            _pendingDescriptionFrame = _pollCounter + DESC_DELAY_FRAMES;
+            _pendingDescriptionFrame = _frame + DESC_DELAY_FRAMES;
         }
         catch { }
     }
@@ -170,7 +146,7 @@ public class AvatarArcadeTopHooks
     }
 
     /// <summary>Announce the equipped style (name + rank) and combat stats.</summary>
-    private static void AnnounceStatsSummary()
+    private void AnnounceStatsSummary()
     {
         try
         {

@@ -1,8 +1,7 @@
 using System;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -10,74 +9,65 @@ namespace SF6Access.Hooks;
 /// Accessibility for the move list / command list (app.UICommandListWindow).
 /// The detail window tracks the focused skill (CurrentSkillId); each skill's
 /// FighterSkillUIData exposes localized Guids for name, command inputs
-/// (classic and modern) and description.
+/// (classic and modern) and description. Migrated to ScreenAdapter.
 /// </summary>
-public class CommandListHooks
+public sealed class CommandListHooks : SingleParamScreenAdapter
 {
-    private const string PARAM_TYPE = "app.UICommandListWindow.CommandListParam";
+    protected override string ParamType => "app.UICommandListWindow.CommandListParam";
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    public CommandListHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 5;
+    }
 
-    private static ManagedObject _param;
-    private static ManagedObject _detailWindow;
-    private static ManagedObject _categoryTabList;
+    private ManagedObject _detailWindow;
+    private ManagedObject _categoryTabList;
 
-    private static uint _lastSkillId;
-    private static int _lastCategoryIdx = -1;
+    private uint _lastSkillId;
+    private int _lastCategoryIdx = -1;
     // Currently displayed control type: -1 unknown, 0 Classic, 1 Modern.
     // The command list has an input-type tab; switching it changes which command
     // notation each skill shows (Classic vs Modern), so re-announce on change.
-    private static int _lastInputType = -1;
+    private int _lastInputType = -1;
 
-    public static bool IsInCommandList => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override void OnBind()
     {
-        API.LogInfo("[SF6Access] CommandListHooks initialized");
+        _detailWindow = FlowHelper.GetObjectField(Param, "mDetailWindow");
+        _categoryTabList = FlowHelper.GetObjectField(Param, "mCategoryTabList");
+        _lastSkillId = 0;
+        _lastCategoryIdx = -1;
+        _lastInputType = -1;
+
+        API.LogInfo($"[SF6Access] Command list active (detail={_detailWindow != null}, " +
+            $"categoryTab={_categoryTabList != null})");
+
+        PollSkill();
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnExit()
     {
-        _pollCounter++;
+        API.LogInfo("[SF6Access] Command list ended");
+        _detailWindow = null;
+        _categoryTabList = null;
+        _lastSkillId = 0;
+        _lastCategoryIdx = -1;
+        _lastInputType = -1;
+    }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-                TryActivate(); // menu was recreated — re-bind param and child caches
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollCategory();
-            PollInputType();
-            PollSkill();
-        }
+    protected override void Poll()
+    {
+        PollCategory();
+        PollInputType();
+        PollSkill();
     }
 
     /// <summary>Current control type displayed by the list: 1 Modern (casual), 0 Classic.</summary>
-    private static int GetInputType()
+    private int GetInputType()
     {
         try
         {
-            var raw = FlowHelper.Call(_param, "get_IsCasual");
+            var raw = FlowHelper.Call(Param, "get_IsCasual");
             if (raw is bool casual) return casual ? 1 : 0;
         }
         catch { }
@@ -89,7 +79,7 @@ public class CommandListHooks
     /// (Classic ↔ Modern): the command notation changes even though the skill
     /// does not, so the previously announced command would be stale.
     /// </summary>
-    private static void PollInputType()
+    private void PollInputType()
     {
         int type = GetInputType();
         if (type < 0 || type == _lastInputType) return;
@@ -101,26 +91,7 @@ public class CommandListHooks
         AnnounceSkill();
     }
 
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        _param = param;
-        _detailWindow = FlowHelper.GetObjectField(param, "mDetailWindow");
-        _categoryTabList = FlowHelper.GetObjectField(param, "mCategoryTabList");
-        _lastSkillId = 0;
-        _lastCategoryIdx = -1;
-        _lastInputType = -1;
-        _isActive = true;
-
-        API.LogInfo($"[SF6Access] Command list active (detail={_detailWindow != null}, " +
-            $"categoryTab={_categoryTabList != null})");
-
-        PollSkill();
-    }
-
-    private static void PollCategory()
+    private void PollCategory()
     {
         if (_categoryTabList == null) return;
 
@@ -138,12 +109,12 @@ public class CommandListHooks
         ScreenReaderService.Speak(name);
     }
 
-    private static string ResolveCategoryName(int listIndex)
+    private string ResolveCategoryName(int listIndex)
     {
         try
         {
             // CategoryMessageList entries hold the localized category name Guid
-            var msgList = FlowHelper.GetObjectField(_param, "CategoryMessageList");
+            var msgList = FlowHelper.GetObjectField(Param, "CategoryMessageList");
             var entry = FlowHelper.GetListItem(msgList, listIndex);
             if (entry == null) return null;
 
@@ -157,7 +128,7 @@ public class CommandListHooks
         return null;
     }
 
-    private static void PollSkill()
+    private void PollSkill()
     {
         if (_detailWindow == null) return;
 
@@ -180,7 +151,7 @@ public class CommandListHooks
         AnnounceSkill();
     }
 
-    private static void AnnounceSkill()
+    private void AnnounceSkill()
     {
         var skill = FlowHelper.GetObjectField(_detailWindow, "CurrentSkill")
                  ?? FlowHelper.Call(_detailWindow, "get_CurrentSkill") as ManagedObject;
@@ -215,7 +186,7 @@ public class CommandListHooks
     /// inputs even on Modern controls. Icon tags are kept as their inner names
     /// (e.g. "<ICON arrow_236>" becomes "arrow_236") until a proper mapping exists.
     /// </summary>
-    private static string ResolveCommandText(ManagedObject skill)
+    private string ResolveCommandText(ManagedObject skill)
     {
         foreach (var field in GetCommandFieldOrder())
         {
@@ -245,7 +216,7 @@ public class CommandListHooks
     /// toggle is on; Classic uses the normal command. Other types are kept as
     /// fallbacks so a move with only one notation still reads something.
     /// </summary>
-    private static string[] GetCommandFieldOrder()
+    private string[] GetCommandFieldOrder()
     {
         bool casual = GetInputType() == 1;
         if (!casual)
@@ -254,7 +225,7 @@ public class CommandListHooks
         bool manual = false;
         try
         {
-            var raw = FlowHelper.Call(_param, "get_DispCasualManualCommand");
+            var raw = FlowHelper.Call(Param, "get_DispCasualManualCommand");
             if (raw is bool b) manual = b;
         }
         catch { }
@@ -314,17 +285,5 @@ public class CommandListHooks
         });
 
         return System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ").Trim();
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Command list ended");
-        _isActive = false;
-        _param = null;
-        _detailWindow = null;
-        _categoryTabList = null;
-        _lastSkillId = 0;
-        _lastCategoryIdx = -1;
-        _lastInputType = -1;
     }
 }
