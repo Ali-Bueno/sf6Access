@@ -1,67 +1,76 @@
-# RE Engine Accessibility Framework - Project Skeleton
+# SF6Access — Street Fighter 6 Accessibility Mod
 
-## Purpose
-Skeleton project for building accessibility mods for Capcom RE Engine games using REFramework.
-This project contains all documentation and patterns needed to mod any RE Engine game.
+REFramework.NET **C#** plugin that makes Street Fighter 6 usable with a screen reader (Tolk). Built on
+Capcom's RE Engine via REFramework. This repository began as a generic RE Engine modding skeleton (the
+`docs/lua-*` and `docs/csharp-*` reference files remain for that); it is now the SF6Access plugin.
 
-## Reference Documentation (in `docs/`)
-- `docs/setup.md` - REFramework installation, file structure, script loading
-- `docs/lua-api-core.md` - Core Lua APIs: sdk, re, reframework, log, fs, draw
-- `docs/lua-api-imgui.md` - ImGui, ImNodes, ImGuizmo APIs
-- `docs/lua-api-types.md` - Type system: REManagedObject, RETypeDefinition, RETransform, vectors, etc.
-- `docs/lua-hooks-and-patterns.md` - Hooking system, best practices, performance, code patterns
-- `docs/csharp-api.md` - C# scripting: API, TDB, VM, attributes, typed proxies
-- `docs/csharp-hooks.md` - C# hooks: pre/post hooks, threading, ByRef params
-- `docs/csharp-objects-and-arrays.md` - ManagedObject, NativeObject, arrays, collections, lifetime
-- `docs/examples.md` - Practical code snippets per game (RE2, RE3, RE7, RE8, DMC5, MHRise)
-- `docs/tools.md` - Object Explorer, Chain Viewer, BHVT Editor usage
-- `docs/accessibility-patterns.md` - Patterns for accessibility modding with REFramework
+- Repo: https://github.com/Ali-Bueno/sf6Access.git (HTTPS)
+- Game path: `D:\games\steam\steamapps\common\Street Fighter 6`
+- Code path: `D:\code\re engine\sf6Access\SF6Access`
+- Build: `dotnet build` from the `SF6Access` folder (auto-copies the DLL into the game). Compile after
+  every code change without asking.
+- Log: `re2_framework_log.txt` in the game root; dumps/screenshots in `<game>\reframework\data\`.
 
-## Key Decisions
-- **Primary scripting language:** Lua for rapid prototyping, C# for performance-critical code
-- **C# is 3-7x faster** than Lua single-threaded, up to 80x in multi-threaded scenarios
-- **REFramework uses RE Engine's IL2CPP** (NOT Unity IL2CPP - no Unity tooling works here)
-- Scripts go in `reframework/autorun/` for auto-loading
-- Filesystem access is sandboxed to `reframework/data/`
+## Documentation map
 
-## Supported Games (RE Engine)
-RE2, RE3, RE4, RE7, RE8 (Village), RE9, DMC5, Monster Hunter Rise, Monster Hunter Wilds, and other Capcom RE Engine titles.
+**SF6-specific (read these first when working on SF6):**
+- [`docs/sf6-architecture.md`](docs/sf6-architecture.md) — plugin layout, core services (`FlowHelper`,
+  `GuiTextReader`, `ScreenReaderService`, GroupFocus), IL2CPP gotchas, the mandatory stale-param
+  re-entry pattern, localization rules, dump tools (F7/F8/F9), release packaging.
+- [`docs/sf6-screens.md`](docs/sf6-screens.md) — per-screen technical reference: confirmed type
+  FullNames, fields, enums, and read recipes for every menu/screen we've accessibilized.
 
-## Quick Start Pattern
-```lua
--- 1. Find singletons via Object Explorer
--- 2. Get singleton reference
-local manager = sdk.get_managed_singleton("app.SomeManager")
+> These two docs are the durable, version-controlled record of what we learned reverse-engineering
+> SF6's UI. **When you discover something new about a screen, add it here** — don't leave it only in
+> notes/memory. Prefer updating the relevant section over duplicating.
 
--- 3. Hook methods to intercept game logic
-sdk.hook(
-    sdk.find_type_definition("app.SomeType"):get_method("someMethod"),
-    function(args) return sdk.PreHookResult.CALL_ORIGINAL end,
-    function(retval) return retval end
-)
+**Generic RE Engine / REFramework reference (kept from the skeleton):**
+- `docs/setup.md`, `docs/lua-api-core.md`, `docs/lua-api-imgui.md`, `docs/lua-api-types.md`,
+  `docs/lua-hooks-and-patterns.md` — Lua side (this plugin uses C#, but the type system is shared).
+- `docs/csharp-api.md`, `docs/csharp-hooks.md`, `docs/csharp-objects-and-arrays.md` — REFramework.NET C# API.
+- `docs/examples.md`, `docs/tools.md`, `docs/accessibility-patterns.md` — patterns & Object Explorer.
 
--- 4. Use callbacks for per-frame logic
-re.on_frame(function()
-    -- read game state, announce via screen reader
-end)
+## Architecture (at a glance — details in `docs/sf6-architecture.md`)
 
--- 5. Use re.on_draw_ui for config menus
-re.on_draw_ui(function()
-    imgui.text("Accessibility Options")
-end)
-```
+- `Plugin.cs` — entry point, inits Tolk. Hooks **auto-register via attributes** (no central list).
+- `Services/` — shared infra: `FlowHelper` (flow-param discovery, field reads, Guid resolution),
+  `GuiTextReader` (on-screen text scraping), `ScreenReaderService` (Tolk + duplicate filter),
+  `GameStateTracker`, `GroupFocusPoller`, `LeagueRankResolver`, `ControlTypeNames`, `InputNameResolver`,
+  `ComboTracker`, `AvatarStatsReader`, `ObjectDumper`, `ScreenshotService`.
+- `Hooks/` — one file per screen/feature (~65). `sf6 code/` = decompiled game code (interfaces only,
+  gitignored) — useful for names but always verify against a runtime dump.
 
-## Accessibility Integration Notes
-- Use `re.on_frame` to poll game state changes and announce via TTS/screen reader
-- Use `sdk.hook` to intercept UI updates, combat events, menu navigation
-- Use `re.on_pre_gui_draw_element` to intercept GUI rendering and extract text
-- Object Explorer is essential for finding what to hook in each specific game
-- Cache method/field lookups for performance (don't lookup every frame)
-- Detect state *changes* before announcing (avoid spam)
+## Non-negotiable technical rules (the ones that bite)
 
-## Code Conventions
-- All code in English
-- All comments in English
-- Commits in English
-- Use `local` for all Lua variables and functions (shared state across scripts)
-- Modular architecture: separate files for each concern
+- **Dynamic hooks, not attribute hooks:** `method.AddHook(false)` for IL2CPP interface dispatch;
+  `[MethodHook]` never fires. Don't mix AddPre + AddPost on one dynamic hook.
+- **Read fields, not interface property getters** on concrete IL2CPP types (`get_X` returns null/empty).
+  `_Handles` is a field; iterate newest-first. `FlowHelper.Call`/`GetSelected*` still dispatch fine.
+- **Width-correct field reads:** `short` → `ReadShortField`, `byte`/byte-enum → `ReadByteField`.
+  Reading them as int grabs adjacent bytes = garbage.
+- **Never index `_Children`** (order can be reversed) — use `get_SelectedItem` / `GetFocusChild`.
+- **Stale-param re-entry:** re-scan `_Handles` every tick; re-bind when `GetAddress()` changes. Never
+  trust cached `mIsActive` or a type-name-only match.
+- **Detect state *changes* before announcing** (avoid spam); the `ScreenReaderService` filter drops text
+  identical to the previous within ~250 ms, so make runs of identical rows DISTINCT (append slot/index).
+- **Always prefer game text** (localization); hardcode strings only as a documented last resort for
+  image/texture-rendered text, keyed on `FlowHelper.GetDisplayLang()` (En/Es/Pt).
+- Use `LateUpdateBehavior.Post` (fresh data). Cache method/field lookups; don't look up every frame.
+
+## Research workflow
+
+Toggle **F8** (auto-dump), navigate the flow once, then read the session file
+(`sf6access_autodump_*.txt`) + `re2_framework_log.txt`. Use **F9** for a one-off state dump of the
+current screen, **Shift+F9** for a heavy full dump, **F7** for a screenshot (intra-flow popups that
+create no new flow param are only caught by F7). Dump keys work unfocused; letter-key shortcuts (e.g.
+"G" to re-read stats) require the game to be the foreground window.
+
+## Code conventions
+
+- All code, comments, and commits in English.
+- Modular: one hook file per concern; refactor files over ~200-300 lines.
+- Simple solutions, no code duplication, no magic numbers (derive values from the game's own data/APIs;
+  if a literal is unavoidable, name and document where it comes from).
+- Only touch code relevant to the task; don't introduce new tech to fix a bug.
+- Do NOT create GitHub releases automatically — only when explicitly asked. Do NOT overwrite `.env`.
+- Temporary files go to the session scratchpad, never the project root or `D:\code`.
