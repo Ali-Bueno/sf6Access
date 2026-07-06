@@ -144,6 +144,30 @@ StatusMenuHooks, EmulatorPauseHooks, TickerHooks, AvatarCreateHooks, FGMenuHooks
 - Polls faster while idle (every 20 frames, no active type) than while active (60) so a freshly
   opened menu activates within ~0.3 s instead of ~1 s.
 
+### Generic first, dedicated readers only when justified (user preference, 2026-07-06)
+
+New screens should try the generic reader first (add a `WatchPrefixes` entry — one line). Write a
+dedicated reader ONLY when the screen needs per-screen knowledge the generic reader cannot infer:
+
+1. **Detail/tooltip panels outside the focused row** — every screen puts the description in a
+   different widget with different element names (sometimes hidden texts, sometimes unresolved WLTAG
+   raws); no generic rule can associate row → panel.
+2. **Junk vs. meaningful elements that CONFLICT across screens** — e.g. `e_txt_num` is a junk "0" on
+   WTM perk rows but the booth number on Battle Hub tables; it cannot be filtered globally.
+3. **Non-navigable panels** — the generic reader is focus-driven; a static info panel (WTM Battle
+   Info) produces no events, so announce-once-on-entry logic must be screen-specific.
+4. **Labeling bare values** — saying "Damage 700" instead of "700" requires knowing what
+   `e_text_value` means on that screen.
+
+Never encode per-screen if/else inside `GroupFocusHooks` — that is a dedicated reader in disguise
+and every tweak risks regressions on the ~30 screens it already serves. Dedicated readers must stay
+THIN (~100 lines of screen mapping) and reuse the shared services (`GuiTextReader`,
+`GroupFocusPoller`, `FlowHelper`, `ScreenAdapter`).
+
+TODO (generic improvement, agreed 2026-07-06): skip texts containing a `{` placeholder (e.g.
+"SA {0}") in generic row reading (`FlowHelper.FormatRowTexts` / GroupFocusHooks row paths) —
+template junk is never speakable.
+
 ## Localization (ALWAYS prefer game text)
 
 Read text from the game's localization/GUI system; hardcode strings only as a **last resort** after
