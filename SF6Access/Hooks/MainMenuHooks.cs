@@ -169,6 +169,7 @@ public class MainMenuHooks
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
                 StatusMenuHooks.IsInStatusMenu ||
+                WTMPauseHooks.IsInWTMPause ||
                 GroupFocusHooks.ShouldSuppressFocus)
             {
                 // Timestamped trace of real navigation presses — measures how
@@ -184,7 +185,8 @@ public class MainMenuHooks
                     !CustomRoomHooks.IsInCustomRoomTop &&
                     !MatchingFighterSettingHooks.IsInFighterSetting &&
                     !DeathMatchSettingHooks.IsInDeathMatchSetting &&
-                    !StatusMenuHooks.IsInStatusMenu)
+                    !StatusMenuHooks.IsInStatusMenu &&
+                    !WTMPauseHooks.IsInWTMPause)
                 {
                     GroupFocusHooks.QueueFocusFallback(selectedItem, rawName);
                 }

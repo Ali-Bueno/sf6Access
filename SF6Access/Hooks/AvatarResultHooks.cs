@@ -56,7 +56,14 @@ public sealed class AvatarResultHooks : SingleParamScreenAdapter
 
     protected override void Poll()
     {
-        if (!_announced) AnnounceSummary();
+        // Don't poll the reward lists until the summary is out: the focused
+        // reward row contains the animating EXP number, and polling it during
+        // the gauge animation read the whole count-up ("22", "27", ... "100").
+        if (!_announced)
+        {
+            AnnounceSummary();
+            return;
+        }
         _rewards.Poll(Param);
     }
 

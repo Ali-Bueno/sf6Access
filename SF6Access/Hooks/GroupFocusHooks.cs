@@ -92,12 +92,14 @@ public class GroupFocusHooks
         "app.UIFlowOnlineShopGoodsBuy.UIFlowParam", // OnlineShopBuyHooks handles the buy dialog
         "app.UIFlowCustomRoomJoin.Param",           // CustomRoomJoinHooks handles join/invitations
         // WTMPauseHooks handles these WT master-fight pause submenus (the generic
-        // reader gave template junk / bare numbers); Main/PerkList/BattleInfo stay generic.
+        // reader gave template junk / bare numbers); only Main (the tab bar) stays generic.
         "app.UIFlowWTMPauseMenu.SpecialMoves.Param",
         "app.UIFlowWTMPauseMenu.SuperArts.Param",
         "app.UIFlowWTMPauseMenu.OtherMoves.Param",
         "app.UIFlowWTMPauseMenu.Item.Param",
         "app.UIFlowWTMPauseMenu.Escape.Param",
+        "app.UIFlowWTMPauseMenu.PerkList.Param",
+        "app.UIFlowWTMPauseMenu.BattleInfo.Param",
     };
 
     private static readonly string[] GroupFieldTypes = { "app.UIPartsGroup", "app.UIPartsGroupScroll" };

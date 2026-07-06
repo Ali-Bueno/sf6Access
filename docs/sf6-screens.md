@@ -576,6 +576,44 @@ not resolve these. Recipes:
   `ResolveStyleFighterName(WTPlayerData.Style.StyleEquipId)` + on-screen `e_text_style`; stats from
   `WTPlayerManager.LocalPlayerData` → `AvatarStatsReader.ReadStatsFromPlayerData`.
 
+### Master-fight pause menu (`WTMPauseHooks`)
+- `app.UIFlowWTMPauseMenu.*` — Main.Param (tab bar `_menuTab`, stays on GroupFocus) + one child Param
+  per tab, all owned by `WTMPauseHooks` (excluded from GroupFocus; `IsInWTMPause` also suppresses the
+  MainMenuHooks focus fallback, which spoke the rows' raw `SA {0}` templates):
+  - **Escape.Param**: single-option confirm; GUI `WTMBattlePauseEscape` `e_text_title_tutorial` ×2
+    (title + question) + `e_text_0` (Confirm). Announce once on entry. CONFIRMED working.
+  - **Item.Param**: `_lineupGrid` (ScrollGrid; cells only carry `e_text_total` counts). Selected item's
+    name/description from GUI `WTMBattlePauseItem` `e_text_name`/`e_text_detail`. CONFIRMED working.
+  - **PerkList.Param**: `_scrollList`; rows carry `e_txt_num` (bare "0" — skip) + `e_text_name`.
+    Tooltip = GUI `WTMBattlePausePerkList` `e_text_detail`, a WLTAG-composed raw → `ResolveWLTags`.
+  - **BattleInfo.Param**: `_mainGroup`, `_enemyInfoList` (List<EnemyInfo>), `_streetEnemyList` (null in
+    master fights), `_seriousItemInfoList` (ScrollList, NON-navigable) — announce once on entry. Per-row
+    texts: `e_text_droplock` (objective), `e_text_head` (reward), `e_text_total` (target), two
+    `e_text_value` (progress = the LAST in tree order). Enemy: `e_text_num` (Lv) + `e_text_name`
+    (master-name WLTAG → `ResolveWLTags`).
+  - **SpecialMoves/SuperArts.Param** (`ActionSkillList` + `ActionSetTypeList` tabs + `ActionSkillDetail`)
+    and **OtherMoves.Param** (`mSkillList` + `mCategoryTabList` + `mSkillDetailWindow`): read the move
+    name/command from the selected row's control (visibleOnly:false — variant rows keep them hidden;
+    skip `{`-containing template texts), and category/damage/description from the **detail widget's**
+    control (`e_text_category`/`e_text_value`/`e_text_comment`, hidden included). Do NOT scan the whole
+    GUI owner: it mixes other rows' `e_text_value` into the announcement ("Flash Knuckle. 700" with
+    Tiger Uppercut's damage). The "Damage" caption is a texture → hardcoded label via `GetDisplayLang`;
+    value "0" is a placeholder on utility moves — skip.
+
+### Avatar post-fight result (`AvatarResultHooks`)
+- `app.UIFlowAvatarResult.Param`: `_Window_TitleText`, `_Level_Text_LevelTitle/LevelValue`,
+  `_Level_PlayerExp` (gauge), reward lists `_Level_/_Skill_/_Item_ScrollList`. GUI `AvatarResult`:
+  `e_txt_title`=EXP, `e_text_value` (gauge % + gained), `e_text_title`=Level. Summary announced once
+  the texts settle (two equal reads) or on timeout. **Do not poll the reward lists before the summary
+  is announced**: the focused reward row contains the animating EXP number and the poller read the
+  whole count-up ("22", "27" … "100").
+
+### WLTAG resolution (`FlowHelper.ResolveWLTags`)
+- Render-time composed texts (perk tooltips, master names) read as raw `<WLTAG CmdNo="2" Arg0="X"
+  Arg1="Y">`. Resolve via `app.MessageManager.WLTagCmdRegister` (STATIC field) → the `WLCmdWordList`
+  entry → `CmdWordList(Arg0=wordType, Arg1=messageId)` returns the localized string. Word type 2 =
+  master names (textures, exchange returns empty) → fall back to `ResolveMasterFighterName(Arg1)`.
+
 ### Shop (not read) — `app.UIFlowShop.*`
 - BuyItemList (Apparel/General), SellItemList, StrengthTarget(List) (enhance),
   ColorStainingList/Detail (dye). Flow-transition detection only.

@@ -833,6 +833,82 @@ public static class FlowHelper
         catch { return null; }
     }
 
+    private static ManagedObject _wlCmdWordList;
+    private static bool _wlCmdWordListCached;
+
+    // WLTAG word-type (Arg0) whose entries are World Tour master names. Those
+    // render as textures, so the word-list exchange returns nothing — fall back
+    // to resolving the master id (Arg1) to the underlying fighter's name.
+    private const uint WLTAG_WORDTYPE_MASTER = 2;
+
+    /// <summary>
+    /// Resolve the &lt;WLTAG CmdNo Arg0 Arg1&gt; tags of a raw GUI message to their
+    /// localized text via app.MessageManager's registered WLCmdWordList command
+    /// (the same word-list exchange the renderer runs: Arg0 = word type,
+    /// Arg1 = message id). Used for texts the game composes only at render time
+    /// (World Tour perk tooltips, master names). Unresolvable tags are stripped
+    /// along with any other formatting tags.
+    /// </summary>
+    public static string ResolveWLTags(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return raw;
+        if (!raw.Contains("<WLTAG")) return CleanTags(raw);
+        try
+        {
+            string resolved = Regex.Replace(raw, @"<WLTAG\b([^>]*)>", m =>
+            {
+                string attrs = m.Groups[1].Value;
+                if (!TryReadTagAttr(attrs, "Arg0", out uint arg0) ||
+                    !TryReadTagAttr(attrs, "Arg1", out uint arg1))
+                    return "";
+
+                string text = ResolveWLTagWordList(arg0, arg1);
+                if (string.IsNullOrWhiteSpace(text) && arg0 == WLTAG_WORDTYPE_MASTER)
+                    text = ResolveMasterFighterName(arg1);
+                return string.IsNullOrWhiteSpace(text) ? "" : " " + text.Trim() + " ";
+            });
+            resolved = CleanTags(resolved);
+            return Regex.Replace(resolved, @"[ \t]{2,}", " ").Trim();
+        }
+        catch { return CleanTags(raw); }
+    }
+
+    private static bool TryReadTagAttr(string attrs, string name, out uint value)
+    {
+        value = 0;
+        var m = Regex.Match(attrs, name + @"\s*=\s*""(\d+)""");
+        return m.Success && uint.TryParse(m.Groups[1].Value, out value);
+    }
+
+    /// <summary>Localized word-list text for a WLTAG (wordType, messageId) pair,
+    /// via the WLCmdWordList command registered in app.MessageManager.WLTagCmdRegister
+    /// (a static field). Null when the command or entry is unavailable.</summary>
+    private static string ResolveWLTagWordList(uint wordType, uint messageId)
+    {
+        try
+        {
+            if (!_wlCmdWordListCached)
+            {
+                _wlCmdWordListCached = true;
+                var field = TDB.Get().FindType("app.MessageManager")?.GetField("WLTagCmdRegister");
+                var register = field?.GetDataBoxed(typeof(object), 0, true) as ManagedObject;
+                int count = GetListCount(register);
+                for (int i = 0; i < count; i++)
+                {
+                    var cmd = GetListItem(register, i);
+                    if (cmd?.GetTypeDefinition()?.FullName?.Contains("WLCmdWordList") == true)
+                    {
+                        _wlCmdWordList = cmd;
+                        break;
+                    }
+                }
+            }
+            if (_wlCmdWordList == null) return null;
+            return Call(_wlCmdWordList, "CmdWordList", wordType, messageId) as string;
+        }
+        catch { return null; }
+    }
+
     /// <summary>
     /// Unwrap a generic RecordHolder&lt;T&gt; to its inner record: return the first
     /// managed field whose type name contains <paramref name="recordTypeName"/>.
