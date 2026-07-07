@@ -44,6 +44,7 @@ internal sealed class AvatarChildFlowReader
         _spins.Clear();
         _triangles.Clear();
         _groups = null;
+        _genderKey = null;
         if (param == null) return;
 
         try { Discover(); }
@@ -188,7 +189,11 @@ internal sealed class AvatarChildFlowReader
             string body;
             if (!string.IsNullOrEmpty(name) && Regex.IsMatch(name, @"^\d+$"))
             {
-                body = name;
+                // Mod-authored description of the numbered thumbnail, when one
+                // exists in the lang files (avdesc.* keys — filled in from
+                // screenshots of each grid page; presets are unnamed in-game)
+                string desc = LookupPresetDescription(name);
+                body = desc == null ? name : $"{name}. {desc}";
             }
             else
             {
@@ -237,6 +242,63 @@ internal sealed class AvatarChildFlowReader
             return IsInternalPresetInfo(clean) ? null : clean;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Translation-file description for a numbered preset cell. Key:
+    /// avdesc.&lt;category&gt;.&lt;m|f|x&gt;.&lt;number&gt;, falling back to the
+    /// gender-neutral avdesc.&lt;category&gt;.&lt;number&gt;. Null when none exists
+    /// (the number then speaks alone).
+    /// </summary>
+    private string LookupPresetDescription(string number)
+    {
+        string cat = CategoryKey();
+        if (cat == null) return null;
+        string g = ResolveGenderKey();
+        return LangFile.Get($"avdesc.{cat}.{g}.{number}", null)
+               ?? LangFile.Get($"avdesc.{cat}.{number}", null);
+    }
+
+    /// <summary>Short stable key for the current child flow's grid category.</summary>
+    private string CategoryKey()
+    {
+        string t = _typeName;
+        if (t.Contains("UIFlowUI61100")) return "bodytype";
+        if (t.Contains("UIFlowUI61101")) return "identity";
+        if (t.Contains("UIFlowUI61200")) return "facepreset";
+        if (t.Contains("UIFlowUI61203")) return "body";
+        if (t.Contains("UIFlowUI61401")) return "hair";
+        if (t.Contains("UIFlowUI61402")) return "eye";
+        if (t.Contains("UIFlowUI61403")) return "pupil";
+        if (t.Contains("UIFlowUI61404")) return "lash";
+        if (t.Contains("UIFlowUI61405")) return "brow";
+        if (t.Contains("UIFlowUI61406")) return "nose";
+        if (t.Contains("UIFlowUI61407")) return "mouth";
+        if (t.Contains("UIFlowUI61408")) return "ear";
+        if (t.Contains("UIFlowUI61409")) return "beard";
+        if (t.Contains("UIFlowUI61411")) return "facial";
+        return null;
+    }
+
+    private string _genderKey;
+
+    /// <summary>"m"/"f" from charaEditParam.gender (banks differ per body
+    /// type), "x" when unreadable. Cached per bind.</summary>
+    private string ResolveGenderKey()
+    {
+        if (_genderKey != null) return _genderKey;
+        try
+        {
+            var root = FlowHelper.GetObjectField(_param, "RootParam");
+            var presetData = FlowHelper.Call(root, "get_MyEditPresetParam") as ManagedObject
+                             ?? FlowHelper.GetObjectField(root, "MyEditPresetParam");
+            var edit = FlowHelper.GetObjectField(presetData, "EditParam");
+            int gender = FlowHelper.ReadIntField(edit, "gender", -1);
+            if (gender != 0 && gender != 1) gender = FlowHelper.ReadByteField(edit, "gender", -1);
+            _genderKey = gender == 0 ? "m" : gender == 1 ? "f" : "x";
+        }
+        catch { _genderKey = "x"; }
+        return _genderKey;
     }
 
     /// <summary>

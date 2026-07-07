@@ -194,3 +194,21 @@ avslider.ColorMetallic=Metallic
 avslider.ColorEmissive=Glow
 avslider.BlendSliderParts=Blend
 selected=selected
+
+# --- Preset descriptions (avdesc.<category>.<m|f|x>.<number>) ---
+# Mod-authored descriptions of the game's unnamed numbered thumbnails,
+# built from screenshots. Categories: bodytype identity facepreset body
+# hair eye pupil lash brow nose mouth ear beard facial.
+avdesc.body.m.1=average athletic build
+avdesc.body.m.2=defined muscular
+avdesc.body.m.3=lean athletic
+avdesc.body.m.4=slim
+avdesc.body.m.5=bulky muscular
+avdesc.body.m.6=heavyset with belly
+avdesc.body.m.9=very muscular, bodybuilder type
+avdesc.hair.m.1=bald
+avdesc.hair.m.2=shaved to the skin
+avdesc.hair.m.3=very short buzz cut
+avdesc.hair.m.4=short curly
+avdesc.hair.m.5=short curly, brushed up
+avdesc.hair.m.6=short tousled with fringe

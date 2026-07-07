@@ -158,3 +158,18 @@ avslider.ColorMetallic=Metálico
 avslider.ColorEmissive=Brillo
 avslider.BlendSliderParts=Mezcla
 selected=seleccionado
+
+# --- Descripciones de presets (avdesc.<categoria>.<m|f|x>.<numero>) ---
+avdesc.body.m.1=atlético medio
+avdesc.body.m.2=musculoso marcado
+avdesc.body.m.3=atlético delgado
+avdesc.body.m.4=delgado
+avdesc.body.m.5=musculoso corpulento
+avdesc.body.m.6=corpulento con barriga
+avdesc.body.m.9=muy musculoso, tipo culturista
+avdesc.hair.m.1=calvo
+avdesc.hair.m.2=rapado al cero
+avdesc.hair.m.3=rapado muy corto
+avdesc.hair.m.4=corto rizado
+avdesc.hair.m.5=corto rizado peinado hacia arriba
+avdesc.hair.m.6=corto despeinado con flequillo
