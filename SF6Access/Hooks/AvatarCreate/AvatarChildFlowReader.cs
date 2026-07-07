@@ -142,7 +142,8 @@ internal sealed class AvatarChildFlowReader
         _sliderArraySeeded = false;
 
         if (groupSources.Count > 0)
-            _groups = new GroupFocusPoller("avatar-child", announceFirst: true, groupSources.ToArray());
+            _groups = new GroupFocusPoller("avatar-child", announceFirst: true, groupSources.ToArray())
+            { SkipPureNumericRows = true };
 
         API.LogInfo($"[SF6Access] Avatar child {_typeName}: {(found.Count > 0 ? string.Join(", ", found) : "no known parts")}");
     }

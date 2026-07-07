@@ -36,6 +36,12 @@ public sealed class GroupFocusPoller
     private readonly int[] _lastIdx;
     private readonly string[] _lastText;
 
+    /// <summary>Opt-in: skip rows whose every segment is a bare integer.
+    /// In the avatar creator a group can wrap the preset grid panel, whose
+    /// "row text" is the visible cell numbers ("36. 35. 34. 33. 32. 31") —
+    /// the dedicated grid tracker already reads those cells properly.</summary>
+    public bool SkipPureNumericRows { get; init; }
+
     public GroupFocusPoller(string logTag, bool announceFirst, params Source[] sources)
     {
         _logTag = logTag;
@@ -118,12 +124,27 @@ public sealed class GroupFocusPoller
 
     private bool Announce(int g, int idx, string announcement, bool interrupt)
     {
-        int segments = announcement.Split(
-            new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries).Length;
-        if (segments > MAX_ROW_SEGMENTS)
+        var parts = announcement.Split(
+            new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > MAX_ROW_SEGMENTS)
         {
-            API.LogInfo($"[SF6Access] {_logTag} focus [g{g},{idx}] skipped (panel, {segments} segments)");
+            API.LogInfo($"[SF6Access] {_logTag} focus [g{g},{idx}] skipped (panel, {parts.Length} segments)");
             return false;
+        }
+
+        if (SkipPureNumericRows)
+        {
+            bool allNumeric = true;
+            foreach (var p in parts)
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(p.Trim().TrimEnd('.'), @"^\d+$"))
+                { allNumeric = false; break; }
+            }
+            if (allNumeric)
+            {
+                API.LogInfo($"[SF6Access] {_logTag} focus [g{g},{idx}] skipped (numeric panel)");
+                return false;
+            }
         }
 
         API.LogInfo($"[SF6Access] {_logTag} focus [g{g},{idx}]: {announcement}");
