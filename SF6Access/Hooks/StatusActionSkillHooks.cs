@@ -58,6 +58,9 @@ public sealed class StatusActionSkillHooks : ScreenAdapter
     private string _lastAttentionButton;
     private int _loggedState = -99;
     private int _lastSetType = int.MinValue;  // WTActionSkillSetType tab (Grounded/Air/Super Arts)
+    private int _lastCountNow = int.MinValue;  // equipped-slot counter (now / max)
+    private int _lastCountMax = int.MinValue;
+    private bool _lastFull;
 
     protected override bool Locate()
     {
@@ -103,6 +106,9 @@ public sealed class StatusActionSkillHooks : ScreenAdapter
         _attentionOpen = false;
         _lastAttentionButton = null;
         _lastSetType = int.MinValue;
+        _lastCountNow = int.MinValue;
+        _lastCountMax = int.MinValue;
+        _lastFull = false;
     }
 
     protected override void OnPoll() => PollState();
@@ -141,9 +147,20 @@ public sealed class StatusActionSkillHooks : ScreenAdapter
         bool setTypeChanged = setType != _lastSetType && _lastSetType != int.MinValue;
         _lastSetType = setType;
 
+        // Equipped-slot counter (now / max). There is NO point/cost budget for
+        // equipping: each category (Ground/Air/Super Arts) just has a slot cap
+        // that scales with the avatar's stats, shown as a "now / max" count and a
+        // "full" flag. Announce it on entry and whenever it changes (after an
+        // equip/unequip) so the player tracks the budget. See docs/sf6-screens.md.
+        bool haveCount = ReadEquipCount(out int countNow, out int countMax, out bool full);
+        bool countBaseline = _lastCountNow == int.MinValue;
+        bool countChanged = haveCount && !countBaseline &&
+            (countNow != _lastCountNow || countMax != _lastCountMax || full != _lastFull);
+        if (haveCount) { _lastCountNow = countNow; _lastCountMax = countMax; _lastFull = full; }
+
         bool first = _lastState == -2;
         bool sectionChanged = state != _lastState && !first;
-        if (idx == _lastIndex && state == _lastState && !first && !setTypeChanged) return;
+        if (idx == _lastIndex && state == _lastState && !first && !setTypeChanged && !countChanged) return;
         _lastState = state;
         _lastIndex = idx;
 
@@ -154,6 +171,11 @@ public sealed class StatusActionSkillHooks : ScreenAdapter
             if (!string.IsNullOrEmpty(setName)) parts.Add(setName);
         }
         if (first || sectionChanged) parts.Add(SectionName(state));
+        if (haveCount && (first || sectionChanged || countChanged))
+        {
+            parts.Add(LocalizedText.EquipSlotCount(countNow, countMax));
+            if (full) parts.Add(LocalizedText.SlotsFull());
+        }
 
         // Name + command from the focused row; description from the detail panel
         var item = FlowHelper.Call(list, "get_SelectedItem") as ManagedObject;
@@ -325,6 +347,39 @@ public sealed class StatusActionSkillHooks : ScreenAdapter
     private static string NoWord() => LocalizedText.No();
 
     private static string LockedWord() => LocalizedText.LockedM();
+
+    /// <summary>
+    /// Equipped-slot counter for the current category. Special Moves (and the
+    /// avatar-training variant) expose it as on-screen "now / max" GUI texts
+    /// (mTextCountNow / mTextCountMax); Super Arts has no such texts and exposes
+    /// GetCurrentEquipSlotNum() + EquipSlotMax instead. The max is a per-category
+    /// avatar stat (Ground/Air/SA SkillEquipSlot), not a spendable point budget.
+    /// Returns false when no counter can be read.
+    /// </summary>
+    private bool ReadEquipCount(out int now, out int max, out bool full)
+    {
+        full = false;
+        now = ReadCountText("mTextCountNow");
+        max = ReadCountText("mTextCountMax");
+        if (now < 0 || max < 0)
+        {
+            now = FlowHelper.CallInt(_param, "GetCurrentEquipSlotNum");
+            max = FlowHelper.CallInt(_param, "get_EquipSlotMax");
+        }
+        if (now < 0 || max < 0) return false;
+        // FullEquiped exists only on the Special Moves params; fall back to the
+        // count comparison for Super Arts.
+        full = FlowHelper.ReadBoolField(_param, "FullEquiped") || now >= max;
+        return true;
+    }
+
+    /// <summary>Parse an on-screen count text (mTextCountNow/Max) to an int, or -1.</summary>
+    private int ReadCountText(string field)
+    {
+        string t = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_param, field));
+        if (string.IsNullOrWhiteSpace(t)) return -1;
+        return int.TryParse(t.Trim(), out int v) ? v : -1;
+    }
 
     /// <summary>
     /// Name of the current move set-type tab (Grounded / Air / Super Arts), switched

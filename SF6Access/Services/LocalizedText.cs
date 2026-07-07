@@ -67,6 +67,14 @@ public static class LocalizedText
 
     public static string MoveSet() => LangFile.Get("move_set", "Move Set");
 
+    /// <summary>Equipped-slot counter phrase, e.g. "3 of 5 slots". The numbers
+    /// come from the game; only the template/connector word is localized.</summary>
+    public static string EquipSlotCount(int now, int max)
+        => string.Format(LangFile.Get("slots_count", "{0} of {1} slots"), now, max);
+
+    /// <summary>Announced when every equip slot in the category is full.</summary>
+    public static string SlotsFull() => LangFile.Get("slots_full", "Slots full");
+
     public static string Perks() => LangFile.Get("perks", "Perks");
 
     /// <summary>The combo counter's "hits" word ("2500. 6 hits").</summary>

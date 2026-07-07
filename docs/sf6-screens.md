@@ -549,8 +549,20 @@ not resolve these. Recipes:
 - Command fallback `ReadPanelCommand` when `e_text_command` empty (Modern / assigned slots): read
   `mTextCasualCommand` then `mTextCommand` (`UIPartsActionSkillPanel`). Slot triggers also in
   `udWTActionSkillUserData.DefaultTrigger` (`WTFighterActionTrigger.ID`).
-- Lock: read the focused item's "Lock" PlayState (`GuiTextReader.ReadPlayStates`, names
-  Lock/Lock_Unfocus/LockS). Equip-confirm popup: GUI owner StatusMenu_SpecialMoveSetAttention, a
+- Slot budget (NOT a point/cost system): equipping is capped by a per-category **slot count**, not a
+  spendable currency. Special Moves (and its avatar-training variant) show it as GUI count texts
+  `mTextCountNow` / `mTextCountMax` + a `FullEquiped` bool field; Super Arts has no count texts — use
+  `GetCurrentEquipSlotNum()` + `get_EquipSlotMax` instead. The max = avatar stat `GroundSkillEquipSlot`
+  (11) / `AirSkillEquipSlot` (12) / `SASkillEquipSlot` (13), scaling with the avatar (`WTStatusDefine`).
+  `ReadEquipCount` reads it (texts first, methods as fallback); announced on entry + on change (after
+  equip/unequip) as `slots_count`, plus `slots_full` when full. `WTPlayerDataStyle.SkillPoint` is the
+  skill-**tree** learning currency, unrelated to equipping; `WTSkillEquipParam.SkillCost` exists but is
+  unused by any equip UI.
+- Lock: a move is un-equippable because it isn't unlocked/learned (`WTPlayerDataStyle.IsUnlockSkill`),
+  or (supers) fails the SA-level / set-type check — it lands in `CanNotEquipSkillList` and the panel
+  shows PanelState=Lock. Read the focused item's "Lock" PlayState (`GuiTextReader.ReadPlayStates`, names
+  Lock/Lock_Unfocus/LockS); no per-panel reason string is exposed, but the game's own requirement text
+  (when shown) comes through `mSkillDetail.mTextDescription`, already read. Equip-confirm popup: GUI owner StatusMenu_SpecialMoveSetAttention, a
   sub-state of the SAME param (no own handle — DialogHooks misses it). Detect by GUI present
   (`FindGuiViews("Attention")` + visible `e_text_notice`/`e_text_head`). Yes/No = SimpleList
   `p_SimpleList_1_h` `c_item_0`/`c_item_1`; focused carries PlayState "SELECT"
