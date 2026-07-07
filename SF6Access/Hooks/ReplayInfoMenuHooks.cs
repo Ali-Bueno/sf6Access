@@ -1,8 +1,7 @@
-using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,17 +13,24 @@ namespace SF6Access.Hooks;
 /// mediator), not on the flow Param, so GroupFocus found "0 fields" and the menu
 /// was silent. Capture the mediator from its StartInput and announce the focused
 /// row's text (label + toggle value), like the mediator path in GroupFocus.
+///
+/// SingleParamScreenAdapter for the flow-presence poll; the StartInput capture
+/// hook stays in the static [PluginEntryPoint]. Registered in ScreenRegistry.
 /// </summary>
-public class ReplayInfoMenuHooks
+public sealed class ReplayInfoMenuHooks : SingleParamScreenAdapter
 {
     private const string FLOW_TYPE = "app.UICFNReplayInfoOnline.FlowParam";
+    protected override string ParamType => FLOW_TYPE;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 20;
-    private const int POLL_READ_INTERVAL = 5;
+    public ReplayInfoMenuHooks()
+    {
+        SearchInterval = 20;
+        ReadInterval = 5;
+    }
 
-    private static ManagedObject _list;   // captured UIPartsCFNReplayInfoList
-    private static bool _active;
+    // Captured UIPartsCFNReplayInfoList mediator. Static: written by the
+    // StartInput hook, which fires regardless of the adapter's state.
+    private static ManagedObject _list;
     private static string _lastText;
 
     [PluginEntryPoint]
@@ -57,20 +63,17 @@ public class ReplayInfoMenuHooks
         }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
+        _lastText = null;
+        API.LogInfo("[SF6Access] Replay info menu opened");
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            bool present = FlowHelper.FindFlowParam(FLOW_TYPE) != null;
-            if (present && !_active) { _active = true; _lastText = null; API.LogInfo("[SF6Access] Replay info menu opened"); }
-            else if (!present && _active) { _active = false; _lastText = null; _list = null; API.LogInfo("[SF6Access] Replay info menu closed"); }
-        }
-
-        if (!_active || _list == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollFocusedItem();
+    protected override void OnExit()
+    {
+        _lastText = null;
+        _list = null;
+        API.LogInfo("[SF6Access] Replay info menu closed");
     }
 
     // app.UICFNReplayInfo.MenuType values (GetFocusChild does NOT track focus on
@@ -91,8 +94,9 @@ public class ReplayInfoMenuHooks
         "Round results",           // RESULT_LIST
     };
 
-    private static void PollFocusedItem()
+    protected override void Poll()
     {
+        if (_list == null) return;
         try
         {
             int type = FlowHelper.CallInt(_list, "GetFocusMenuType", int.MinValue);
@@ -115,7 +119,7 @@ public class ReplayInfoMenuHooks
             bool first = _lastText == null;
             _lastText = label;
             API.LogInfo($"[SF6Access] Replay menu [{type}]: {label}");
-            ScreenReaderService.Speak(label, interrupt: !first);
+            Speak(label, interrupt: !first);
         }
         catch { }
     }

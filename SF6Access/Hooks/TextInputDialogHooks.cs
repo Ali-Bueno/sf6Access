@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -18,25 +18,36 @@ namespace SF6Access.Hooks;
 ///   announces only the new text (not the whole dialog again);
 /// - the Cancelar / Buscar buttons are announced by MainMenuHooks (which stops
 ///   suppressing focus while IsActive is true).
+///
+/// ScreenAdapter: Locate() scans for the dialog GUI views; the capture hook
+/// stays in the static [PluginEntryPoint]. IsActive turns true only once the
+/// dialog's text became readable (the original semantics MainMenuHooks relies
+/// on). Registered in ScreenRegistry.
 /// </summary>
-public class TextInputDialogHooks
+public sealed class TextInputDialogHooks : ScreenAdapter
 {
     private const string DIALOG_GUI = "TextInputDialog"; // matches TextInputDialogFG too
+    private static readonly string[] Types = { DIALOG_GUI };
+    public override string[] OwnedTypes => Types;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 20;
-    private const int POLL_READ_INTERVAL = 4;
+    private static TextInputDialogHooks _self;
+    public static bool IsActive => _self != null && _self.Active && _self._announced;
 
-    private static readonly List<(string owner, ManagedObject view)> _views = new();
-    private static bool _active;
-    private static bool _announced;
+    public TextInputDialogHooks()
+    {
+        SearchInterval = 20;
+        ReadInterval = 4;
+        _self = this;
+    }
 
-    private static ManagedObject _dialog;          // captured UITextInputDialog
+    private readonly List<(string owner, ManagedObject view)> _views = new();
+    private bool _announced;
+
+    // Captured UITextInputDialog. Static: written by the OpenTextInputDialog hook.
+    private static ManagedObject _dialog;
     private static int _fieldFocusIndex = int.MinValue; // MainGroup focus of the field (default focus)
     private static int _lastFocusIndex = int.MinValue;
     private static string _lastTyped = "";
-
-    public static bool IsActive => _active;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -73,34 +84,31 @@ public class TextInputDialogHooks
         _lastTyped = "";
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override bool Locate()
     {
-        _pollCounter++;
+        _views.Clear();
+        _views.AddRange(GuiTextReader.FindGuiViews(DIALOG_GUI));
+        return _views.Count > 0;
+    }
 
-        if (_views.Count == 0 ? _pollCounter % 30 == 0 : _pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            _views.Clear();
-            _views.AddRange(GuiTextReader.FindGuiViews(DIALOG_GUI));
-            if (_views.Count == 0)
-            {
-                _active = false;
-                _announced = false;
-                _dialog = null;
-                ResetDialogState();
-            }
-        }
+    protected override void OnDeactivate()
+    {
+        _views.Clear();
+        _announced = false;
+        _dialog = null;
+        ResetDialogState();
+    }
 
-        if (_views.Count == 0 || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void OnPoll()
+    {
         AnnounceAppearanceOnce();
         PollFieldAndTyping();
     }
 
     /// <summary>Title + prompt + buttons, once, when the dialog shows up.</summary>
-    private static void AnnounceAppearanceOnce()
+    private void AnnounceAppearanceOnce()
     {
-        if (_announced) { _active = true; return; }
+        if (_announced) return;
         try
         {
             string title = null, message = null;
@@ -126,11 +134,10 @@ public class TextInputDialogHooks
             parts.AddRange(buttons);
             if (parts.Count == 0) return;
 
-            _active = true;
             _announced = true;
             string text = string.Join(". ", parts);
             API.LogInfo($"[SF6Access] Text input dialog: {text}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            Speak(text, interrupt: false);
         }
         catch { }
     }
@@ -140,7 +147,7 @@ public class TextInputDialogHooks
     /// user types — using the captured UITextInputDialog (MainGroup focus index
     /// + TextInputElement). The buttons are left to MainMenuHooks.
     /// </summary>
-    private static void PollFieldAndTyping()
+    private void PollFieldAndTyping()
     {
         if (_dialog == null) return;
         try
@@ -172,7 +179,7 @@ public class TextInputDialogHooks
                     if (!string.IsNullOrEmpty(label))
                     {
                         API.LogInfo($"[SF6Access] Name field: {label}");
-                        ScreenReaderService.Speak(label);
+                        Speak(label);
                     }
                 }
                 _lastTyped = typed;
@@ -185,14 +192,14 @@ public class TextInputDialogHooks
                 _lastTyped = typed;
                 string spoken = string.IsNullOrEmpty(typed) ? FieldEmpty() : typed;
                 API.LogInfo($"[SF6Access] Name field typed: {spoken}");
-                ScreenReaderService.Speak(spoken);
+                Speak(spoken);
             }
         }
         catch { }
     }
 
     /// <summary>The dialog's prompt text ("Informe um nome de jogador...").</summary>
-    private static string FieldPrompt()
+    private string FieldPrompt()
     {
         foreach (var (owner, view) in _views)
             foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
@@ -201,5 +208,5 @@ public class TextInputDialogHooks
         return null;
     }
 
-    private static string FieldEmpty() => FieldPrompt() ?? "";
+    private string FieldEmpty() => FieldPrompt() ?? "";
 }

@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,12 +14,21 @@ namespace SF6Access.Hooks;
 /// a menu list (Edit / Initialize / Copy / Test Input) and the right-side list
 /// with one row per action and its assigned button/key.
 /// Spin values are read from the on-screen via.gui.Text components.
+///
+/// ScreenAdapter: the save/discard confirmation popup (MessageBox.Param) can
+/// outlive the menu flow (exit confirm), so Locate() keeps the adapter active
+/// while either is present; IsInKeyConfig (read by MainMenuHooks) stays true
+/// only while the MENU param exists. The SetInputFlags hook stays in the
+/// static [PluginEntryPoint]. Registered in ScreenRegistry.
 /// </summary>
-public class KeyConfigHooks
+public sealed class KeyConfigHooks : ScreenAdapter
 {
     private const string PARAM_TYPE = "app.UIFlowKeyConfig.Menu.Param";
     private const string MSGBOX_PARAM_TYPE = "app.UIFlowKeyConfig.MessageBox.Param";
     private const string INPUT_TEST_PARAM_TYPE = "app.UIFlowKeyConfig.InputTest.Param";
+
+    private static readonly string[] Types = { PARAM_TYPE, MSGBOX_PARAM_TYPE, INPUT_TEST_PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
 
     // UIKeyConfig.ListItemId
     private const int LIST_TEST_INPUT = 3;
@@ -40,51 +49,60 @@ public class KeyConfigHooks
     private static readonly string[] SpinTextFields =
         { "TextSpinMode", "TextSpinPreset", "TextSpinNegativeEdge", "TextSpinLowStickSensitivity" };
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static KeyConfigHooks _self;
+    public static bool IsInKeyConfig => _self != null && _self.Active && _self._param != null;
 
-    private static ManagedObject _param;
-    private static ManagedObject _menuMessageData;
-    private static ManagedObject _partsListSetting;
-    private static readonly ManagedObject[] _spinTexts = new ManagedObject[4];
-    private static int _gameMode;
+    public KeyConfigHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
+    }
 
-    private static int _lastLeftId = -2;
-    private static int _lastListItemId = -2;
-    private static int _lastSettingIdx = -1;
-    private static string _lastSettingText;
-    private static readonly string[] _lastSpinValues = new string[4];
+    private ManagedObject _param;
+    private ManagedObject _menuMessageData;
+    private ManagedObject _partsListSetting;
+    private readonly ManagedObject[] _spinTexts = new ManagedObject[4];
+    private int _gameMode;
+    private int _tick;
+
+    private int _lastLeftId = -2;
+    private int _lastListItemId = -2;
+    private int _lastSettingIdx = -1;
+    private string _lastSettingText;
+    private readonly string[] _lastSpinValues = new string[4];
 
     // Save/discard confirmation popup (app.UIFlowKeyConfig.MessageBox)
-    private static ManagedObject _msgBoxParam;
-    private static int _lastMsgBoxIndex = -2;
-    private static bool _msgBoxLabelPending;
-    private static int _msgBoxLabelPolls;
+    private ManagedObject _msgBoxParam;
+    private int _lastMsgBoxIndex = -2;
+    private bool _msgBoxLabelPending;
+    private int _msgBoxLabelPolls;
 
-    // Input test screen (app.UIFlowKeyConfig.InputTest)
+    // Input test screen (app.UIFlowKeyConfig.InputTest). Static: shared with
+    // the SetInputFlags hook.
     private static ManagedObject _inputTestParam;
     private static Dictionary<string, string> _iconNameMap;
-    private static readonly bool[] _lastButtonOn = new bool[16];
+    private readonly bool[] _lastButtonOn = new bool[16];
     private static uint _lastInputFlags;
     private static int _setFlagsCalls;
 
     // Physical gamepad polling for the test screen (via.hid.GamePad)
-    private static uint _lastPadButtons;
+    private uint _lastPadButtons;
     private static Dictionary<uint, string> _padActionMap;
 
     // Physical keyboard polling for the test screen (via.hid.Keyboard):
     // only the keys with an assignment are checked
     private static Dictionary<int, string> _kbActionMap;
-    private static readonly HashSet<int> _kbHeld = new();
-    private static Method _getSettingParamsMethod;
+    private readonly HashSet<int> _kbHeld = new();
+    private Method _getSettingParamsMethod;
 
     // Right stick scrolls the assignment overview panel; movement shows up
     // as the emulated digital bits EmuRup/EmuRdown of the pad state
-    private static uint _lastMenuPadButtons;
-    private static string _r3GuiBefore;
-    private static int _r3CompareAtTick = -1;
+    private uint _lastMenuPadButtons;
+    private string _r3GuiBefore;
+    private int _r3CompareAtTick = -1;
+    // 6 read ticks at the 5-frame interval = the original 30-frame settle delay
+    private const int R3_COMPARE_DELAY_TICKS = 6;
     private const uint PAD_EMU_RUP = 0x1000000;
     private const uint PAD_EMU_RDOWN = 0x4000000;
     private const uint RSTICK_TRIGGER = PAD_EMU_RUP | PAD_EMU_RDOWN;
@@ -96,7 +114,7 @@ public class KeyConfigHooks
 
     // Device being edited (UIKeyConfig.TargetDevice): GamePad=0, Keyboard=1.
     // Switched in-place with the R key on PC — polled for changes.
-    private static int _lastDevice = -2;
+    private int _lastDevice = -2;
 
     // Icon tokens by flag bit index, per EConfigInputType
     // (NormalButton/CasualButton/SuperEasyButton enum values are bit indices)
@@ -106,8 +124,6 @@ public class KeyConfigHooks
         new[] { "di", "dp", "sp", "auto", "l", "m", "h" },       // CASUAL (modern)
         new[] { "di", "dp", "sa", "od", "l", "m", "h", "throw" } // SUPER_EASY (dynamic)
     };
-
-    public static bool IsInKeyConfig => _isActive;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -177,48 +193,45 @@ public class KeyConfigHooks
         ScreenReaderService.Speak(announcement);
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (!_isActive)
+        var menu = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
+        if (menu == null)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
+            if (_param != null) ResetMenu();
             // The confirmation popup can show while the menu flow is gone
-            // (e.g. exit confirm) — keep watching it at the slow cadence
-            PollMessageBox();
-            return;
+            // (e.g. exit confirm) — keep the adapter alive for it
+            return _msgBoxParam != null || FlowHelper.FindFlowParam(MSGBOX_PARAM_TYPE) != null;
         }
 
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollMessageBox();
-            PollInputTest();
-        }
+        if (changed)
+            BindMenu(menu); // menu opened or was recreated — re-bind child caches
+        return true;
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-                TryActivate(); // menu was recreated — re-bind param and child caches
-        }
+    protected override void OnDeactivate()
+    {
+        if (_param != null) ResetMenu();
+        _msgBoxParam = null;
+        _lastMsgBoxIndex = -2;
+        _msgBoxLabelPending = false;
+    }
 
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollDeviceChange();
-            PollFocus();
-            PollSpinValues();
-            PollSettingList();
-            if (_inputTestParam == null)
-                PollMenuR3();
-        }
+    protected override void OnPoll()
+    {
+        _tick++;
+
+        PollMessageBox();
+
+        if (_param == null) return; // popup-only mode (menu flow gone)
+
+        PollInputTest();
+        PollDeviceChange();
+        PollFocus();
+        PollSpinValues();
+        PollSettingList();
+        if (_inputTestParam == null)
+            PollMenuR3();
     }
 
     /// <summary>
@@ -227,7 +240,7 @@ public class KeyConfigHooks
     /// changes, rows scroll into view). Announce only the NEWLY revealed
     /// rows; stay silent when the panel is already at the end.
     /// </summary>
-    private static void PollMenuR3()
+    private void PollMenuR3()
     {
         uint buttons = ReadPadButtons();
         uint rising = buttons & ~_lastMenuPadButtons;
@@ -236,10 +249,10 @@ public class KeyConfigHooks
         if ((rising & RSTICK_TRIGGER) != 0 && _r3CompareAtTick < 0)
         {
             _r3GuiBefore = ReadKeyConfigGuiJoined();
-            _r3CompareAtTick = _pollCounter + 30;
+            _r3CompareAtTick = _tick + R3_COMPARE_DELAY_TICKS;
         }
 
-        if (_r3CompareAtTick > 0 && _pollCounter >= _r3CompareAtTick)
+        if (_r3CompareAtTick > 0 && _tick >= _r3CompareAtTick)
         {
             _r3CompareAtTick = -1;
 
@@ -262,7 +275,7 @@ public class KeyConfigHooks
 
             string announcement = string.Join(". ", revealed);
             API.LogInfo($"[SF6Access] Assignment panel scrolled: {announcement}");
-            ScreenReaderService.Speak(announcement, interrupt: false);
+            Speak(announcement, interrupt: false);
         }
     }
 
@@ -289,14 +302,14 @@ public class KeyConfigHooks
     /// keyboard, mutating TargetDevice on the same Param and rebuilding the
     /// whole screen — announce the switch and resync silently.
     /// </summary>
-    private static void PollDeviceChange()
+    private void PollDeviceChange()
     {
         int device = FlowHelper.ReadIntField(_param, "TargetDevice", -1);
         if (device < 0 || device == _lastDevice) return;
 
         bool first = _lastDevice == -2;
         _lastDevice = device;
-        if (first) return; // TryActivate announces the initial device
+        if (first) return; // BindMenu announces the initial device
 
         // The setting list and spin texts now show the other device's values
         _lastSettingIdx = -1;
@@ -306,14 +319,11 @@ public class KeyConfigHooks
 
         string name = device == 1 ? "Keyboard" : "Controller";
         API.LogInfo($"[SF6Access] KeyConfig device switched: {name}");
-        ScreenReaderService.Speak(name);
+        Speak(name);
     }
 
-    private static void TryActivate()
+    private void BindMenu(ManagedObject param)
     {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
         _param = param;
         _menuMessageData = FlowHelper.GetObjectField(param, "MenuMessageData");
         _partsListSetting = FlowHelper.GetObjectField(param, "PartsListSetting");
@@ -330,8 +340,6 @@ public class KeyConfigHooks
         for (int i = 0; i < _lastSpinValues.Length; i++)
             _lastSpinValues[i] = FlowHelper.ReadGuiText(_spinTexts[i]);
 
-        _isActive = true;
-
         // Device being edited on entry (the R key switches it later):
         // GamePad=0, Keyboard=1. Announce it so the user knows which device
         // they are configuring.
@@ -341,9 +349,9 @@ public class KeyConfigHooks
             $"msgData={_menuMessageData != null}, settingList={_partsListSetting != null}, " +
             $"spins={Array.FindAll(_spinTexts, s => s != null).Length})");
         if (device == 1)
-            ScreenReaderService.Speak("Keyboard", interrupt: false);
+            Speak("Keyboard", interrupt: false);
         else if (device == 0)
-            ScreenReaderService.Speak("Controller", interrupt: false);
+            Speak("Controller", interrupt: false);
 
         _lastMenuPadButtons = ReadPadButtons();
         PollFocus();
@@ -351,7 +359,7 @@ public class KeyConfigHooks
 
     // --- Focus on the left column (spins + menu list) ---
 
-    private static void PollFocus()
+    private void PollFocus()
     {
         if (_param == null) return;
 
@@ -371,7 +379,7 @@ public class KeyConfigHooks
             AnnounceLeftGroup(leftId, listItemId);
     }
 
-    private static void AnnounceLeftGroup(int leftId, int listItemId)
+    private void AnnounceLeftGroup(int leftId, int listItemId)
     {
         string announcement = null;
 
@@ -393,16 +401,16 @@ public class KeyConfigHooks
         if (string.IsNullOrEmpty(announcement)) return;
 
         API.LogInfo($"[SF6Access] KeyConfig focus [{leftId}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
-    private static string GetLeftGroupGuide(int leftId)
+    private string GetLeftGroupGuide(int leftId)
     {
         var msg = FlowHelper.Call(_menuMessageData, "GetLeftGroupItemMessage", leftId) as ManagedObject;
         return FlowHelper.ResolveGuidField(msg, "Guide");
     }
 
-    private static string ResolveListItemName(int listItemId)
+    private string ResolveListItemName(int listItemId)
     {
         if (listItemId < 0) return null;
 
@@ -415,7 +423,7 @@ public class KeyConfigHooks
 
     // --- Spin value changes (left/right on a spin) ---
 
-    private static void PollSpinValues()
+    private void PollSpinValues()
     {
         for (int i = 0; i < _spinTexts.Length; i++)
         {
@@ -439,7 +447,7 @@ public class KeyConfigHooks
             }
 
             API.LogInfo($"[SF6Access] KeyConfig spin [{i}]: {announcement}");
-            ScreenReaderService.Speak(announcement);
+            Speak(announcement);
         }
     }
 
@@ -462,7 +470,7 @@ public class KeyConfigHooks
 
     // --- Setting rows (right-side list: action name + assigned input) ---
 
-    private static void PollSettingList()
+    private void PollSettingList()
     {
         if (_partsListSetting == null) return;
 
@@ -490,10 +498,10 @@ public class KeyConfigHooks
         if (_lastLeftId != LEFT_LIST) return;
 
         API.LogInfo($"[SF6Access] KeyConfig setting [{idx}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
-    private static string ReadSettingName(ManagedObject settingParam)
+    private string ReadSettingName(ManagedObject settingParam)
     {
         string name = null;
         try
@@ -507,7 +515,7 @@ public class KeyConfigHooks
         return FlowHelper.CleanTags(name);
     }
 
-    private static string ReadSettingRow(int listIndex)
+    private string ReadSettingRow(int listIndex)
     {
         var settingParam = FlowHelper.Call(_param, "GetSettingParam", listIndex) as ManagedObject;
         if (settingParam == null) return null;
@@ -545,7 +553,7 @@ public class KeyConfigHooks
 
     // --- Save/discard confirmation popup ---
 
-    private static void PollMessageBox()
+    private void PollMessageBox()
     {
         var current = FlowHelper.TrackFlowParam(MSGBOX_PARAM_TYPE, _msgBoxParam, out bool changed);
         if (current == null)
@@ -580,7 +588,7 @@ public class KeyConfigHooks
 
             string announcement = string.Join(". ", parts);
             API.LogInfo($"[SF6Access] KeyConfig message box: {announcement}");
-            ScreenReaderService.Speak(announcement);
+            Speak(announcement);
             return;
         }
 
@@ -597,7 +605,7 @@ public class KeyConfigHooks
             _msgBoxLabelPending = false;
             _lastMsgBoxIndex = idx;
             API.LogInfo($"[SF6Access] KeyConfig message box button [{idx}]: {focused}");
-            ScreenReaderService.Speak(focused, interrupt: false);
+            Speak(focused, interrupt: false);
             return;
         }
 
@@ -609,10 +617,10 @@ public class KeyConfigHooks
         if (string.IsNullOrEmpty(label)) return;
 
         API.LogInfo($"[SF6Access] KeyConfig message box button [{idx}]: {label}");
-        ScreenReaderService.Speak(label);
+        Speak(label);
     }
 
-    private static int ReadMsgBoxSelectedIndex()
+    private int ReadMsgBoxSelectedIndex()
     {
         var partsList = FlowHelper.GetObjectField(_msgBoxParam, "PartsList");
         int idx = FlowHelper.CallInt(partsList, "get_SelectedIndex", -2);
@@ -620,7 +628,7 @@ public class KeyConfigHooks
         return FlowHelper.ReadIntField(_msgBoxParam, "SelectedIndex", -2);
     }
 
-    private static string ReadMsgBoxButtonLabel(int selIdx, bool allowFallback)
+    private string ReadMsgBoxButtonLabel(int selIdx, bool allowFallback)
     {
         // On-screen text of the selected row first (localized)
         var partsList = FlowHelper.GetObjectField(_msgBoxParam, "PartsList");
@@ -644,7 +652,7 @@ public class KeyConfigHooks
 
     // --- Input test screen ("Config. de Teste") ---
 
-    private static void PollInputTest()
+    private void PollInputTest()
     {
         var current = FlowHelper.TrackFlowParam(INPUT_TEST_PARAM_TYPE, _inputTestParam, out bool changed);
         if (current == null)
@@ -683,7 +691,7 @@ public class KeyConfigHooks
             var msg = FlowHelper.Call(_menuMessageData, "GetListItemMessage", LIST_TEST_INPUT) as ManagedObject;
             string guide = FlowHelper.ResolveGuidField(msg, "Guide");
             if (!string.IsNullOrEmpty(guide))
-                ScreenReaderService.Speak(guide);
+                Speak(guide);
             return;
         }
 
@@ -723,7 +731,7 @@ public class KeyConfigHooks
         if (pressed == null) return;
         string announcement = string.Join(" + ", pressed);
         API.LogInfo($"[SF6Access] Input test pressed: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     /// <summary>Currently pressed buttons of the merged gamepad device.</summary>
@@ -735,7 +743,7 @@ public class KeyConfigHooks
     /// (TargetDevice) returns the rows per device. GetGamePadButton /
     /// GetKeyboardKey are the same via.hid values the devices report.
     /// </summary>
-    private static void BuildTestActionMaps()
+    private void BuildTestActionMaps()
     {
         _padActionMap = new Dictionary<uint, string>();
         _kbActionMap = new Dictionary<int, string>();
@@ -807,7 +815,7 @@ public class KeyConfigHooks
     }
 
     /// <summary>Mark keys already held when the test opens (e.g. Enter) as seen.</summary>
-    private static void PrefillHeldKeys()
+    private void PrefillHeldKeys()
     {
         _kbHeld.Clear();
         var device = GetKeyboardDevice();
@@ -829,7 +837,7 @@ public class KeyConfigHooks
     }
 
     /// <summary>Announce assigned keyboard keys as they are pressed.</summary>
-    private static void PollKeyboardTest()
+    private void PollKeyboardTest()
     {
         if (_kbActionMap == null || _kbActionMap.Count == 0) return;
         var device = GetKeyboardDevice();
@@ -853,7 +861,7 @@ public class KeyConfigHooks
         if (pressed == null) return;
         string announcement = string.Join(" + ", pressed);
         API.LogInfo($"[SF6Access] Input test keyboard: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     private static void AnnouncePadButtons(uint rising)
@@ -931,10 +939,9 @@ public class KeyConfigHooks
         return string.Join("+", tokens);
     }
 
-    private static void Reset()
+    private void ResetMenu()
     {
         API.LogInfo("[SF6Access] KeyConfig ended");
-        _isActive = false;
         _param = null;
         _menuMessageData = null;
         _partsListSetting = null;

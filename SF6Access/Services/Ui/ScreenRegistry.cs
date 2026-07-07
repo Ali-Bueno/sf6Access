@@ -71,6 +71,33 @@ public class ScreenRegistry
         UiDispatcher.Register(new AvatarCreateHooks());
         UiDispatcher.Register(new FighterSettingHooks());
 
+        // Category D batch 1 — poll part migrated, AddHook parts kept in each
+        // hook's static [PluginEntryPoint] (TutorialControlTypeHooks is pure
+        // method-hook and stays legacy)
+        UiDispatcher.Register(new BonusResultHooks());
+        UiDispatcher.Register(new ReplayInfoMenuHooks());
+        UiDispatcher.Register(new RevivalPassWarningHooks());
+        UiDispatcher.Register(new ArcadeHooks());
+        UiDispatcher.Register(new SideSelectHooks());
+        UiDispatcher.Register(new RewardHooks());
+
+        // Category D batch 2 (FGMenuHooks stays legacy: its callback is an
+        // event-driven combine timer, not the poll scaffold)
+        UiDispatcher.Register(new NewsHooks());
+        UiDispatcher.Register(new BattleSettingsHooks());
+        UiDispatcher.Register(new ComboTrialHooks());
+
+        // Category D batch 3 (OptionMenuHooks + BattleInfoHooks stay legacy:
+        // event-driven activity / always-on battle monitor, no screen poll)
+        UiDispatcher.Register(new TrainingMenuHooks());
+        UiDispatcher.Register(new KeyConfigHooks());
+
+        // Final sweep — remaining pure-poll hooks (flow-param or GUI-view based)
+        UiDispatcher.Register(new TrainingReversalHooks());
+        UiDispatcher.Register(new EventBannerHooks());
+        UiDispatcher.Register(new TrainingFrameDataHooks());
+        UiDispatcher.Register(new TextInputDialogHooks());
+
         // New screen readers built on the foundation
         UiDispatcher.Register(new AvatarResultHooks());
         UiDispatcher.Register(new WTMPauseHooks());

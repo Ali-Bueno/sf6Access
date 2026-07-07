@@ -1,8 +1,8 @@
 using System;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,20 +13,30 @@ namespace SF6Access.Hooks;
 ///   DEFAULT = Both CPU
 ///   POS_2P  = Player 1 CPU, Player 2 Human
 /// Primary indicator: ArrPadIconCtrl[0].PlayState from P1 param.
+///
+/// ScreenAdapter for the poll; the PadIcon Left/Right hooks (event-routed
+/// immediate re-read) stay in the static [PluginEntryPoint] and call into the
+/// registered instance. Registered in ScreenRegistry.
 /// </summary>
-public class SideSelectHooks
+public sealed class SideSelectHooks : ScreenAdapter
 {
     private const string PARAM_TYPE = "app.UIFlowSideSelect.Param";
+    private static readonly string[] Types = { PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static SideSelectHooks _self;
 
-    private static ManagedObject _p1Param;
-    private static ManagedObject _p2Param;
-    private static string _lastPadState = "";
-    private static string _lastAnnouncement = "";
+    public SideSelectHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
+    }
+
+    private ManagedObject _p1Param;
+    private ManagedObject _p2Param;
+    private string _lastPadState = "";
+    private string _lastAnnouncement = "";
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -49,7 +59,8 @@ public class SideSelectHooks
                 var hook = method.AddHook(false);
                 hook.AddPost((ref ulong retval) =>
                 {
-                    if (_isActive) PollState();
+                    var self = _self;
+                    if (self != null && self.Active) self.PollState();
                 });
                 API.LogInfo($"[SF6Access] PadIcon.{name} hook installed");
             }
@@ -60,43 +71,34 @@ public class SideSelectHooks
         }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (!_isActive)
+        var (p1, p2) = FindParams();
+        if (p1 == null && p2 == null)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryFindParam();
-            return;
+            _p1Param = null;
+            _p2Param = null;
+            return false;
         }
 
         // Re-bind when the game recreated the Params (stale instances read
         // dead memory → side select goes silent on re-entry)
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var (p1, p2) = FindParams();
-            if (p1 == null && p2 == null)
-            {
-                Reset();
-                return;
-            }
-            if (FlowHelper.AddressOf(p1) != FlowHelper.AddressOf(_p1Param) ||
-                FlowHelper.AddressOf(p2) != FlowHelper.AddressOf(_p2Param))
-                Bind(p1, p2);
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-            PollState();
+        if (FlowHelper.AddressOf(p1) != FlowHelper.AddressOf(_p1Param) ||
+            FlowHelper.AddressOf(p2) != FlowHelper.AddressOf(_p2Param))
+            Bind(p1, p2);
+        return true;
     }
 
-    private static void TryFindParam()
+    protected override void OnDeactivate()
     {
-        var (p1, p2) = FindParams();
-        if (p1 == null && p2 == null) return;
-        Bind(p1, p2);
+        API.LogInfo("[SF6Access] SideSelect ended");
+        _p1Param = null;
+        _p2Param = null;
+        _lastPadState = "";
+        _lastAnnouncement = "";
     }
+
+    protected override void OnPoll() => PollState();
 
     private static (ManagedObject p1, ManagedObject p2) FindParams()
     {
@@ -110,18 +112,17 @@ public class SideSelectHooks
         return (p1, p2);
     }
 
-    private static void Bind(ManagedObject p1, ManagedObject p2)
+    private void Bind(ManagedObject p1, ManagedObject p2)
     {
         _p1Param = p1;
         _p2Param = p2;
-        _isActive = true;
         _lastPadState = "";
         _lastAnnouncement = "";
         API.LogInfo($"[SF6Access] SideSelect found (P1={p1 != null}, P2={p2 != null})");
         PollState();
     }
 
-    private static void PollState()
+    private void PollState()
     {
         // Read PadIconCtrl PlayState from both params — use whichever has a meaningful state
         string padPs = ReadPadCtrlFromAny();
@@ -160,10 +161,10 @@ public class SideSelectHooks
         _lastAnnouncement = announcement;
 
         API.LogInfo($"[SF6Access] {announcement} (PadCtrl={padPs})");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
-    private static string ReadPadCtrlFromAny()
+    private string ReadPadCtrlFromAny()
     {
         // Check both params' PadIconCtrl — return the first non-DEFAULT/non-empty state,
         // or DEFAULT if that's what both show
@@ -239,15 +240,5 @@ public class SideSelectHooks
     {
         try { return (arr as IObject)?.Call("Get", index) as ManagedObject; }
         catch { return null; }
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] SideSelect ended");
-        _isActive = false;
-        _p1Param = null;
-        _p2Param = null;
-        _lastPadState = "";
-        _lastAnnouncement = "";
     }
 }

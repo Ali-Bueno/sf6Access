@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,39 +11,43 @@ namespace SF6Access.Hooks;
 /// e.g. "Início 7F/Total 25F/Vantagem 2F" (Startup/Total/Advantage). They read
 /// "--" until a move is performed, then fill with numbers. Confirmed present in
 /// every training autodump; no need for the uint-keyed widget dictionary.
+///
+/// ScreenAdapter: Locate() scans for the HUD GUI views (no flow Param owns
+/// them). Registered in ScreenRegistry.
 /// </summary>
-public class TrainingFrameDataHooks
+public sealed class TrainingFrameDataHooks : ScreenAdapter
 {
     private const string FRAME_GUI = "ui11255";
+    private static readonly string[] Types = { FRAME_GUI };
+    public override string[] OwnedTypes => Types;
+
     private static readonly string[] LineNames = { "e_txt_up", "e_txt_down" };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 6;
-
-    private static readonly List<(string owner, ManagedObject view)> _views = new();
-    private static readonly Dictionary<string, string> _lastByLine = new();
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public TrainingFrameDataHooks()
     {
-        API.LogInfo("[SF6Access] TrainingFrameDataHooks initialized");
+        SearchInterval = 60;
+        ReadInterval = 6;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private readonly List<(string owner, ManagedObject view)> _views = new();
+    private readonly Dictionary<string, string> _lastByLine = new();
+
+    protected override bool Locate()
     {
-        _pollCounter++;
+        _views.Clear();
+        foreach (var v in GuiTextReader.FindGuiViews(FRAME_GUI))
+            _views.Add(v);
+        return _views.Count > 0;
+    }
 
-        if (_views.Count == 0 ? _pollCounter % 120 == 0 : _pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            _views.Clear();
-            foreach (var v in GuiTextReader.FindGuiViews(FRAME_GUI))
-                _views.Add(v);
-        }
+    protected override void OnDeactivate()
+    {
+        _views.Clear();
+        _lastByLine.Clear();
+    }
 
-        if (_views.Count == 0 || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void OnPoll()
+    {
         // The frame meter HUD ("ui11255") also renders while watching replays
         // (where it was leaking). Only read it during a live training session...
         if (API.GetManagedSingleton("app.training.TrainingManager") == null)
@@ -66,7 +69,7 @@ public class TrainingFrameDataHooks
         PollFrameData();
     }
 
-    private static void PollFrameData()
+    private void PollFrameData()
     {
         foreach (var (owner, view) in _views)
         {
@@ -87,7 +90,7 @@ public class TrainingFrameDataHooks
                     _lastByLine[t.Name] = text;
 
                     API.LogInfo($"[SF6Access] Frame data [{t.Name}]: {text}");
-                    ScreenReaderService.Speak(text, interrupt: false);
+                    Speak(text, interrupt: false);
                 }
             }
             catch { }

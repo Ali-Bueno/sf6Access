@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -10,41 +9,48 @@ namespace SF6Access.Hooks;
 /// (UIStartMenu.FlowParam._MenuAnnounceBanner — UIPartsAnnounceBanner with a
 /// _BannerList scroll list of "[Event] ..." entries). Announces the focused
 /// event when navigating the banner.
+///
+/// ScreenAdapter; MainMenuHooks calls AnnounceCurrent() when the banner gains
+/// menu focus. Registered in ScreenRegistry.
 /// </summary>
-public class EventBannerHooks
+public sealed class EventBannerHooks : ScreenAdapter
 {
     private const string START_MENU_TYPE = "app.UIStartMenu.FlowParam";
+    private static readonly string[] Types = { START_MENU_TYPE };
+    public override string[] OwnedTypes => Types;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static EventBannerHooks _self;
 
-    private static ManagedObject _banner;
-    private static ManagedObject _mainGroup;
-    private static int _lastFocus = -2;
-    private static string _lastText;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public EventBannerHooks()
     {
-        API.LogInfo("[SF6Access] EventBannerHooks initialized");
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _banner;
+    private ManagedObject _mainGroup;
+    private int _lastFocus = -2;
+    private string _lastText;
+
+    protected override bool Locate()
     {
-        _pollCounter++;
+        var startParam = FlowHelper.FindFlowParam(START_MENU_TYPE);
+        _banner = FlowHelper.GetObjectField(startParam, "_MenuAnnounceBanner");
+        _mainGroup = FlowHelper.GetObjectField(startParam, "_MainGroup");
+        return _banner != null;
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var startParam = FlowHelper.FindFlowParam(START_MENU_TYPE);
-            _banner = FlowHelper.GetObjectField(startParam, "_MenuAnnounceBanner");
-            _mainGroup = FlowHelper.GetObjectField(startParam, "_MainGroup");
-            if (_banner == null) { _lastFocus = -2; _lastText = null; }
-        }
+    protected override void OnDeactivate()
+    {
+        _banner = null;
+        _mainGroup = null;
+        _lastFocus = -2;
+        _lastText = null;
+    }
 
-        if (_banner == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void OnPoll()
+    {
         try
         {
             // The banner auto-rotates on a timer — only announce while the
@@ -66,21 +72,14 @@ public class EventBannerHooks
             }
             if (focus < 0 || focus == _lastFocus) return;
 
-            bool first = _lastFocus == -2;
             _lastFocus = focus;
-            if (first)
-            {
-                AnnounceCurrent(); // gaining focus: read the current event
-                return;
-            }
-
-            AnnounceCurrent();
+            Announce(); // gaining focus or moving: read the current event
         }
         catch { _banner = null; }
     }
 
     /// <summary>True when the start menu's focused group child IS the banner.</summary>
-    private static bool IsBannerFocused()
+    private bool IsBannerFocused()
     {
         try
         {
@@ -91,8 +90,10 @@ public class EventBannerHooks
         catch { return false; }
     }
 
-    /// <summary>Announce the focused event entry (also callable on banner focus).</summary>
-    public static void AnnounceCurrent()
+    /// <summary>Announce the focused event entry (called on banner focus by MainMenuHooks).</summary>
+    public static void AnnounceCurrent() => _self?.Announce();
+
+    private void Announce()
     {
         if (_banner == null) return;
 
@@ -103,6 +104,6 @@ public class EventBannerHooks
         _lastText = text;
 
         API.LogInfo($"[SF6Access] Event banner [{_lastFocus}]: {text}");
-        ScreenReaderService.Speak(text);
+        Speak(text);
     }
 }

@@ -1,7 +1,7 @@
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,25 +12,46 @@ namespace SF6Access.Hooks;
 /// guide message. For spin rows CurrentMenuData is the selected VALUE child and
 /// CurrentParentData is the row label. Value edits (left/right on the same row)
 /// are detected by polling the resolved value text.
+///
+/// ScreenAdapter: the screen signal is TrainingManager.IsMenuOpening (no flow
+/// param owns activity), checked every SearchInterval = 5 frames so close
+/// detection stays fast (TrainingAttackDataHooks suppresses on IsInTrainingMenu).
+/// ReadInterval = 1 drives the 3-frame delayed slider announce; the heavier
+/// reads run every READ_TICKS frames. While the reversal / character-specific
+/// submenus are up, this adapter freezes (they own announcements). The
+/// OnSliderUp/Down hooks stay in the static [PluginEntryPoint]. Registered in
+/// ScreenRegistry.
 /// </summary>
-public class TrainingMenuHooks
+public sealed class TrainingMenuHooks : ScreenAdapter
 {
     private const string FLOW_PARAM_TYPE = "app.training.UIFlowTrainingMenu.Param";
+    private static readonly string[] Types = { FLOW_PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
-    private const int POLL_VALUE_INTERVAL = 10;
+    // Navigation reads every 5th frame, value-edit reads every 10th (the
+    // original POLL_READ_INTERVAL / POLL_VALUE_INTERVAL).
+    private const int READ_TICKS = 5;
+    private const int VALUE_TICKS = 10;
 
-    private static ManagedObject _manager;
-    private static int _lastPrimary = -1;
-    private static int _lastSecondary = -1;
-    private static string _lastValueName;
-    private static string _lastSectionName;
-    private static int _lastSliderValue = int.MinValue;
-    private static string _lastRowText;
-    private static ManagedObject _flowParam; // cached UIFlowTrainingMenu.Param
+    private static TrainingMenuHooks _self;
+    public static bool IsInTrainingMenu => _self != null && _self.Active;
+
+    public TrainingMenuHooks()
+    {
+        SearchInterval = 5;
+        ReadInterval = 1;
+        _self = this;
+    }
+
+    private ManagedObject _manager;
+    private ManagedObject _flowParam; // cached UIFlowTrainingMenu.Param
+    private int _frame;
+    private int _lastPrimary = -1;
+    private int _lastSecondary = -1;
+    private string _lastValueName;
+    private string _lastSectionName;
+    private int _lastSliderValue = int.MinValue;
+    private string _lastRowText;
 
     // app.training.ItemType slider variants (SLIDER, SLIDER_GUIDE, SLIDER_VITAL_1P/2P,
     // SLIDER_DRIVE, SLIDER_SA_1P/2P) — their value is numeric, not a message Guid
@@ -42,9 +63,9 @@ public class TrainingMenuHooks
     // 19 is the reversal list's 2nd slot, which reports a different _Type (and a
     // bogus _SlotID) than the other reversal slots — verified via the log.
     private static readonly int[] SLOT_ITEM_TYPES = { 5, 6, 8, 19 };
-    private static bool _onSlotRow;
-    private static string _lastSlotText;
-    private static int _lastSlotId = int.MinValue;
+    private bool _onSlotRow;
+    private string _lastSlotText;
+    private int _lastSlotId = int.MinValue;
 
     // OnSliderUp/Down edits: the slider's GUI text updates AFTER the handler
     // runs, so the hook only queues the slider and the read happens a few
@@ -56,7 +77,10 @@ public class TrainingMenuHooks
     private static int _sliderReadDelay;
     private const int SLIDER_READ_DELAY_FRAMES = 3;
 
-    public static bool IsInTrainingMenu => _isActive;
+    /// <summary>The reversal move-selection / character-specific submenus open on
+    /// top of the training menu and own announcements while up — freeze here.</summary>
+    private static bool IsSuppressed() =>
+        TrainingReversalHooks.IsActive || TrainingCharacterSpecificHooks.IsActive;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -106,13 +130,76 @@ public class TrainingMenuHooks
         }
     }
 
+    protected override bool Locate()
+    {
+        // While a submenu owns the screen, freeze the current state — neither
+        // activate nor deactivate (the parent menu is still open underneath).
+        if (IsSuppressed()) return Active;
+
+        if (_manager == null)
+        {
+            try { _manager = API.GetManagedSingleton("app.training.TrainingManager"); }
+            catch { _manager = null; }
+        }
+        if (_manager == null || !IsMenuOpen()) return false;
+
+        if (Active)
+            _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
+        return true;
+    }
+
+    protected override void OnActivate()
+    {
+        _lastPrimary = -1;
+        _lastSecondary = -1;
+        _lastValueName = null;
+        _lastSectionName = null;
+        _lastRowText = null;
+        _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
+        API.LogInfo("[SF6Access] Training menu opened");
+
+        PollNavigation(valueTick: false);
+    }
+
+    protected override void OnDeactivate()
+    {
+        API.LogInfo("[SF6Access] Training menu closed");
+        _lastPrimary = -1;
+        _lastSecondary = -1;
+        _lastValueName = null;
+        _lastSectionName = null;
+        _lastRowText = null;
+        _flowParam = null;
+        _onSlotRow = false;
+        _lastSlotText = null;
+        _lastSlotId = int.MinValue;
+        _pendingSlider = null;
+    }
+
+    protected override void OnPoll()
+    {
+        _frame++;
+        ProcessPendingSlider();
+
+        if (IsSuppressed()) return;
+        if (_frame % READ_TICKS != 0) return;
+
+        PollNavigation(valueTick: _frame % VALUE_TICKS == 0);
+    }
+
+    private bool IsMenuOpen()
+    {
+        var result = FlowHelper.Call(_manager, "get_IsMenuOpening");
+        return result is bool b && b;
+    }
+
     /// <summary>
     /// Announce a queued slider edit from the slider's own GUI: e_text_value
     /// (+ e_text_endwords suffix, e.g. "%"). Unlike the section-wide row text,
     /// this is scoped to the edited control, so value 0 and panel repaints
     /// can't hide it. Falls back to the slider's CurrentParam float.
     /// </summary>
-    private static void ProcessPendingSlider()
+    private void ProcessPendingSlider()
     {
         if (_pendingSlider == null) return;
         if (--_sliderReadDelay > 0) return;
@@ -140,7 +227,7 @@ public class TrainingMenuHooks
 
             string announcement = string.IsNullOrEmpty(suffix) ? value : value + suffix;
             API.LogInfo($"[SF6Access] Training slider edit: {announcement}");
-            ScreenReaderService.Speak(announcement);
+            Speak(announcement);
 
             // Keep the poll's sync state current so it stays quiet
             _lastSliderValue = FlowHelper.ReadIntField(FindViewData(), "SliderValue", _lastSliderValue);
@@ -149,69 +236,7 @@ public class TrainingMenuHooks
         catch { }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        _pollCounter++;
-        ProcessPendingSlider();
-
-        // The reversal move-selection submenu opens on top of the training
-        // menu. While it is up TrainingReversalHooks owns announcements; keep
-        // polling the parent here only spammed TrainingMenuData[].Get out-of-
-        // range errors (the slot strip row index no longer fits) and fought
-        // the submenu for the cursor — the source of the "unstable" reversal.
-        if (TrainingReversalHooks.IsActive || TrainingCharacterSpecificHooks.IsActive) return;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-            _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
-
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        if (!IsMenuOpen())
-        {
-            Reset();
-            return;
-        }
-
-        PollNavigation();
-    }
-
-    private static void TryActivate()
-    {
-        try
-        {
-            _manager = API.GetManagedSingleton("app.training.TrainingManager");
-        }
-        catch { _manager = null; }
-
-        if (_manager == null || !IsMenuOpen()) return;
-
-        _lastPrimary = -1;
-        _lastSecondary = -1;
-        _lastValueName = null;
-        _lastSectionName = null;
-        _lastRowText = null;
-        _flowParam = FlowHelper.FindFlowParam(FLOW_PARAM_TYPE);
-        _isActive = true;
-        API.LogInfo("[SF6Access] Training menu opened");
-
-        PollNavigation();
-    }
-
-    private static bool IsMenuOpen()
-    {
-        var result = FlowHelper.Call(_manager, "get_IsMenuOpening");
-        return result is bool b && b;
-    }
-
-    private static void PollNavigation()
+    private void PollNavigation(bool valueTick)
     {
         int primary = FlowHelper.CallInt(_manager, "get_PrimaryIndex");
         int secondary = FlowHelper.CallInt(_manager, "get_SecondaryIndex");
@@ -219,7 +244,7 @@ public class TrainingMenuHooks
         if (primary == _lastPrimary && secondary == _lastSecondary)
         {
             // Same row: detect value edits (left/right) via the resolved value text
-            if (_pollCounter % POLL_VALUE_INTERVAL == 0)
+            if (valueTick)
                 PollValueChange();
             return;
         }
@@ -233,7 +258,7 @@ public class TrainingMenuHooks
         AnnounceCurrentItem(tabChanged);
     }
 
-    private static void PollValueChange()
+    private void PollValueChange()
     {
         // Reversal slot rows: left/right moves between tiles and in-place edits
         // (toggle, count, skill change) only show up in the slot DATA
@@ -269,7 +294,7 @@ public class TrainingMenuHooks
                     if (!firstSlider)
                     {
                         API.LogInfo($"[SF6Access] Training slider changed: {sliderValue}");
-                        ScreenReaderService.Speak(sliderValue.ToString());
+                        Speak(sliderValue.ToString());
                         _lastRowText = ReadFocusedRowText();
                     }
                 }
@@ -284,7 +309,7 @@ public class TrainingMenuHooks
         {
             _lastValueName = name;
             API.LogInfo($"[SF6Access] Training value changed: {name}");
-            ScreenReaderService.Speak(name);
+            Speak(name);
             _lastRowText = ReadFocusedRowText();
             return;
         }
@@ -300,7 +325,7 @@ public class TrainingMenuHooks
     /// Detect left/right value edits by re-reading the focused row's GUI text
     /// and announcing only the changed segment.
     /// </summary>
-    private static void PollRowTextChange()
+    private void PollRowTextChange()
     {
         string text = ReadFocusedRowText();
         if (string.IsNullOrEmpty(text)) return;
@@ -322,14 +347,14 @@ public class TrainingMenuHooks
         }
 
         API.LogInfo($"[SF6Access] Training row text changed: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     private static int CountSegments(string text) =>
         text.Split(new[] { ". " }, System.StringSplitOptions.RemoveEmptyEntries).Length;
 
     /// <summary>On-screen text of the focused row in the menu's secondary list.</summary>
-    private static string ReadFocusedRowText()
+    private string ReadFocusedRowText()
     {
         try
         {
@@ -352,7 +377,7 @@ public class TrainingMenuHooks
     /// label, and only then the training parameter settings — they can be
     /// stale (the drive bar announced 0 while the screen showed 2).
     /// </summary>
-    private static int ReadSliderValue(ManagedObject viewData, int itemType, ManagedObject rowData, string rowLabel)
+    private int ReadSliderValue(ManagedObject viewData, int itemType, ManagedObject rowData, string rowLabel)
     {
         // Vitality (11/12) and Super Art gauge (14/15) rows: the ViewData
         // SliderValue is frequently a stale 0 for these (1P vitality, 1P/2P
@@ -406,7 +431,7 @@ public class TrainingMenuHooks
     /// e_text_name matching the row label and return the nearest preceding
     /// visible e_text_value — that pairing matches the on-screen layout.
     /// </summary>
-    private static string ReadSliderValueFromGui(string rowLabel)
+    private string ReadSliderValueFromGui(string rowLabel)
     {
         if (string.IsNullOrEmpty(rowLabel)) return null;
         try
@@ -434,7 +459,7 @@ public class TrainingMenuHooks
     /// (_UIData._MenuData[tab]._ChildData[row]) — deterministic, unlike the
     /// dirty per-redraw _ViewDataList.
     /// </summary>
-    private static ManagedObject FindRowData()
+    private ManagedObject FindRowData()
     {
         try
         {
@@ -447,7 +472,7 @@ public class TrainingMenuHooks
         catch { return null; }
     }
 
-    private static void AnnounceCurrentItem(bool tabChanged)
+    private void AnnounceCurrentItem(bool tabChanged)
     {
         var data = FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
         if (data == null) return;
@@ -553,7 +578,7 @@ public class TrainingMenuHooks
 
         string announcement = string.Join(". ", parts);
         API.LogInfo($"[SF6Access] Training menu [{_lastPrimary},{_lastSecondary}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     /// <summary>
@@ -563,12 +588,13 @@ public class TrainingMenuHooks
     /// </summary>
     public static string FillGuideIcons(string text)
     {
-        if (!_isActive || string.IsNullOrEmpty(text)) return text;
+        var self = _self;
+        if (self == null || !self.Active || string.IsNullOrEmpty(text)) return text;
         try
         {
-            var row = FindRowData()
-                ?? FlowHelper.Call(_manager, "get_CurrentMenuData") as ManagedObject;
-            return InjectGuideIcons(text, row);
+            var row = self.FindRowData()
+                ?? FlowHelper.Call(self._manager, "get_CurrentMenuData") as ManagedObject;
+            return self.InjectGuideIcons(text, row);
         }
         catch { return text; }
     }
@@ -580,7 +606,7 @@ public class TrainingMenuHooks
     /// the player's actual device: &lt;ICON KeyR&gt; for keyboard), falling
     /// back to the row data's assigned inputs (_GuidIcon/_GuidAddIcon).
     /// </summary>
-    private static string InjectGuideIcons(string guide, ManagedObject rowData)
+    private string InjectGuideIcons(string guide, ManagedObject rowData)
     {
         if (string.IsNullOrEmpty(guide) || rowData == null) return guide;
         try
@@ -620,7 +646,7 @@ public class TrainingMenuHooks
     /// for on/off, the R delay/timing config, count changes) by re-reading the
     /// focused slot's on-screen text and announcing the changed segment.
     /// </summary>
-    private static void PollReversalSlot()
+    private void PollReversalSlot()
     {
         int slotId = FlowHelper.ReadIntField(FindRowData(), "_SlotID", -1);
         string info = ReadReversalRowGui(slotId >= 0 ? slotId + 1 : -1);
@@ -646,7 +672,7 @@ public class TrainingMenuHooks
         if (string.IsNullOrEmpty(announcement)) announcement = info;
 
         API.LogInfo($"[SF6Access] Reversal slot: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     /// <summary>
@@ -656,7 +682,7 @@ public class TrainingMenuHooks
     /// elements (e_txt_name/e_txt_center/e_txt_sub/e_txt_right/e_txt_east)
     /// carry everything the sighted player sees.
     /// </summary>
-    private static string ReadReversalRowGui(int slotNumber = -1)
+    private string ReadReversalRowGui(int slotNumber = -1)
     {
         try
         {
@@ -701,7 +727,7 @@ public class TrainingMenuHooks
 
     /// <summary>Spoken names of the focused row's inline icon glyphs, in tree
     /// order (e.g. &lt;ICON KeyR&gt; → "R") — they reflect the player's device.</summary>
-    private static System.Collections.Generic.List<string> ReadRowIconNames()
+    private System.Collections.Generic.List<string> ReadRowIconNames()
     {
         var names = new System.Collections.Generic.List<string>();
         try
@@ -728,7 +754,7 @@ public class TrainingMenuHooks
     /// match (the newest), or slider values never updated after edits.
     /// Returns null for rows that were never redrawn.
     /// </summary>
-    private static ManagedObject FindViewData()
+    private ManagedObject FindViewData()
     {
         try
         {
@@ -749,21 +775,5 @@ public class TrainingMenuHooks
         }
         catch { }
         return null;
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Training menu closed");
-        _isActive = false;
-        _lastPrimary = -1;
-        _lastSecondary = -1;
-        _lastValueName = null;
-        _lastSectionName = null;
-        _lastRowText = null;
-        _flowParam = null;
-        _onSlotRow = false;
-        _lastSlotText = null;
-        _lastSlotId = int.MinValue;
-        _pendingSlider = null;
     }
 }

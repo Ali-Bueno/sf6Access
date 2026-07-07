@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,19 +14,31 @@ namespace SF6Access.Hooks;
 /// way) into an address→value map, then matched against the panel's four named
 /// parts once the results appear. A short delay lets the count-up settle on the
 /// final figures before announcing.
+///
+/// SingleParamScreenAdapter for the poll; the SetTextureNums capture hooks stay
+/// in the static [PluginEntryPoint]. Registered in ScreenRegistry.
 /// </summary>
-public class BonusResultHooks
+public sealed class BonusResultHooks : SingleParamScreenAdapter
 {
     private const string RESULT_PARAM = "app.UI75520.Param";
+    protected override string ParamType => RESULT_PARAM;
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 10;
-    private const int RESULT_DELAY = 90; // let the count-up settle
+    // 9 read ticks at the 10-frame interval = the original 90-frame delay
+    // (lets the count-up settle on the final figures).
+    private const int RESULT_DELAY_TICKS = 9;
 
-    private static bool _announced;
-    private static int _seenFrame = -1;
+    public BonusResultHooks()
+    {
+        SearchInterval = 10;
+        ReadInterval = 10;
+    }
 
-    // UIPartsTextureNumber instance address -> last value the game set into it
+    private int _tick;
+    private bool _announced;
+    private int _seenTick = -1;
+
+    // UIPartsTextureNumber instance address -> last value the game set into it.
+    // Static: the capture hooks run regardless of the adapter's state.
     private static readonly Dictionary<ulong, int> _values = new();
 
     [PluginEntryPoint]
@@ -64,34 +76,36 @@ public class BonusResultHooks
         }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
-        if (_pollCounter % POLL_INTERVAL != 0) return;
+        _announced = false;
+        _seenTick = -1;
+    }
 
+    protected override void OnExit()
+    {
+        _announced = false;
+        _seenTick = -1;
+    }
+
+    protected override void Poll()
+    {
+        _tick++;
         try
         {
-            var param = FlowHelper.FindFlowParam(RESULT_PARAM);
-            if (param == null)
-            {
-                _announced = false;
-                _seenFrame = -1;
-                return;
-            }
             if (_announced) return;
 
-            int total = LookupPart(param, "PartsTextureNumberTotalScore", out bool haveTotal);
+            int total = LookupPart(Param, "PartsTextureNumberTotalScore", out bool haveTotal);
             if (!haveTotal) return; // values not set into the parts yet
 
-            if (_seenFrame < 0) { _seenFrame = _pollCounter; return; }
-            if (_pollCounter - _seenFrame < RESULT_DELAY) return;
+            if (_seenTick < 0) { _seenTick = _tick; return; }
+            if (_tick - _seenTick < RESULT_DELAY_TICKS) return;
 
             // Re-read after the delay so we get the settled final figures.
-            total = LookupPart(param, "PartsTextureNumberTotalScore", out bool _ht);
-            int time = LookupPart(param, "PartsTextureNumberTime", out bool haveTime);
-            int score = LookupPart(param, "PartsTextureNumberScore", out bool haveScore);
-            int clear = LookupPart(param, "PartsTextureNumberClear", out bool haveClear);
+            total = LookupPart(Param, "PartsTextureNumberTotalScore", out bool haveTotalFinal);
+            int time = LookupPart(Param, "PartsTextureNumberTime", out bool haveTime);
+            int score = LookupPart(Param, "PartsTextureNumberScore", out bool haveScore);
+            int clear = LookupPart(Param, "PartsTextureNumberClear", out bool haveClear);
 
             _announced = true;
             var parts = new List<string>();
@@ -102,7 +116,7 @@ public class BonusResultHooks
 
             string text = string.Join(". ", parts) + ".";
             API.LogInfo($"[SF6Access] Bonus result: {text}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            Speak(text, interrupt: false);
         }
         catch { }
     }

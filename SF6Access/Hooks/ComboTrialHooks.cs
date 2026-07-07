@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,38 +12,53 @@ namespace SF6Access.Hooks;
 /// starts, and re-reads the recipe every time an attempt ends (progress
 /// returns to zero), succeeded or not. Recipe steps render as inline icon
 /// tags — read raw and converted via SpeakableIcons.
+///
+/// SingleParamScreenAdapter with ReadInterval = 1: the quiet-window /
+/// cooldown / pending timers are frame-based and shared with the
+/// FBattleMission judge hooks (kept in the static [PluginEntryPoint]), so a
+/// static frame counter advances every poll and the heavier reads run every
+/// READ_TICKS frames. TrainingAttackDataHooks reads IsActive. Registered in
+/// ScreenRegistry.
 /// </summary>
-public class ComboTrialHooks
+public sealed class ComboTrialHooks : SingleParamScreenAdapter
 {
     private const string PARAM_TYPE = "app.esports.UI11439.Param";
+    protected override string ParamType => PARAM_TYPE;
 
-    private static bool _isActive;
+    // Heavier reads run every 10th frame (the original POLL_READ_INTERVAL).
+    private const int READ_TICKS = 10;
+
+    private static ComboTrialHooks _self;
 
     /// <summary>True while a combo trial is running — other training readouts
     /// (e.g. attack-data combo damage) suppress themselves during trials.</summary>
-    public static bool IsActive => _isActive;
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 10;
+    public ComboTrialHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 1; // frame counter for the judge-hook timers; reads gated by READ_TICKS
+        _self = this;
+    }
 
-    private static ManagedObject _param;
-    private static int _lastProgress;
-    private static bool _lastFailed;
-    private static string _lastRecipe;
-    private static string _lastTitle;
+    // Frame counter shared with the judge hooks (advances while the trial is active).
+    private static int _frame;
+
+    private int _lastProgress;
+    private bool _lastFailed;
+    private string _lastTitle;
 
     // The recipe rows go blank during the reset animation — retry the read
     // until they come back instead of announcing an empty recipe
-    private static bool _pendingAnnounce;
-    private static bool _pendingIncludeTitle;
-    private static int _pendingSinceFrame;
+    private bool _pendingAnnounce;
+    private bool _pendingIncludeTitle;
+    private int _pendingSinceFrame;
     private const int PENDING_TIMEOUT_FRAMES = 240;
 
     // Attempt-result overlay tracking + cooldown so a trial-swap announce
     // isn't followed by a redundant re-read
-    private static bool _announceFlowWasActive;
-    private static int _lastAnnounceFrame = -10000;
+    private bool _announceFlowWasActive;
+    private int _lastAnnounceFrame = -10000;
     private const int ANNOUNCE_COOLDOWN_FRAMES = 180;
 
     // Game-side attempt events from app.FBattleMission (the trial judge).
@@ -62,7 +77,7 @@ public class ComboTrialHooks
     // before its animation ends (Beginner 5 read during the special)
     private const int QUIET_FRAMES = 45;
     private const int QUIET_FRAMES_SUCCESS = 120;
-    private static int _pendingQuietFrames = QUIET_FRAMES;
+    private int _pendingQuietFrames = QUIET_FRAMES;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -88,7 +103,7 @@ public class ComboTrialHooks
                 var hook = reset.AddHook(false);
                 hook.AddPost((ref ulong retval) =>
                 {
-                    if (!_isActive) return;
+                    if (!IsActive) return;
                     API.LogInfo("[SF6Access] Combo trial judge ResetProgress fired");
                     _gameResetEvent = true;
                 });
@@ -101,7 +116,7 @@ public class ComboTrialHooks
                 var hook = onAttack.AddHook(false);
                 hook.AddPre(args =>
                 {
-                    if (_isActive)
+                    if (IsActive)
                     {
                         // Cache both fighters' teams so the poll can read the live
                         // combo counter (args[2]=attacker cWork, args[3]=defender
@@ -118,8 +133,8 @@ public class ComboTrialHooks
                 });
                 hook.AddPost((ref ulong retval) =>
                 {
-                    if (!_isActive) return;
-                    _lastHitFrame = _pollCounter;
+                    if (!IsActive) return;
+                    _lastHitFrame = _frame;
                     _activitySinceAnnounce = true;
                 });
                 API.LogInfo("[SF6Access] FBattleMission.TrialOnAttack hook installed");
@@ -131,59 +146,30 @@ public class ComboTrialHooks
         }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
+        // Each trial creates a NEW param instance — a stale reference kept
+        // reading the previous trial (second trial was never announced), so
+        // this also fires on the swap to the next trial.
+        _lastProgress = 0;
+        _lastFailed = false;
+        _lastTitle = null;
+        ResetAttemptEvents();
+        API.LogInfo("[SF6Access] Combo trial active (bind)");
+        RequestAnnounce(includeTitle: true);
+    }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            _param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (_param == null) return;
+    protected override void OnExit()
+    {
+        ComboTracker.Clear();
+        _pendingAnnounce = false;
+        API.LogInfo("[SF6Access] Combo trial ended");
+    }
 
-            _isActive = true;
-            _lastProgress = 0;
-            _lastFailed = false;
-            _lastRecipe = null;
-            _lastTitle = null;
-            ResetAttemptEvents();
-            API.LogInfo("[SF6Access] Combo trial active");
-            RequestAnnounce(includeTitle: true);
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            // Each trial creates a NEW param instance — a stale reference kept
-            // reading the previous trial (second trial was never announced)
-            var current = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (current == null)
-            {
-                _isActive = false;
-                _param = null;
-                ComboTracker.Clear();
-                API.LogInfo("[SF6Access] Combo trial ended");
-                return;
-            }
-
-            bool swapped;
-            try { swapped = current.GetAddress() != _param.GetAddress(); }
-            catch { swapped = true; }
-            if (swapped)
-            {
-                _param = current;
-                _lastProgress = 0;
-                _lastFailed = false;
-                _lastTitle = null;
-                ResetAttemptEvents();
-                API.LogInfo("[SF6Access] Combo trial param swapped (next trial)");
-                RequestAnnounce(includeTitle: true);
-                return;
-            }
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
+    protected override void Poll()
+    {
+        _frame++;
+        if (_frame % READ_TICKS != 0) return;
 
         // The attempt-result overlay closing marks the end of an attempt
         // (success banners and fail banners both use it) — more reliable than
@@ -201,7 +187,7 @@ public class ComboTrialHooks
 
         // The param persists between trials: a title change means the next
         // trial loaded — announce it fully (the second trial was silent)
-        string title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_param, "TextTitle"));
+        string title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(Param, "TextTitle"));
         if (!string.IsNullOrEmpty(title) && _lastTitle != null && title != _lastTitle)
         {
             _lastTitle = title;
@@ -213,8 +199,8 @@ public class ComboTrialHooks
 
         // Attempt finished (success or fail): progress drops back (fail sets
         // it to -1) or the fail flag rises — queue a recipe re-read
-        int progress = FlowHelper.ReadIntField(_param, "CurrentProgressNo", 0);
-        bool failed = FlowHelper.ReadBoolField(_param, "IsFailedProgress");
+        int progress = FlowHelper.ReadIntField(Param, "CurrentProgressNo", 0);
+        bool failed = FlowHelper.ReadBoolField(Param, "IsFailedProgress");
 
         bool attemptEnded = (progress < _lastProgress) || (failed && !_lastFailed);
         if (progress != _lastProgress)
@@ -256,7 +242,7 @@ public class ComboTrialHooks
 
     /// <summary>Attempt-end re-read, deduplicated across all detection paths
     /// (row states, progress counter, overlay, judge events) via one cooldown.</summary>
-    private static bool TryRequestAttemptAnnounce(string reason, int quietFrames = QUIET_FRAMES)
+    private bool TryRequestAttemptAnnounce(string reason, int quietFrames = QUIET_FRAMES)
     {
         // The example-demo viewer (UI11440) lands hits and resets the judge
         // every loop — no re-reads while it plays. Closing it fires one final
@@ -264,7 +250,7 @@ public class ComboTrialHooks
         if (FlowTrackerHooks.IsFlowActive("UI11440"))
             return false;
 
-        if (_pendingAnnounce || _pollCounter - _lastAnnounceFrame <= ANNOUNCE_COOLDOWN_FRAMES)
+        if (_pendingAnnounce || _frame - _lastAnnounceFrame <= ANNOUNCE_COOLDOWN_FRAMES)
             return false;
         API.LogInfo($"[SF6Access] Combo trial attempt ended ({reason})");
         _pendingQuietFrames = quietFrames;
@@ -272,9 +258,9 @@ public class ComboTrialHooks
         return true;
     }
 
-    private static bool _rowsHadProgress;
-    private static bool _rowsHadFailed;
-    private static string _lastStateSignature;
+    private bool _rowsHadProgress;
+    private bool _rowsHadFailed;
+    private string _lastStateSignature;
 
     // Exact row-state names from app.esports.UI11439.ItemPlayState statics
     private static string _stateDefault;
@@ -295,13 +281,13 @@ public class ComboTrialHooks
         catch { }
     }
 
-    private static void PollRowStates()
+    private void PollRowStates()
     {
         try
         {
             CacheStateNames();
 
-            var list = FlowHelper.GetObjectField(_param, "PartsScrollListRecipe");
+            var list = FlowHelper.GetObjectField(Param, "PartsScrollListRecipe");
             var control = FlowHelper.GetObjectField(list, "Control")
                 ?? FlowHelper.Call(list, "get_Control") as ManagedObject;
             if (control == null) return;
@@ -344,19 +330,19 @@ public class ComboTrialHooks
         catch { }
     }
 
-    private static void RequestAnnounce(bool includeTitle)
+    private void RequestAnnounce(bool includeTitle)
     {
         _pendingAnnounce = true;
         _pendingIncludeTitle = includeTitle;
-        _pendingSinceFrame = _pollCounter;
+        _pendingSinceFrame = _frame;
         TryAnnounce();
     }
 
-    private static void TryAnnounce()
+    private void TryAnnounce()
     {
         try
         {
-            bool timedOut = _pollCounter - _pendingSinceFrame > PENDING_TIMEOUT_FRAMES;
+            bool timedOut = _frame - _pendingSinceFrame > PENDING_TIMEOUT_FRAMES;
 
             // Never re-read the recipe while a combo is still live: the game keeps
             // its combo counter (cTeam.mComboCount) up through long finisher
@@ -373,7 +359,7 @@ public class ComboTrialHooks
             // attacking past the timeout, drop the re-read instead of talking
             // over them — the next attempt boundary re-triggers it anyway.
             if (!_pendingIncludeTitle &&
-                _lastHitFrame >= 0 && _pollCounter - _lastHitFrame <= _pendingQuietFrames)
+                _lastHitFrame >= 0 && _frame - _lastHitFrame <= _pendingQuietFrames)
             {
                 if (timedOut) _pendingAnnounce = false;
                 return;
@@ -388,26 +374,25 @@ public class ComboTrialHooks
             var parts = new List<string>();
             if (_pendingIncludeTitle)
             {
-                string title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_param, "TextTitle"));
+                string title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(Param, "TextTitle"));
                 if (!string.IsNullOrEmpty(title)) parts.Add(title);
             }
             if (!string.IsNullOrEmpty(recipe)) parts.Add(recipe);
             if (parts.Count == 0) return;
 
             string announcement = string.Join(". ", parts);
-            _lastRecipe = recipe;
-            _lastAnnounceFrame = _pollCounter;
+            _lastAnnounceFrame = _frame;
             _activitySinceAnnounce = false;
 
             // Attempt-end re-reads interrupt: the player just failed and needs
             // the recipe NOW. Trial-start reads queue after banner/menu speech.
             API.LogInfo($"[SF6Access] Combo trial recipe: {announcement}");
-            ScreenReaderService.Speak(announcement, interrupt: !_pendingIncludeTitle);
+            Speak(announcement, interrupt: !_pendingIncludeTitle);
         }
         catch { _pendingAnnounce = false; }
     }
 
-    private static bool? _lastOrderMode;
+    private bool? _lastOrderMode;
 
     // Arrow separators and sizing placeholders that pollute the recipe rows
     private static bool IsNoiseToken(string step)
@@ -422,9 +407,9 @@ public class ComboTrialHooks
     }
 
     /// <summary>The recipe steps: raw texts (icon tags) under the recipe list.</summary>
-    private static string ReadRecipeText()
+    private string ReadRecipeText()
     {
-        var list = FlowHelper.GetObjectField(_param, "PartsScrollListRecipe");
+        var list = FlowHelper.GetObjectField(Param, "PartsScrollListRecipe");
         var control = FlowHelper.GetObjectField(list, "Control")
             ?? FlowHelper.Call(list, "get_Control") as ManagedObject;
         if (control == null) return null;

@@ -1,8 +1,8 @@
 using System;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,40 +11,52 @@ namespace SF6Access.Hooks;
 /// Announces the selected news title on list navigation and reads the body text.
 /// Titles and bodies are resolved via app.MailData.Util.GetTitleText/GetBodyText
 /// which return the localized server-provided strings.
+///
+/// SingleParamScreenAdapter with ReadInterval = 1: the article-open flag (set by
+/// the UIFlowMailText.OnEnter hook, kept in the static [PluginEntryPoint]) must
+/// be honored the same frame; the regular reads run every READ_TICKS frames.
+/// MainMenuHooks reads IsInNewsMenu. Registered in ScreenRegistry.
 /// </summary>
-public class NewsHooks
+public sealed class NewsHooks : SingleParamScreenAdapter
 {
     private const string PARAM_TYPE = "app.UIFlowMailBox.UIFlowParam";
+    protected override string ParamType => PARAM_TYPE;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 10;
+    // Regular reads run every 10th frame (the original POLL_READ_INTERVAL).
+    private const int READ_TICKS = 10;
+
+    private static NewsHooks _self;
+    public static bool IsInNewsMenu => _self != null && _self.Active;
+
+    public NewsHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 1; // per-frame article-open flag; reads gated by READ_TICKS
+        _self = this;
+    }
 
     private static Method _getTitleTextMethod;
     private static Method _getBodyTextMethod;
     private static Method _getItemNameMethod;
     private static bool _tdbCached;
 
-    private static ManagedObject _param;
-    private static ManagedObject _mailList;
-    private static ManagedObject _scrollList;
-    private static ManagedObject _mailText;
-    private static ManagedObject _header;
-    private static ManagedObject _mainGroup;
+    private ManagedObject _mailList;
+    private ManagedObject _scrollList;
+    private ManagedObject _mailText;
+    private ManagedObject _header;
+    private ManagedObject _mainGroup;
 
-    private static string _lastMailId;
-    private static int _lastTab = -1;
-    private static int _lastGroupFocus = -2;
-    private static int _lastListIndex = -1;
+    private int _tick;
+    private string _lastMailId;
+    private int _lastTab = -1;
+    private int _lastGroupFocus = -2;
+    private int _lastListIndex = -1;
 
     // Pressing confirm on a news enters the article-reading state
     // (UIFlowMailBox.UIFlowMailText). Polling the MainGroup focus index missed
     // this transition, so the article opened silently. OnEnter sets this flag
-    // and OnUpdate re-reads the open mail (title + body + View Items).
-    private static bool _announceArticle;
-
-    public static bool IsInNewsMenu => _isActive;
+    // and the poll re-reads the open mail (title + body + View Items).
+    private static volatile bool _announceArticle;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -73,11 +85,42 @@ public class NewsHooks
         API.LogInfo("[SF6Access] Article-open hook installed");
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnBind()
     {
-        _pollCounter++;
+        CacheTDB();
+        _mailList = FlowHelper.GetObjectField(Param, "MailList");
+        _scrollList = FlowHelper.GetObjectField(_mailList, "ScrollList")
+            ?? FlowHelper.Call(_mailList, "get_ScrollList") as ManagedObject;
+        _mailText = FlowHelper.GetObjectField(Param, "MailText");
+        _header = FlowHelper.GetObjectField(Param, "Header");
+        _mainGroup = FlowHelper.GetObjectField(Param, "MainGroup");
+        _lastMailId = null;
+        _lastTab = -1;
+        _lastGroupFocus = -2;
+        _lastListIndex = -1;
 
+        API.LogInfo($"[SF6Access] News menu active (mailList={_mailList != null}, header={_header != null})");
+
+        // Announce the initially selected mail right away
+        PollSelectedMail();
+    }
+
+    protected override void OnExit()
+    {
+        API.LogInfo("[SF6Access] News menu ended");
+        _mailList = null;
+        _scrollList = null;
+        _mailText = null;
+        _header = null;
+        _mainGroup = null;
+        _lastMailId = null;
+        _lastTab = -1;
+        _lastGroupFocus = -2;
+        _lastListIndex = -1;
+    }
+
+    protected override void Poll()
+    {
         if (_announceArticle)
         {
             _announceArticle = false;
@@ -87,32 +130,12 @@ public class NewsHooks
             PollSelectedMail();
         }
 
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
-        }
+        if (++_tick % READ_TICKS != 0) return;
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(PARAM_TYPE, _param, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-                TryActivate(); // menu was recreated — re-bind param and child caches
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollTabChange();
-            PollListCursor();
-            PollSelectedMail();
-            PollGroupFocus();
-        }
+        PollTabChange();
+        PollListCursor();
+        PollSelectedMail();
+        PollGroupFocus();
     }
 
     /// <summary>
@@ -126,7 +149,7 @@ public class NewsHooks
     /// focused (PollGroupFocus). Setting _lastMailId here keeps PollSelectedMail
     /// from re-reading the same mail's body on the same tick.
     /// </summary>
-    private static void PollListCursor()
+    private void PollListCursor()
     {
         if (_scrollList == null) return;
 
@@ -145,11 +168,11 @@ public class NewsHooks
         if (string.IsNullOrEmpty(title)) return;
 
         API.LogInfo($"[SF6Access] News list cursor {idx}: {title}");
-        ScreenReaderService.Speak(title);
+        Speak(title);
     }
 
     /// <summary>Re-read the open mail when focus moves into the text pane.</summary>
-    private static void PollGroupFocus()
+    private void PollGroupFocus()
     {
         if (_mainGroup == null) return;
 
@@ -186,32 +209,7 @@ public class NewsHooks
             API.LogWarning("[SF6Access] InventoryManager.GetName not found");
     }
 
-    private static void TryActivate()
-    {
-        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-        if (param == null) return;
-
-        CacheTDB();
-        _param = param;
-        _mailList = FlowHelper.GetObjectField(param, "MailList");
-        _scrollList = FlowHelper.GetObjectField(_mailList, "ScrollList")
-            ?? FlowHelper.Call(_mailList, "get_ScrollList") as ManagedObject;
-        _mailText = FlowHelper.GetObjectField(param, "MailText");
-        _header = FlowHelper.GetObjectField(param, "Header");
-        _mainGroup = FlowHelper.GetObjectField(param, "MainGroup");
-        _lastMailId = null;
-        _lastTab = -1;
-        _lastGroupFocus = -2;
-        _lastListIndex = -1;
-        _isActive = true;
-
-        API.LogInfo($"[SF6Access] News menu active (mailList={_mailList != null}, header={_header != null})");
-
-        // Announce the initially selected mail right away
-        PollSelectedMail();
-    }
-
-    private static void PollTabChange()
+    private void PollTabChange()
     {
         if (_header == null) return;
 
@@ -230,10 +228,10 @@ public class NewsHooks
         // TabItem enum: 0 = Mail (news), 1 = Ticker (notification history)
         string name = tab == 0 ? "News" : "History";
         API.LogInfo($"[SF6Access] News tab: {name}");
-        ScreenReaderService.Speak(name);
+        Speak(name);
     }
 
-    private static void PollSelectedMail()
+    private void PollSelectedMail()
     {
         if (_mailList == null) return;
 
@@ -268,13 +266,13 @@ public class NewsHooks
         API.LogInfo($"[SF6Access] News: {title} (body={body?.Length ?? 0} chars, items={attachmentText}, claim={claimButton})");
 
         if (!string.IsNullOrEmpty(title))
-            ScreenReaderService.Speak(title);
+            Speak(title);
         if (!string.IsNullOrEmpty(body))
-            ScreenReaderService.Speak(body, interrupt: false);
+            Speak(body, interrupt: false);
         if (!string.IsNullOrEmpty(attachmentText))
-            ScreenReaderService.Speak(attachmentText, interrupt: false);
+            Speak(attachmentText, interrupt: false);
         if (!string.IsNullOrEmpty(claimButton))
-            ScreenReaderService.Speak(claimButton, interrupt: false);
+            Speak(claimButton, interrupt: false);
     }
 
     /// <summary>Stable id for a mail (Mail.Id field; address as last resort).</summary>
@@ -345,21 +343,5 @@ public class NewsHooks
         // Fallback: raw Text property on MailText
         var raw = FlowHelper.Call(mailText, "get_Text") as string;
         return FlowHelper.CleanTags(raw);
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] News menu ended");
-        _isActive = false;
-        _param = null;
-        _mailList = null;
-        _scrollList = null;
-        _mailText = null;
-        _header = null;
-        _mainGroup = null;
-        _lastMailId = null;
-        _lastTab = -1;
-        _lastGroupFocus = -2;
-        _lastListIndex = -1;
     }
 }

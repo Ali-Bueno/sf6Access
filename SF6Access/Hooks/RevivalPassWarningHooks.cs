@@ -1,7 +1,7 @@
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,10 +12,17 @@ namespace SF6Access.Hooks;
 /// is announced from a fixed string. The reward list IS readable: each item
 /// (UIPartsRevivalPassWarningDialogItem) exposes its name, count and a "Sold Out"
 /// panel (items already obtained), read as the cursor moves through UIScrollList.
+///
+/// ScreenAdapter (the warning must announce once per OPEN, not per Param
+/// instance, so OnActivate carries it — a plain SingleParam OnBind would re-read
+/// it on Param recreate). The ListChanged nav hook stays in the static
+/// [PluginEntryPoint]. MainMenuHooks reads IsActive. Registered in ScreenRegistry.
 /// </summary>
-public class RevivalPassWarningHooks
+public sealed class RevivalPassWarningHooks : ScreenAdapter
 {
     private const string PARAM_TYPE = "app.UIFlowRevivalPassWarningDialog.FlowParam";
+    private static readonly string[] Types = { PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
 
     // The warning text is image-based and unreadable — hardcoded fallback so it
     // is at least announced. (Last resort: no localized source is reachable.)
@@ -26,16 +33,19 @@ public class RevivalPassWarningHooks
         "transaction window. Items marked Sold Out are those you already obtained. " +
         "For accessories, you can obtain up to 3 of the same item.";
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 15;
-    private const int POLL_READ_INTERVAL = 6;
+    private static RevivalPassWarningHooks _self;
+    public static bool IsActive => _self != null && _self.Active;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static string _lastItem;
+    public RevivalPassWarningHooks()
+    {
+        SearchInterval = 15;
+        ReadInterval = 6;
+        _self = this;
+    }
+
+    private ManagedObject _param;
+    private string _lastItem;
     private static volatile bool _navDirty;
-
-    public static bool IsActive => _active;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -58,39 +68,40 @@ public class RevivalPassWarningHooks
         }
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        var param = FlowHelper.FindFlowParam(PARAM_TYPE);
+        if (param == null)
         {
-            var param = FlowHelper.FindFlowParam(PARAM_TYPE);
-            if (param != null && !_active)
-            {
-                _active = true;
-                _param = param;
-                _lastItem = null;
-                API.LogInfo("[SF6Access] Reissue pass warning opened");
-                ScreenReaderService.Speak(WARNING_MESSAGE, interrupt: false);
-            }
-            else if (param == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastItem = null;
-                API.LogInfo("[SF6Access] Reissue pass warning closed");
-            }
-            else if (param != null) _param = param;
+            _param = null;
+            return false;
         }
-
-        if (!_active) return;
-
-        if (_navDirty) { _navDirty = false; _lastItem = null; }
-        if (_pollCounter % POLL_READ_INTERVAL == 0) PollSelectedItem();
+        _param = param; // keep the live instance
+        return true;
     }
 
-    private static void PollSelectedItem()
+    protected override void OnActivate()
+    {
+        _lastItem = null;
+        API.LogInfo("[SF6Access] Reissue pass warning opened");
+        Speak(WARNING_MESSAGE, interrupt: false);
+    }
+
+    protected override void OnDeactivate()
+    {
+        _param = null;
+        _lastItem = null;
+        API.LogInfo("[SF6Access] Reissue pass warning closed");
+    }
+
+    protected override void OnPoll()
+    {
+        if (_param == null) return;
+        if (_navDirty) { _navDirty = false; _lastItem = null; }
+        PollSelectedItem();
+    }
+
+    private void PollSelectedItem()
     {
         var dialog = FlowHelper.GetObjectField(_param, "UIDialog");
         if (dialog == null) return;
@@ -135,6 +146,6 @@ public class RevivalPassWarningHooks
         // Strip the internal "button|" key prefix before speaking
         string spoken = text.StartsWith("button|") ? text.Substring(7) : text;
         API.LogInfo($"[SF6Access] Reissue selection (focusMode={focusMode}): {spoken}");
-        ScreenReaderService.Speak(spoken);
+        Speak(spoken);
     }
 }

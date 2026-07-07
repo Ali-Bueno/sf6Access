@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,53 +13,78 @@ namespace SF6Access.Hooks;
 /// Accessibility for pre-fight versus rule settings (app.menu.UIFlowVersusRuleMain).
 /// Handles: setting navigation (rounds, timer, match count, commentator, ready),
 /// value changes via spin controls, and commentator/caster selection.
+///
+/// ScreenAdapter for the poll; the EventCursorLeft/Right + SelectionChanged
+/// hooks stay in the static [PluginEntryPoint], and MainMenuHooks routes
+/// c_setting_XX focus events in via OnSettingItemFocused (which can bind the
+/// Param before the adapter's own search tick). Registered in ScreenRegistry.
 /// </summary>
-public class BattleSettingsHooks
+public sealed class BattleSettingsHooks : ScreenAdapter
 {
     private const string RULE_PARAM_TYPE = "app.menu.UIFlowVersusRuleMain.Param";
     private const string COMMENTATOR_PARAM_TYPE = "app.UIFlowCommentatorSelect.Param";
 
-    private static ManagedObject _ruleParam;
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static readonly string[] Types = { RULE_PARAM_TYPE, COMMENTATOR_PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
+
+    // The commentator sub-param is (re)tracked every 12 read ticks
+    // (12 × 5 frames = the original 60-frame search interval).
+    private const int COMMENTATOR_TRACK_TICKS = 12;
+
+    private static BattleSettingsHooks _self;
+
+    public BattleSettingsHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
+    }
+
+    private ManagedObject _ruleParam;
 
     // TDB cache
     private static Method _msgGetMethod;
     private static bool _tdbCached;
 
     // Navigation state
-    private static int _focusedSettingIndex = -1;
-    private static string _lastSpinValue = "";
+    private int _focusedSettingIndex = -1;
+    private string _lastSpinValue = "";
+    private int _tick;
 
     // Cached arrays from the Param
-    private static ManagedObject _tateList;       // via.gui.Text[] (displays current VALUES)
-    private static ManagedObject _messDataArr;    // SpinText_MessageList[] (has label Guids)
-    private static ManagedObject _settingTypeArr; // SettingType[] (enum for fallback labels)
+    private ManagedObject _tateList;       // via.gui.Text[] (displays current VALUES)
+    private ManagedObject _messDataArr;    // SpinText_MessageList[] (has label Guids)
+    private ManagedObject _settingTypeArr; // SettingType[] (enum for fallback labels)
 
     // Commentator select sub-flow
-    private static ManagedObject _commentatorSelectParam;
-    private static string _lastCommentatorName = "";
-    private static int _lastSelectState = -1;
+    private ManagedObject _commentatorSelectParam;
+    private string _lastCommentatorName = "";
+    private int _lastSelectState = -1;
 
     // Label cache (resolved from Guids, stays valid within same session)
-    private static readonly Dictionary<int, string> _labelCache = new();
-
-    public static bool IsInBattleSettings => _isActive;
+    private readonly Dictionary<int, string> _labelCache = new();
 
     /// <summary>
     /// Called from MainMenuHooks when a c_setting_XX item gets focus.
     /// </summary>
     public static void OnSettingItemFocused(int settingIndex)
     {
-        _focusedSettingIndex = settingIndex;
-        _lastSpinValue = "";
+        var self = _self;
+        if (self == null) return;
 
-        if (!_isActive)
-            TryFindRuleParam();
+        self._focusedSettingIndex = settingIndex;
+        self._lastSpinValue = "";
 
-        AnnounceSettingItem(settingIndex);
+        // The focus event can arrive before the adapter's search tick found the
+        // Param — bind it on demand so the first item announces immediately.
+        if (self._ruleParam == null)
+        {
+            CacheTDB();
+            var param = FlowHelper.FindFlowParam(RULE_PARAM_TYPE);
+            if (param != null) self.ActivateWith(param);
+        }
+
+        self.AnnounceSettingItem(settingIndex);
     }
 
     [PluginEntryPoint]
@@ -75,15 +100,17 @@ public class BattleSettingsHooks
                 if (method != null)
                 {
                     var hook = method.AddHook(false);
-                    hook.AddPost((ref ulong retval) => OnValueChanged());
+                    hook.AddPost((ref ulong retval) => _self?.OnValueChanged());
                     API.LogInfo($"[SF6Access] VersusRule.Main.{methodName} hook installed");
                 }
             }
         }
 
         // Hook commentator/caster selection changes
-        HookPost("app.UIFlowCommentatorSelect.CommentatorSelect", "SelectionChanged", OnCommentatorSelectionChanged);
-        HookPost("app.UIFlowCommentatorSelect.CasterSelect", "SelectionChanged", OnCommentatorSelectionChanged);
+        HookPost("app.UIFlowCommentatorSelect.CommentatorSelect", "SelectionChanged",
+            () => _self?.ReadCommentatorTitle());
+        HookPost("app.UIFlowCommentatorSelect.CasterSelect", "SelectionChanged",
+            () => _self?.ReadCommentatorTitle());
 
         API.LogInfo("[SF6Access] BattleSettingsHooks initialized");
     }
@@ -99,44 +126,26 @@ public class BattleSettingsHooks
         API.LogInfo($"[SF6Access] {typeName}.{methodName} hook installed");
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override bool Locate()
     {
-        _pollCounter++;
+        CacheTDB();
 
-        if (!_isActive)
+        // Re-bind when the game recreated the Param (stale instance reads dead
+        // memory → menu goes silent on re-entry)
+        var current = FlowHelper.TrackFlowParam(RULE_PARAM_TYPE, _ruleParam, out bool changed);
+        if (current == null)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryFindRuleParam();
-            return;
+            _ruleParam = null;
+            return false;
         }
-
-        // Check if still active; re-bind when the game recreated the Param
-        // (stale instance reads dead memory → menu goes silent on re-entry)
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var current = FlowHelper.TrackFlowParam(RULE_PARAM_TYPE, _ruleParam, out bool changed);
-            if (current == null)
-            {
-                API.LogInfo("[SF6Access] Battle settings ended");
-                Reset();
-                return;
-            }
-            if (changed)
-                ActivateWith(current);
-        }
-
-        // Poll for value changes and commentator select
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollSpinValueChange();
-            PollCommentatorSelect();
-        }
+        if (changed)
+            ActivateWith(current);
+        return true;
     }
 
-    private static void Reset()
+    protected override void OnDeactivate()
     {
-        _isActive = false;
+        API.LogInfo("[SF6Access] Battle settings ended");
         _ruleParam = null;
         _tateList = null;
         _messDataArr = null;
@@ -149,6 +158,13 @@ public class BattleSettingsHooks
         _lastSelectState = -1;
     }
 
+    protected override void OnPoll()
+    {
+        _tick++;
+        PollSpinValueChange();
+        PollCommentatorSelect();
+    }
+
     // --- Param Discovery ---
 
     private static void CacheTDB()
@@ -158,20 +174,9 @@ public class BattleSettingsHooks
         _msgGetMethod = TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
     }
 
-    private static void TryFindRuleParam()
-    {
-        CacheTDB();
-
-        var result = FlowHelper.FindFlowParam(RULE_PARAM_TYPE);
-        if (result == null) return;
-
-        ActivateWith(result);
-    }
-
-    private static void ActivateWith(ManagedObject param)
+    private void ActivateWith(ManagedObject param)
     {
         _ruleParam = param;
-        _isActive = true;
         _focusedSettingIndex = -1;
         _lastSpinValue = "";
         _labelCache.Clear();
@@ -186,7 +191,7 @@ public class BattleSettingsHooks
 
     // --- Setting Item Navigation ---
 
-    private static void AnnounceSettingItem(int settingIndex)
+    private void AnnounceSettingItem(int settingIndex)
     {
         if (_ruleParam == null)
         {
@@ -205,14 +210,14 @@ public class BattleSettingsHooks
         _lastSpinValue = value ?? "";
 
         API.LogInfo($"[SF6Access] Battle setting [{settingIndex}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     /// <summary>
     /// Read the LABEL for a setting from mRuleSettingMessData[index].Text Guid.
     /// Falls back to ArrSettingType enum or hardcoded names.
     /// </summary>
-    private static string ReadSettingLabel(int index)
+    private string ReadSettingLabel(int index)
     {
         if (_labelCache.TryGetValue(index, out string cached))
             return cached;
@@ -275,7 +280,7 @@ public class BattleSettingsHooks
     /// Read the current VALUE for a setting from tateList[index] (via.gui.Text).
     /// tateList contains the text controls that display the current value on screen.
     /// </summary>
-    private static string ReadSettingValue(int index)
+    private string ReadSettingValue(int index)
     {
         if (_tateList == null) return null;
 
@@ -295,9 +300,9 @@ public class BattleSettingsHooks
 
     // --- Value Change Detection ---
 
-    private static void OnValueChanged()
+    private void OnValueChanged()
     {
-        if (!_isActive || _focusedSettingIndex < 0) return;
+        if (!Active || _focusedSettingIndex < 0) return;
 
         // Re-read value after left/right cursor
         string value = ReadSettingValue(_focusedSettingIndex);
@@ -305,11 +310,11 @@ public class BattleSettingsHooks
         {
             _lastSpinValue = value;
             API.LogInfo($"[SF6Access] Value changed [{_focusedSettingIndex}]: {value}");
-            ScreenReaderService.Speak(value);
+            Speak(value);
         }
     }
 
-    private static void PollSpinValueChange()
+    private void PollSpinValueChange()
     {
         if (_focusedSettingIndex < 0 || _tateList == null) return;
 
@@ -320,22 +325,17 @@ public class BattleSettingsHooks
         {
             _lastSpinValue = value;
             API.LogInfo($"[SF6Access] Value changed (poll) [{_focusedSettingIndex}]: {value}");
-            ScreenReaderService.Speak(value);
+            Speak(value);
         }
     }
 
     // --- Commentator/Caster Selection ---
 
-    private static void OnCommentatorSelectionChanged()
-    {
-        ReadCommentatorTitle();
-    }
-
-    private static void PollCommentatorSelect()
+    private void PollCommentatorSelect()
     {
         if (_commentatorSelectParam == null)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
+            if (_tick % COMMENTATOR_TRACK_TICKS != 0) return;
             _commentatorSelectParam = FlowHelper.FindFlowParam(COMMENTATOR_PARAM_TYPE);
             if (_commentatorSelectParam != null)
             {
@@ -346,7 +346,7 @@ public class BattleSettingsHooks
             return;
         }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        if (_tick % COMMENTATOR_TRACK_TICKS == 0)
         {
             var current = FlowHelper.TrackFlowParam(COMMENTATOR_PARAM_TYPE, _commentatorSelectParam, out bool changed);
             if (current == null || changed)
@@ -361,7 +361,7 @@ public class BattleSettingsHooks
         ReadCommentatorTitle();
     }
 
-    private static void ReadCommentatorTitle()
+    private void ReadCommentatorTitle()
     {
         if (_commentatorSelectParam == null)
         {
@@ -396,7 +396,7 @@ public class BattleSettingsHooks
             {
                 _lastCommentatorName = announcement;
                 API.LogInfo($"[SF6Access] {announcement}");
-                ScreenReaderService.Speak(announcement);
+                Speak(announcement);
             }
         }
         catch (Exception ex)

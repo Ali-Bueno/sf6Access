@@ -92,17 +92,29 @@ bottom layer + a central dispatcher, following `reference/ui-accessibility/gener
   - `ChangeGate` — the first/changed/diff-gate-before-speak decision for one focused `(index, text)`
     source (moving rows speaks the whole row; editing a value speaks only the `DiffSegments` result).
 
-**Migrating a hook:** drop its `[Callback]`/`[PluginEntryPoint]`, make it extend
-`ScreenAdapter`/`SingleParamScreenAdapter`, move its per-widget reads onto the archetype readers, and
-register it in `ScreenRegistry`. Legacy hooks that still own a `[Callback]` run untouched alongside the
-dispatcher, so migration is incremental. Before converting, grep for external references to the hook's
-public statics (`IsInX` suppression flags etc.) and preserve them. Reference examples:
-`Hooks/MatchingSettingHooks.cs` (single-Param) and `Hooks/OptionSubScreenHooks.cs` (multi-Param).
+**Migration status (2026-07-07): COMPLETE.** Every hook whose core is a poll lifecycle now extends
+`ScreenAdapter`/`SingleParamScreenAdapter` and is registered in `ScreenRegistry` (~50 adapters). The
+recipe used: drop the hook's `[Callback]`/`[PluginEntryPoint]` poll scaffold, implement
+`Locate`/`OnBind`/`Poll` (or `OnActivate`/`OnPoll` for multi-Param), keep any `method.AddHook(false)`
+registrations in a static `[PluginEntryPoint]`, and preserve externally-read statics via the `_self`
+pattern (`private static X _self;` set in the ctor; `public static bool IsInX => _self != null &&
+_self.Active`). Reference examples: `MatchingSettingHooks` (single-Param), `OptionSubScreenHooks`
+(multi-Param), `FighterSettingHooks`/`AvatarCreateHooks` (custom `_Handles` walk in `Locate`),
+`StatusMenuHooks`/`NewsHooks`/`ComboTrialHooks` (per-frame work: `ReadInterval = 1` + an instance
+tick gating heavier reads), `TutorialHooks`/`BootMessageHooks` (Locate keeps the adapter alive while
+state ages out / during flow-param-less phases), `KeyConfigHooks` (a popup Param outliving the menu
+keeps the adapter active).
 
-**Not every hook fits.** Method-hook–based hooks (their core is `method.AddHook(false)` on game
-methods — combat/combo readouts, subtitle advance, social chat, side-select Left/Right) are a different
-pattern and stay as-is. The adapter base is for the poll-a-flow-Param screens, which are the bulk of
-the duplication.
+**Hooks that deliberately stay OFF the adapter (do not migrate them):**
+- *Event-driven* — their `[Callback]` is a pending-work flusher or a combine timer, not a poll
+  scaffold; activity comes from `method.AddHook` events: `FGMenuHooks`, `OptionMenuHooks`
+  (`IsInOptionMenu` is get+SET by MainMenuHooks), `TutorialControlTypeHooks`, `CharacterSelectHooks`,
+  `AvatarEmoteHooks`, `ItemNoticeHooks`, `SocialChatHooks`, `SpTalkHooks`, `TrainingAttackDataHooks`.
+- *Always-on monitors (no screen to own)*: `BattleInfoHooks` (VS/rounds/matchmaking + per-frame
+  watchdog), `GuideTextHooks`, `DialogHooks`, `ExtremeBattleHooks`.
+- *Infra*: `GroupFocusHooks`, `MainMenuHooks`, `FlowTrackerHooks`, `FocusValueHooks`,
+  `StatusStatsDiagnostic` (F6 dev tool), and the research tools (`ObjectDumper`, `ScreenshotService`,
+  AvatarCreate's global F11 dump callback).
 
 ## Critical IL2CPP gotchas (SF6 / RE Engine)
 

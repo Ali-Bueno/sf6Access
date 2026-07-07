@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,26 +11,37 @@ namespace SF6Access.Hooks;
 /// category (Normal/CommandNormal/Special/SA/Recording/Common), each with a
 /// focus index ("FoucsIndex" — game's own typo; "FocusIndex" on Special) and a
 /// TrainingSkillData[] whose SkillMessage Guid is the localized move name.
+///
+/// ScreenAdapter (prefix, multi-Param): TrainingMenuHooks freezes while
+/// IsActive so the parent menu doesn't fight the submenu for the cursor.
+/// Registered in ScreenRegistry.
 /// </summary>
-public class TrainingReversalHooks
+public sealed class TrainingReversalHooks : ScreenAdapter
 {
     private const string PARAM_PREFIX = "app.training.UIFlowTrainingMenu_Reversal";
     private const string MAIN_PARAM = "app.training.UIFlowTrainingMenu_Reversal.Param";
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    private static readonly string[] Types = { PARAM_PREFIX };
+    public override string[] OwnedTypes => Types;
 
-    private static bool _isActive;
-    private static readonly List<(string typeName, ManagedObject param)> _params = new();
-    private static readonly Dictionary<string, int> _lastFocus = new();
-    private static readonly Dictionary<string, string> _lastText = new();
-    private static int _lastTabIndex = -2;
+    private static TrainingReversalHooks _self;
 
     /// <summary>True while the reversal move-selection submenu is open, so the
     /// parent TrainingMenuHooks pauses its polling (avoids the index-out-of-
     /// range spam and cursor fight that made the reversal menu unstable).</summary>
-    public static bool IsActive => _isActive;
+    public static bool IsActive => _self != null && _self.Active;
+
+    public TrainingReversalHooks()
+    {
+        SearchInterval = 30;
+        ReadInterval = 5;
+        _self = this;
+    }
+
+    private readonly List<(string typeName, ManagedObject param)> _params = new();
+    private readonly Dictionary<string, int> _lastFocus = new();
+    private readonly Dictionary<string, string> _lastText = new();
+    private int _lastTabIndex = -2;
 
     // Category list order, matched to the parent's TabIndex. The child flow
     // for the focused tab is the only one whose rows should be read; without
@@ -56,45 +66,34 @@ public class TrainingReversalHooks
 
     // Set on entry and tab change: the next readable focused row announces
     // even without a focus change (the initial row was never read otherwise)
-    private static bool _pendingRowAnnounce;
+    private bool _pendingRowAnnounce;
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override bool Locate()
     {
-        API.LogInfo("[SF6Access] TrainingReversalHooks initialized");
+        _params.Clear();
+        _params.AddRange(FlowHelper.FindFlowParamsByPrefix(PARAM_PREFIX));
+        return _params.Count > 0;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnActivate()
     {
-        _pollCounter++;
+        _lastFocus.Clear();
+        _lastText.Clear();
+        _lastTabIndex = -2;
+        _pendingRowAnnounce = true;
+        API.LogInfo($"[SF6Access] Reversal menu active ({_params.Count} params)");
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            _params.Clear();
-            _params.AddRange(FlowHelper.FindFlowParamsByPrefix(PARAM_PREFIX));
+    protected override void OnDeactivate()
+    {
+        _params.Clear();
+        _lastFocus.Clear();
+        _lastText.Clear();
+        API.LogInfo("[SF6Access] Reversal menu ended");
+    }
 
-            bool active = _params.Count > 0;
-            if (active && !_isActive)
-            {
-                _isActive = true;
-                _lastFocus.Clear();
-                _lastText.Clear();
-                _lastTabIndex = -2;
-                _pendingRowAnnounce = true;
-                API.LogInfo($"[SF6Access] Reversal menu active ({_params.Count} params)");
-            }
-            else if (!active && _isActive)
-            {
-                _isActive = false;
-                _lastFocus.Clear();
-                _lastText.Clear();
-                API.LogInfo("[SF6Access] Reversal menu ended");
-            }
-        }
-
-        if (!_isActive || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void OnPoll()
+    {
         // Resolve the focused tab from the parent first so the move-list pass
         // can ignore the non-visible category lists regardless of handle order.
         int currentTab = -1;
@@ -117,7 +116,7 @@ public class TrainingReversalHooks
     }
 
     /// <summary>Category tab of the reversal screen (Normal/Special/SA...).</summary>
-    private static void PollTab(ManagedObject param)
+    private void PollTab(ManagedObject param)
     {
         int tab = FlowHelper.ReadIntField(param, "TabIndex");
         if (tab < 0 || tab == _lastTabIndex) return;
@@ -143,7 +142,7 @@ public class TrainingReversalHooks
             ? FlowHelper.CleanTags(title)
             : (tab >= 0 && tab < CategoryNames.Length ? CategoryNames[tab] : $"Tab {tab + 1}");
         API.LogInfo($"[SF6Access] Reversal tab [{tab}]: {announcement}");
-        ScreenReaderService.Speak(announcement, interrupt: !first);
+        Speak(announcement, interrupt: !first);
     }
 
     /// <summary>
@@ -153,7 +152,7 @@ public class TrainingReversalHooks
     /// instead — confirmed in the decompiled UIFlowTrainingMenu_Reversal_SA.
     /// Read the focused row's name and announce on change.
     /// </summary>
-    private static void PollMoveList(string typeName, ManagedObject param)
+    private void PollMoveList(string typeName, ManagedObject param)
     {
         int focus;
         string row;
@@ -184,14 +183,14 @@ public class TrainingReversalHooks
         {
             _pendingRowAnnounce = false;
             API.LogInfo($"[SF6Access] Reversal row (initial) [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
-            ScreenReaderService.Speak(row, interrupt: false);
+            Speak(row, interrupt: false);
             return;
         }
 
         if (!idxChanged && !textChanged) return;
 
         API.LogInfo($"[SF6Access] Reversal move [{typeName.Substring(PARAM_PREFIX.Length)},{focus}]: {row}");
-        ScreenReaderService.Speak(row);
+        Speak(row);
     }
 
     /// <summary>Focused move name from a UIPartsGroup (GetFocusChild).</summary>

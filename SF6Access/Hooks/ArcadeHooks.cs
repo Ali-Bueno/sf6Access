@@ -2,6 +2,7 @@ using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -15,22 +16,31 @@ namespace SF6Access.Hooks;
 /// - Victory quote: app.esports.UIFlowWinMessage.Param shows the winning
 ///   character's phrase in mText after a battle.
 /// All are announced whenever their displayed text changes.
+///
+/// ScreenAdapter for the poll. The SetMessage-driven announce keeps its own
+/// per-frame [Callback]: a subtitle line must speak the frame after the game
+/// sets it, not up to a search-interval later (the adapter only polls while
+/// active). Registered in ScreenRegistry.
 /// </summary>
-public class ArcadeHooks
+public sealed class ArcadeHooks : ScreenAdapter
 {
     private const string SUBTITLE_PARAM = "app.worldtour.DemoSubtitles.UIFlowDemoSubtibles.Param";
     private const string COMIC_SUBTITLE_PARAM = "app.UIFlowComicDemoSubtitle.Param";
     private const string WIN_MESSAGE_PARAM = "app.esports.UIFlowWinMessage.Param";
     private static readonly string[] WatchedTypes = { SUBTITLE_PARAM, COMIC_SUBTITLE_PARAM, WIN_MESSAGE_PARAM };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
+    public override string[] OwnedTypes => WatchedTypes;
 
+    public ArcadeHooks()
+    {
+        SearchInterval = 30;
+        ReadInterval = 5;
+    }
+
+    // Shared with the static SetMessage callback below.
     private static ManagedObject _subtitleParam;
     private static ManagedObject _comicSubtitleParam;
     private static ManagedObject _winMessageParam;
-    private static bool _isActive;
 
     private static string _lastDialog;
     private static string _lastWinMessage;
@@ -63,44 +73,45 @@ public class ArcadeHooks
         API.LogInfo("[SF6Access] ArcadeHooks initialized");
     }
 
+    // Per-frame: a freshly-set subtitle line must not wait for the adapter's
+    // search tick (the first line of a cutscene arrives before activation).
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    public static void OnSetMessagePending()
     {
-        _pollCounter++;
+        if (!_setMessagePending) return;
+        _setMessagePending = false;
+        if (_subtitleParam == null)
+            FlowHelper.FindFlowParams(WatchedTypes).TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
+        AnnounceFromStoredGuids();
+    }
 
-        if (_setMessagePending)
-        {
-            _setMessagePending = false;
-            if (_subtitleParam == null)
-                FlowHelper.FindFlowParams(WatchedTypes).TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
-            AnnounceFromStoredGuids();
-        }
+    protected override bool Locate()
+    {
+        var found = FlowHelper.FindFlowParams(WatchedTypes);
+        found.TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
+        found.TryGetValue(COMIC_SUBTITLE_PARAM, out _comicSubtitleParam);
+        found.TryGetValue(WIN_MESSAGE_PARAM, out _winMessageParam);
+        return _subtitleParam != null || _comicSubtitleParam != null || _winMessageParam != null;
+    }
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var found = FlowHelper.FindFlowParams(WatchedTypes);
-            found.TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
-            found.TryGetValue(COMIC_SUBTITLE_PARAM, out _comicSubtitleParam);
-            found.TryGetValue(WIN_MESSAGE_PARAM, out _winMessageParam);
+    protected override void OnActivate()
+    {
+        _lastDialog = null;
+        _lastWinMessage = null;
+        API.LogInfo($"[SF6Access] Arcade text active (subtitles={_subtitleParam != null}, " +
+            $"comic={_comicSubtitleParam != null}, winMessage={_winMessageParam != null})");
+    }
 
-            bool active = _subtitleParam != null || _comicSubtitleParam != null || _winMessageParam != null;
-            if (active && !_isActive)
-            {
-                _isActive = true;
-                _lastDialog = null;
-                _lastWinMessage = null;
-                API.LogInfo($"[SF6Access] Arcade text active (subtitles={_subtitleParam != null}, " +
-                    $"comic={_comicSubtitleParam != null}, winMessage={_winMessageParam != null})");
-            }
-            else if (!active && _isActive)
-            {
-                _isActive = false;
-                API.LogInfo("[SF6Access] Arcade text ended");
-            }
-        }
+    protected override void OnDeactivate()
+    {
+        _subtitleParam = null;
+        _comicSubtitleParam = null;
+        _winMessageParam = null;
+        API.LogInfo("[SF6Access] Arcade text ended");
+    }
 
-        if (!_isActive || _pollCounter % POLL_READ_INTERVAL != 0) return;
-
+    protected override void OnPoll()
+    {
         if (_subtitleParam != null) PollSubtitles();
         if (_comicSubtitleParam != null) PollComicSubtitles();
         if (_winMessageParam != null) PollWinMessage();
