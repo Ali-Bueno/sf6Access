@@ -293,9 +293,15 @@ public sealed partial class AvatarCreateHooks : ScreenAdapter
         lastIndex = idx;
         if (first) return;
 
+        // Empty paint slots render as "N ────────" dash runs — strip them
         string text = FlowHelper.ReadSelectedItemText(list);
+        if (text != null)
+            text = System.Text.RegularExpressions.Regex
+                .Replace(text, @"[─—–\-]{2,}", "").Trim().TrimEnd('.').Trim();
         if (string.IsNullOrEmpty(text))
             text = $"{LangFile.Get("slot", "Slot")} {idx + 1}";
+        else if (System.Text.RegularExpressions.Regex.IsMatch(text, @"^\d+$"))
+            text = $"{LangFile.Get("slot", "Slot")} {text}. {LangFile.Get("empty", "Empty")}";
         API.LogInfo($"[SF6Access] Avatar {logTag} [{idx}]: {text}");
         ScreenReaderService.Speak(text, interrupt: true);
     }

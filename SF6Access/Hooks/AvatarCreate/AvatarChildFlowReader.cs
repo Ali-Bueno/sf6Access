@@ -155,6 +155,7 @@ internal sealed class AvatarChildFlowReader
         public string Field;
         public int LastIndex = int.MinValue;
         public int LastPage = int.MinValue;
+        public int PageCapacity;   // cells per full page (max ItemMax seen)
     }
 
     private void PollPresetGrid(GridTracker t)
@@ -180,27 +181,29 @@ internal sealed class AvatarChildFlowReader
             t.LastPage = page;
             if (first) return; // seed silently; announcements on navigation only
 
-            string name = ReadPresetName(grid, worker);
+            // Cells show a number that runs ACROSS pages (page 2 = "7".."12",
+            // confirmed by screenshots). COMPUTE it — reading the cell's text
+            // gave stale numbers from recycled pool cells ("6" on cell 9).
+            if (max > t.PageCapacity) t.PageCapacity = max;
+            int number = (page > 0 && t.PageCapacity > 0 ? page * t.PageCapacity : 0) + idx + 1;
 
-            // Cells carry an on-screen number that runs ACROSS pages ("7".."12"
-            // on page 2 — confirmed by screenshots); when the cell text is that
-            // number, speak it alone (it's what sighted users see). Text labels
-            // (body type / gender identity) keep the position appended.
+            // Cell text is used only when it's a real label (has letters —
+            // body type / gender identity); numeric cell text is untrustworthy
+            string label = ReadPresetName(grid, worker);
+            if (label != null && !Regex.IsMatch(label, @"[\p{L}]")) label = null;
+
             string body;
-            if (!string.IsNullOrEmpty(name) && Regex.IsMatch(name, @"^\d+$"))
+            if (label != null)
+            {
+                body = $"{label}. {number}";
+            }
+            else
             {
                 // Mod-authored description of the numbered thumbnail, when one
                 // exists in the lang files (avdesc.* keys — filled in from
                 // screenshots of each grid page; presets are unnamed in-game)
-                string desc = LookupPresetDescription(name);
-                body = desc == null ? name : $"{name}. {desc}";
-            }
-            else
-            {
-                string pos = max > 0
-                    ? string.Format(LangFile.Get("n_of_m", "{0} of {1}"), idx + 1, max)
-                    : (idx + 1).ToString();
-                body = string.IsNullOrEmpty(name) ? pos : $"{name}. {pos}";
+                string desc = LookupPresetDescription(number.ToString());
+                body = desc == null ? number.ToString() : $"{number}. {desc}";
             }
 
             // The applied preset carries a check mark — say so
@@ -265,7 +268,7 @@ internal sealed class AvatarChildFlowReader
         string t = _typeName;
         if (t.Contains("UIFlowUI61100")) return "bodytype";
         if (t.Contains("UIFlowUI61101")) return "identity";
-        if (t.Contains("UIFlowUI61200")) return "facepreset";
+        if (t.Contains("UIFlowUI61200")) return "avatar";
         if (t.Contains("UIFlowUI61203")) return "body";
         if (t.Contains("UIFlowUI61401")) return "hair";
         if (t.Contains("UIFlowUI61402")) return "eye";
@@ -319,6 +322,8 @@ internal sealed class AvatarChildFlowReader
     {
         public string Field;
         public int LastIndex = int.MinValue;
+        public ManagedObject PaletteRgb;   // matching ColorPalletPreset.ColorRGB array
+        public bool PaletteResolved;
     }
 
     private void PollSwatchGrid(SwatchTracker t)
@@ -341,10 +346,56 @@ internal sealed class AvatarChildFlowReader
                 ? string.Format(LangFile.Get("n_of_m", "{0} of {1}"), idx + 1, max)
                 : (idx + 1).ToString();
             string text = $"{LangFile.Get("color_swatch", "Color")} {pos}";
+
+            // Speak the swatch's actual color, from the game's own palette
+            // (ColorPalletPreset.ColorRGB — the swatch grid renders it)
+            string colorName = LookupSwatchColorName(t, idx, max);
+            if (colorName != null) text += $". {colorName}";
+
             API.LogInfo($"[SF6Access] Avatar swatch {t.Field}[{idx}]: {text}");
             ScreenReaderService.Speak(text, interrupt: true);
         }
         catch { }
+    }
+
+    // Palettes on AvatarCreateData; the right one for a grid is the one whose
+    // swatch count matches the grid's ItemMax (exact match only — a wrong
+    // palette would speak wrong color names, worse than silence)
+    private static readonly string[] PaletteFields =
+    {
+        "ColorPresetBody", "ColorPresetDefault32", "ColorPresetBodyAdd00", "ColorPresetBodyAdd01"
+    };
+
+    private string LookupSwatchColorName(SwatchTracker t, int idx, int max)
+    {
+        try
+        {
+            if (!t.PaletteResolved)
+            {
+                t.PaletteResolved = true;
+                var root = FlowHelper.GetObjectField(_param, "RootParam");
+                var acd = FlowHelper.Call(root, "get_AvatarCreateData") as ManagedObject
+                          ?? FlowHelper.GetObjectField(root, "AvatarCreateData");
+                if (acd == null || max <= 0) return null;
+
+                var counts = new List<string>();
+                foreach (var pf in PaletteFields)
+                {
+                    var pal = FlowHelper.GetObjectField(acd, pf);
+                    var rgb = FlowHelper.GetObjectField(pal, "ColorRGB");
+                    int count = FlowHelper.GetListCount(rgb);
+                    counts.Add($"{pf}={count}");
+                    if (count == max) { t.PaletteRgb = rgb; break; }
+                }
+                API.LogInfo(t.PaletteRgb != null
+                    ? $"[SF6Access] Avatar swatch {t.Field}: palette matched (ItemMax={max})"
+                    : $"[SF6Access] Avatar swatch {t.Field}: NO palette matches ItemMax={max} ({string.Join(", ", counts)})");
+            }
+
+            uint? rgba = FlowHelper.ReadColorElement(t.PaletteRgb, idx);
+            return rgba == null ? null : ColorNamer.NameRgba(rgba.Value);
+        }
+        catch { return null; }
     }
 
     #endregion

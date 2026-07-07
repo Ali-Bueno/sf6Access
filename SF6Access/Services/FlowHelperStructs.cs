@@ -43,6 +43,23 @@ public static partial class FlowHelper
         return BitConverter.ToUInt32(bytes, 0);
     }
 
+    /// <summary>Element of a via.Color[] as its packed rgba uint.</summary>
+    public static uint? ReadColorElement(ManagedObject colorArray, int index)
+    {
+        if (colorArray == null || index < 0) return null;
+        try
+        {
+            var boxed = (colorArray as IObject)?.Call("Get", index);
+            if (boxed is not REFrameworkNET.ValueType vt) return null;
+            ulong addr = vt.GetAddress();
+            if (addr == 0) return null;
+            var bytes = new byte[4];
+            Marshal.Copy((IntPtr)(long)addr, bytes, 0, 4);
+            return BitConverter.ToUInt32(bytes, 0);
+        }
+        catch { return null; }
+    }
+
     private static byte[] ReadStructField(ManagedObject obj, string fieldName, int size)
     {
         if (obj == null) return null;
