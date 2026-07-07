@@ -183,8 +183,9 @@ public sealed class CommandListHooks : SingleParamScreenAdapter
     /// NormalCommandMessage = Classic, CasualCommandMessage = Modern, and
     /// CasualManualCommandMessage = Modern when the manual-command notation is
     /// toggled on. Reading NormalCommandMessage unconditionally showed Classic
-    /// inputs even on Modern controls. Icon tags are kept as their inner names
-    /// (e.g. "<ICON arrow_236>" becomes "arrow_236") until a proper mapping exists.
+    /// inputs even on Modern controls. Icon-tag tokens resolve through the
+    /// compact FGC map first (LP/MP...), then the localized command vocabulary
+    /// (directions, motions, SM/SA buttons).
     /// </summary>
     private string ResolveCommandText(ManagedObject skill)
     {
@@ -277,9 +278,18 @@ public sealed class CommandListHooks : SingleParamScreenAdapter
 
                 string t = token.TrimStart('_');
                 if (CommandTokens.TryGetValue(t, out var mapped))
+                {
                     words.Add(mapped);
+                }
                 else
-                    words.Add(t);
+                {
+                    // Localized command vocabulary (same wording as tutorials/
+                    // combo trials): "236" → "quarter circle forward", "2" →
+                    // "down", "SM" → "special move" — raw tokens like "2 SM"
+                    // were meaningless on Modern controls.
+                    string spoken = FlowHelper.SpeakInputToken(t);
+                    words.Add(string.IsNullOrEmpty(spoken) ? t : spoken);
+                }
             }
             return " " + string.Join(" ", words) + " ";
         });
