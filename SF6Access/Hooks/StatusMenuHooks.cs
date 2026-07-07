@@ -207,7 +207,7 @@ public sealed class StatusMenuHooks : ScreenAdapter
         var tabList = FlowHelper.GetObjectField(_statusParam, "TabList");
         string label = FlowHelper.ReadListRowText(tabList, tab);
         if (string.IsNullOrEmpty(label) && tab < TabNames.Length)
-            label = TabNames[tab];
+            label = LangFile.GetByText("tab", TabNames[tab]);
         if (string.IsNullOrEmpty(label)) return;
 
         // Announce the initial tab too: it tells the user the menu is open
@@ -229,7 +229,7 @@ public sealed class StatusMenuHooks : ScreenAdapter
 
         string label = FlowHelper.ReadListRowText(topList, idx);
         if (string.IsNullOrEmpty(label) && idx < TopFocusNames.Length)
-            label = TopFocusNames[idx];
+            label = LangFile.GetByText("slot", TopFocusNames[idx]);
         if (string.IsNullOrEmpty(label)) return;
 
         // Name what's equipped in the focused slot so the player knows it without

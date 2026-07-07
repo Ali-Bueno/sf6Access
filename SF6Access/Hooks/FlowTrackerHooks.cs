@@ -330,15 +330,16 @@ public class FlowTrackerHooks
         if (flowName.Contains("UIFlowTitle", StringComparison.OrdinalIgnoreCase))
             return LocalizedText.TitleScreenPrompt();
 
-        // Exact match first
+        // Exact match first (titles localize via screen.* lang keys; the
+        // table holds the English fallbacks)
         if (FlowAnnouncements.TryGetValue(flowName, out var exact))
-            return exact;
+            return LangFile.GetByText("screen", exact);
 
         // Partial match (flow name contains a key)
         foreach (var kvp in FlowAnnouncements)
         {
             if (flowName.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase))
-                return kvp.Value;
+                return LangFile.GetByText("screen", kvp.Value);
         }
 
         return null;

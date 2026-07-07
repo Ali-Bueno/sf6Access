@@ -38,6 +38,22 @@ public static class LangFile
         return fallback;
     }
 
+    /// <summary>
+    /// Lookup keyed by the English text itself: prefix "screen" + text
+    /// "Battle Settings" → key "screen.battle_settings", falling back to the
+    /// English text. Lets tables of English fallback strings (screen titles,
+    /// tab/slot names, field-name-derived labels) localize without hand-keying
+    /// every announce site.
+    /// </summary>
+    public static string GetByText(string prefix, string englishText)
+    {
+        if (string.IsNullOrEmpty(englishText)) return englishText;
+        string slug = System.Text.RegularExpressions.Regex
+            .Replace(englishText.ToLowerInvariant(), "[^a-z0-9]+", "_").Trim('_');
+        if (slug.Length == 0) return englishText;
+        return Get($"{prefix}.{slug}", englishText);
+    }
+
     private static void Ensure()
     {
         long now = System.Environment.TickCount64;

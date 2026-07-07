@@ -164,9 +164,11 @@ public sealed class RewardHooks : SingleParamScreenAdapter
                 if (num > 1) name = $"{name} x{num}";
                 // Free vs premium (needs the premium pass), then claimed status —
                 // announce "Not claimed" too so an unclaimed reward isn't ambiguous
-                if (rewardType == 2) name = $"{name}. Premium";
-                else if (rewardType == 1) name = $"{name}. Free";
-                name = received ? $"{name}. Claimed" : $"{name}. Not claimed";
+                if (rewardType == 2) name = $"{name}. {LangFile.Get("premium", "Premium")}";
+                else if (rewardType == 1) name = $"{name}. {LangFile.Get("free", "Free")}";
+                name = received
+                    ? $"{name}. {LangFile.Get("claimed", "Claimed")}"
+                    : $"{name}. {LangFile.Get("not_claimed", "Not claimed")}";
                 SpeakOnce("bp", name);
                 return;
             }

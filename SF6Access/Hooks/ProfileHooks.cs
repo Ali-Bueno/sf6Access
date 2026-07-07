@@ -107,7 +107,7 @@ public sealed class ProfileHooks : ScreenAdapter
                             string text = FlowHelper.ReadGuiText(textObj);
                             if (string.IsNullOrWhiteSpace(text)) continue;
 
-                            string label = HumanizeFieldName(field.Name);
+                            string label = LangFile.GetByText("profile", HumanizeFieldName(field.Name));
                             parts.Add(label != null ? $"{label}: {text.Trim()}" : text.Trim());
                             if (parts.Count >= MAX_TEXTS) break;
                         }
