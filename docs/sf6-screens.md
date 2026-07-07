@@ -778,8 +778,10 @@ not resolve these. Recipes:
   (per-position `BodyHairPartsList`), 61308 body-hair color; 61400 face shape, 61401 hair,
   61402 eyes, 61403 pupils (two grids R/L), 61404 eyelashes (+up/down `UIPartsSpin` +
   `*TextList`), 61405 eyebrows (two grids), 61406 nose, 61407 mouth, 61408 ears (+color grid),
-  61409 beard, 61410 skin age, 61411 expression, 61412 skin definition; 61500-61508 paints
-  (grid + scale sliders + `UIPartsPositionGrid` + `LocationNumber`); 61700 voice
+  61409 beard, 61410 skin age, 61411 expression, 61412 skin definition; paints (grid + scale
+  sliders + `UIPartsPositionGrid` + `LocationNumber`) — **screen↔flow pairing log-confirmed
+  2026-07-07: 61500 body paint, 61501 face makeup, 61502 body mole, 61503 body scar, 61505 face
+  fixed paint** (61506/61507/61508 = face free paint / face scar / face mole, pending); 61700 voice
   (`PartsScrollListVoice`, ids only — reads perfectly, user-confirmed 2026-07-07); 61801
   recipe save/load, 61802 download, 61803 detail,
   61805 upload (player-named strings).
