@@ -96,3 +96,4 @@ input.UIDecide=bestätigen
 input.UICancel=abbrechen
 input.MouseL=Linksklick
 input.MouseR=Rechtsklick
+icon.hd=gedrückt halten

@@ -107,3 +107,4 @@ input.UIDecide=تأكيد
 input.UICancel=إلغاء
 input.MouseL=نقرة يسرى
 input.MouseR=نقرة يمنى
+icon.hd=استمرار الضغط

@@ -100,3 +100,4 @@ input.UIDecide=conferma
 input.UICancel=annulla
 input.MouseL=clic sinistro
 input.MouseR=clic destro
+icon.hd=tenere premuto

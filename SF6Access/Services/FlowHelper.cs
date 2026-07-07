@@ -1146,7 +1146,9 @@ public static partial class FlowHelper
         if (motion.Length > 0 && Regex.IsMatch(motion, @"^\d+$"))
             return SpeakMotion(motion, words);
 
-        if (words.Icons.TryGetValue(token.ToLowerInvariant(), out var iconName))
+        string iconKey = token.ToLowerInvariant();
+        if (IconAliases.TryGetValue(iconKey, out var canonical)) iconKey = canonical;
+        if (words.Icons.TryGetValue(iconKey, out var iconName))
             return iconName;
 
         // PS button glyphs: "BtnR1" → "R1"

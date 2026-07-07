@@ -107,3 +107,4 @@ input.UIDecide=결정
 input.UICancel=취소
 input.MouseL=왼쪽 클릭
 input.MouseR=오른쪽 클릭
+icon.hd=길게 누르기

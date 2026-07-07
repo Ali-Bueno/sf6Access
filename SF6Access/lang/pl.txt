@@ -99,3 +99,4 @@ input.UIDecide=zatwierdź
 input.UICancel=anuluj
 input.MouseL=lewy przycisk myszy
 input.MouseR=prawy przycisk myszy
+icon.hd=przytrzymaj

@@ -38,6 +38,7 @@ public static partial class FlowHelper
             { "ls", "light attack" }, { "ms", "medium attack" }, { "hs", "heavy attack" },
             { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "throw" },
             { "sm", "special move" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutral" },
+            { "hd", "hold" }, // hold-the-button glyph (Modern assisted combos: "auto hd")
         },
         Inputs = new()
         {
@@ -52,6 +53,15 @@ public static partial class FlowHelper
             { "UIDecide", "confirm" }, { "UICancel", "cancel" },
             { "MouseL", "left click" }, { "MouseR", "right click" },
         },
+    };
+
+    /// <summary>Token aliases → canonical icon keys, so variants reuse the
+    /// canonical entry's localization: the Modern command list names the
+    /// unified attack buttons LowS/MidS/HighS (same meaning as ls/ms/hs).</summary>
+    private static readonly System.Collections.Generic.Dictionary<string, string> IconAliases =
+        new(System.StringComparer.OrdinalIgnoreCase)
+    {
+        { "lows", "ls" }, { "mids", "ms" }, { "highs", "hs" },
     };
 
     /// <summary>CommandWords for the current language: the English table with

@@ -107,3 +107,4 @@ input.UIDecide=подтвердить
 input.UICancel=отмена
 input.MouseL=левый клик
 input.MouseR=правый клик
+icon.hd=удерживать

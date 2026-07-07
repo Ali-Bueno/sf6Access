@@ -103,3 +103,4 @@ input.UIDecide=確認
 input.UICancel=取消
 input.MouseL=滑鼠左鍵
 input.MouseR=滑鼠右鍵
+icon.hd=長按

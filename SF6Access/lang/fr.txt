@@ -97,3 +97,4 @@ input.UIDecide=confirmer
 input.UICancel=annuler
 input.MouseL=clic gauche
 input.MouseR=clic droit
+icon.hd=maintenir

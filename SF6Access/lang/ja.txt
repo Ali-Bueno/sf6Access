@@ -107,3 +107,4 @@ input.UIDecide=決定
 input.UICancel=キャンセル
 input.MouseL=左クリック
 input.MouseR=右クリック
+icon.hd=長押し

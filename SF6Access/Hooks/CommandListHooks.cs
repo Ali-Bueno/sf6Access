@@ -294,6 +294,11 @@ public sealed class CommandListHooks : SingleParamScreenAdapter
             return " " + string.Join(" ", words) + " ";
         });
 
+        // "next" is the combo-step arrow separator (same glyph the combo
+        // trials strip) — speak it as a pause, not the English word.
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\s*\bnext\b\s*", ", ",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
         return System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ").Trim();
     }
 }

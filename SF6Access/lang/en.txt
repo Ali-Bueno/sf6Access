@@ -136,3 +136,4 @@ input.UIDecide=confirm
 input.UICancel=cancel
 input.MouseL=left click
 input.MouseR=right click
+icon.hd=hold
