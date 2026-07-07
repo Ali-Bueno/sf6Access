@@ -179,7 +179,7 @@ internal sealed class AvatarChildFlowReader
             t.LastPage = page;
             if (first) return; // seed silently; announcements on navigation only
 
-            string name = ReadPresetName(grid);
+            string name = ReadPresetName(grid, worker);
             string pos = max > 0
                 ? string.Format(LangFile.Get("n_of_m", "{0} of {1}"), idx + 1, max)
                 : (idx + 1).ToString();
@@ -194,8 +194,19 @@ internal sealed class AvatarChildFlowReader
         catch { }
     }
 
-    private static string ReadPresetName(ManagedObject grid)
+    private static string ReadPresetName(ManagedObject grid, ManagedObject worker)
     {
+        // Best source: the focused cell's own on-screen text (body type /
+        // gender identity cells carry a visible label; hair etc. are pure
+        // thumbnails and return nothing)
+        try
+        {
+            string cellText = FlowHelper.ReadSelectedItemText(worker);
+            if (!string.IsNullOrWhiteSpace(cellText) && !IsInternalPresetInfo(cellText))
+                return cellText;
+        }
+        catch { }
+
         try
         {
             var data = FlowHelper.Call(grid, "get_CurrentSelectPresetData") as ManagedObject;

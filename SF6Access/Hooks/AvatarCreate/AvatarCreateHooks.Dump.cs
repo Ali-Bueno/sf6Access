@@ -93,6 +93,8 @@ public sealed partial class AvatarCreateHooks
         if (self?._childFlowParam != null)
             DumpChildFlow(sb, self._childFlowParam, self._lastChildFlowType);
 
+        DumpVisibleGuiTexts(sb);
+
         Directory.CreateDirectory(Path.GetDirectoryName(DumpPath)!);
         File.WriteAllText(DumpPath, sb.ToString());
         API.LogInfo($"[SF6Access] Avatar state dump saved to {DumpPath}");
@@ -184,6 +186,30 @@ public sealed partial class AvatarCreateHooks
                     ? $"    {owner}.{field} = #{rgba.Value:X8} ({ColorNamer.NameRgba(rgba.Value)})"
                     : $"    {owner}.{field} = unreadable");
             }
+        }
+        catch (Exception ex) { sb.AppendLine($"  Error: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Every visible on-screen text with its GUI owner + element name — the
+    /// map for finding where the game renders item labels (body type, gender
+    /// identity, "Tipo 1"...) that don't exist in the flow data.
+    /// </summary>
+    private static void DumpVisibleGuiTexts(StringBuilder sb)
+    {
+        sb.AppendLine();
+        sb.AppendLine("=== Visible GUI texts (owner | element | text) ===");
+        try
+        {
+            var texts = GuiTextReader.ReadSceneTexts(visibleOnly: true);
+            int written = 0;
+            foreach (var t in texts)
+            {
+                if (string.IsNullOrWhiteSpace(t.Text)) continue;
+                sb.AppendLine($"    {t.Owner} | {t.Name} | {t.Text}");
+                if (++written >= 200) { sb.AppendLine("    ... (capped at 200)"); break; }
+            }
+            if (written == 0) sb.AppendLine("    (none)");
         }
         catch (Exception ex) { sb.AppendLine($"  Error: {ex.Message}"); }
     }
