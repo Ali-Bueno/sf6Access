@@ -348,7 +348,12 @@ public class BattleInfoHooks
             string name = LeagueRankResolver.Format(record, tierOnly: false);
             if (string.IsNullOrEmpty(name)) return null;
 
-            return isMaster ? $"{name} {masterRating}" : name;
+            // Tester request: also announce the point values — MR for Master,
+            // LP for every other tier (same "N LP/MR" style as the post-match
+            // rank gauge readout).
+            if (isMaster) return $"{name} {masterRating} MR";
+            int leaguePoint = FlowHelper.ReadIntField(lp, "league_point", 0);
+            return leaguePoint > 0 ? $"{name} {leaguePoint} LP" : name;
         }
         catch { return null; }
     }

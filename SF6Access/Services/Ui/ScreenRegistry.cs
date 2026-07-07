@@ -50,6 +50,10 @@ public class ScreenRegistry
         // New screen readers built on the foundation
         UiDispatcher.Register(new AvatarResultHooks());
         UiDispatcher.Register(new WTMPauseHooks());
+        UiDispatcher.Register(new DeviceItemAppHooks());
+        UiDispatcher.Register(new ShopHooks());
+        UiDispatcher.Register(new OnlineShopHooks());
+        UiDispatcher.Register(new ComboTrialListHooks());
 
         API.LogInfo("[SF6Access] ScreenRegistry: adapters registered");
     }

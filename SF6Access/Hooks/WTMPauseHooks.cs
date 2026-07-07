@@ -12,7 +12,9 @@ namespace SF6Access.Hooks;
 /// - Escape / give-up (single-option menu): the generic reader stays silent
 ///   because focus never moves — announce the question + option on entry.
 /// - Item tab: the grid cells only carry owned-count numbers, so read the
-///   selected item's name + description from the WTMBattlePauseItem GUI instead.
+///   selected item's name + description from the WTMBattlePauseItem GUI instead
+///   (plus the cell's count). The use-item confirm popup is a bare GUI widget
+///   (UIWidget_ItemConfirmWindow, no flow param) — announce its question too.
 /// - Perks tab: the rows carry a bare "0" counter before the name, and the
 ///   tooltip is a WLTAG-composed text — read name + resolved tooltip.
 /// - Battle Info tab: a static (non-navigable) panel — announce the enemy and
@@ -48,6 +50,11 @@ public sealed class WTMPauseHooks : ScreenAdapter
     /// skips the queued focus fallback then (it spoke the "SA {0}" row templates).</summary>
     public static bool IsInWTMPause => _self != null && _self.Active;
 
+    /// <summary>True while the use-item confirm popup is on screen — its Yes/No
+    /// buttons are only readable through the generic focus reader, so
+    /// MainMenuHooks lifts the WTM pause suppression for them.</summary>
+    public static bool IsItemConfirmOpen => _self != null && _self._itemConfirm.IsOpen;
+
     public WTMPauseHooks()
     {
         _self = this;
@@ -63,6 +70,7 @@ public sealed class WTMPauseHooks : ScreenAdapter
     private int _lastPerkIdx = int.MinValue;
     private bool _escapeAnnounced;
     private bool _battleInfoAnnounced;
+    private readonly ItemConfirmWatcher _itemConfirm = new();
 
     protected override bool Locate()
     {
@@ -95,6 +103,7 @@ public sealed class WTMPauseHooks : ScreenAdapter
         _lastPerkIdx = int.MinValue;
         _escapeAnnounced = false;
         _battleInfoAnnounced = false;
+        _itemConfirm.Reset();
     }
 
     protected override void OnPoll()
@@ -118,7 +127,7 @@ public sealed class WTMPauseHooks : ScreenAdapter
         }
 
         if (_escape != null) { PollEscape(); return; }
-        if (_item != null) { PollItem(); return; }
+        if (_item != null) { _itemConfirm.Poll(); PollItem(); return; }
         if (_perk != null) { PollPerks(); return; }
         if (_special != null) { PollMoves(_special, "ActionSkillList", "ActionSetTypeList", "ActionSkillDetail"); return; }
         if (_super != null) { PollMoves(_super, "ActionSkillList", null, "ActionSkillDetail"); return; }
@@ -149,7 +158,8 @@ public sealed class WTMPauseHooks : ScreenAdapter
         ScreenReaderService.Speak(msg, interrupt: true);
     }
 
-    /// <summary>Item tab: announce the selected item's name + description on move.</summary>
+    /// <summary>Item tab: announce the selected item's name + owned count +
+    /// description on move.</summary>
     private void PollItem()
     {
         var grid = FlowHelper.GetObjectField(_item, "_lineupGrid");
@@ -157,17 +167,8 @@ public sealed class WTMPauseHooks : ScreenAdapter
         if (idx < 0 || idx == _lastItemIdx) return;
         _lastItemIdx = idx;
 
-        string name = null, detail = null;
-        foreach (var t in GuiTextReader.ReadTextsByOwner("WTMBattlePauseItem"))
-        {
-            if (string.IsNullOrWhiteSpace(t.Text)) continue;
-            string s = t.Text.Replace('\n', ' ').Trim();
-            if (t.Name == "e_text_name" && name == null) name = s;          // item title (selected)
-            else if (t.Name == "e_text_detail" && detail == null) detail = s; // description
-        }
-        if (string.IsNullOrEmpty(name)) return;
-
-        string msg = string.IsNullOrEmpty(detail) ? name : $"{name}. {detail}";
+        string msg = ItemGridReader.ReadSelectedItem(grid, "WTMBattlePauseItem");
+        if (string.IsNullOrEmpty(msg)) return;
         API.LogInfo($"[SF6Access] WTM item [{idx}]: {msg}");
         ScreenReaderService.Speak(msg);
     }
@@ -219,54 +220,38 @@ public sealed class WTMPauseHooks : ScreenAdapter
     {
         if (_battleInfoAnnounced) return;
 
+        // Everything comes from the flat owner scan: the drop-lock rows can't be
+        // walked from the param (UIPartsScrollList has no _Children field), but
+        // each row renders its e_text_droplock (keep-condition) directly followed
+        // by its e_text_head (reward), so pairing them in tree order is safe. The
+        // bare value/total counters interleave across rows — left out.
         var parts = new List<string>();
-
-        string enemyName = null, enemyLevel = null;
+        string enemyName = null, enemyLevel = null, objective = null;
+        var rows = new List<string>();
+        var seen = new HashSet<string>();
         foreach (var t in GuiTextReader.ReadTextsByOwner("WTMBattlePauseBattleInfo"))
         {
-            if (t.Name == "e_text_name" && enemyName == null && !string.IsNullOrWhiteSpace(t.Raw))
-                enemyName = FlowHelper.ResolveWLTags(t.Raw);   // master name is a WLTAG
-            else if (t.Name == "e_text_num" && enemyLevel == null && !string.IsNullOrWhiteSpace(t.Text))
-                enemyLevel = t.Text.Trim();
+            switch (t.Name)
+            {
+                case "e_text_name" when enemyName == null && !string.IsNullOrWhiteSpace(t.Raw):
+                    enemyName = FlowHelper.ResolveWLTags(t.Raw);   // master name is a WLTAG
+                    break;
+                case "e_text_num" when enemyLevel == null && !string.IsNullOrWhiteSpace(t.Text):
+                    enemyLevel = t.Text.Trim();
+                    break;
+                case "e_text_droplock" when !string.IsNullOrWhiteSpace(t.Text):
+                    objective = t.Text.Replace('\n', ' ').Trim();
+                    break;
+                case "e_text_head" when objective != null && !string.IsNullOrWhiteSpace(t.Text):
+                    string row = $"{t.Text.Replace('\n', ' ').Trim()}. {objective}";
+                    if (seen.Add(row)) rows.Add(row);
+                    objective = null;
+                    break;
+            }
         }
         if (!string.IsNullOrWhiteSpace(enemyName))
             parts.Add(string.IsNullOrEmpty(enemyLevel) ? enemyName : $"{enemyName} {enemyLevel}");
-
-        // Per-row reads keep each objective's progress/target/reward together —
-        // the flat GUI scan interleaves them across rows.
-        var list = FlowHelper.GetObjectField(_battleInfo, "_seriousItemInfoList");
-        var children = FlowHelper.GetObjectField(list, "_Children");
-        int count = FlowHelper.GetListCount(children);
-        var seen = new HashSet<string>();
-        for (int i = 0; i < count; i++)
-        {
-            var child = FlowHelper.GetListItem(children, i);
-            var control = FlowHelper.GetObjectField(child, "Control")
-                ?? FlowHelper.Call(child, "get_Control") as ManagedObject;
-            if (control == null) continue;
-
-            string objective = null, reward = null, total = null, value = null;
-            foreach (var t in GuiTextReader.ReadControlTexts(control, visibleOnly: false))
-            {
-                if (string.IsNullOrWhiteSpace(t.Text)) continue;
-                string s = t.Text.Replace('\n', ' ').Trim();
-                switch (t.Name)
-                {
-                    case "e_text_droplock": objective ??= s; break;
-                    case "e_text_head": reward ??= s; break;
-                    case "e_text_total": total ??= s; break;
-                    // A row carries two value texts; the progress count is the
-                    // last one in tree order — keep overwriting.
-                    case "e_text_value": value = s; break;
-                }
-            }
-            if (objective == null) continue;
-
-            string row = objective;
-            if (value != null && total != null) row += $". {value} / {total}";
-            if (reward != null) row += $". {reward}";
-            if (seen.Add(row)) parts.Add(row);
-        }
+        parts.AddRange(rows);
 
         if (parts.Count == 0) return;   // texts not populated yet — retry next tick
 
@@ -366,11 +351,5 @@ public sealed class WTMPauseHooks : ScreenAdapter
         ScreenReaderService.Speak(msg);
     }
 
-    private static string DamageWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Daño",
-            FlowHelper.UiLang.Pt => "Dano",
-            _ => "Damage",
-        };
+    private static string DamageWord() => LocalizedText.Damage();
 }

@@ -213,24 +213,8 @@ public sealed class StatusSkillHooks : SingleParamScreenAdapter
         ScreenReaderService.Speak(string.Join(". ", parts), interrupt: true);
     }
 
-    /// <summary>
-    /// The avatar's money (Zenny) from WTPlayerManager.LocalPlayerData.Wallet.Money.
-    /// Wallet/Money are getter properties (no backing field), so the field read
-    /// fails — fall back to the get_ accessors.
-    /// </summary>
-    private static int ReadMoney()
-    {
-        var mgr = API.GetManagedSingleton("app.worldtour.WTPlayerManager") as ManagedObject;
-        var playerData = FlowHelper.GetObjectField(mgr, "LocalPlayerData")
-            ?? FlowHelper.Call(mgr, "get_LocalPlayerData") as ManagedObject;
-        var wallet = FlowHelper.GetObjectField(playerData, "Wallet")
-            ?? FlowHelper.Call(playerData, "get_Wallet") as ManagedObject;
-        if (wallet == null) { API.LogInfo("[SF6Access] Wallet not found"); return int.MinValue; }
-
-        int money = FlowHelper.ReadIntField(wallet, "Money", int.MinValue);
-        if (money == int.MinValue) money = FlowHelper.CallInt(wallet, "get_Money", int.MinValue);
-        return money;
-    }
+    /// <summary>The avatar's money (Zenny) — shared reader in CurrencyReader.</summary>
+    private static int ReadMoney() => CurrencyReader.ReadZenny();
 
     /// <summary>
     /// The "Unlock this skill?" confirm dialog (StatusMenu_SkillOpenConfirm):
@@ -343,128 +327,39 @@ public sealed class StatusSkillHooks : SingleParamScreenAdapter
         }
     }
 
-    private static string ResetTitle()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Restablecer habilidades. ¿Restablecer tus habilidades?",
-            FlowHelper.UiLang.Pt => "Redefinir habilidades. Redefinir suas habilidades?",
-            _ => "Reset Skills. Reset your skills?",
-        };
+    private static string ResetTitle() => LocalizedText.ResetSkillsTitle();
 
     private static string ResetButton(int idx)
         => idx switch
         {
             0 => YesWord(),
             1 => NoWord(),
-            _ => FlowHelper.GetDisplayLang() switch
-            {
-                FlowHelper.UiLang.Es => "Ver habilidades",
-                FlowHelper.UiLang.Pt => "Ver habilidades",
-                _ => "View Skills",
-            },
+            _ => LocalizedText.ViewSkills(),
         };
 
-    private static string ResetResourceWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Recurso de reinicio",
-            FlowHelper.UiLang.Pt => "Recurso de redefinição",
-            _ => "Reset resource",
-        };
+    private static string ResetResourceWord() => LocalizedText.ResetResource();
 
-    private static string AvailableWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "disponible",
-            FlowHelper.UiLang.Pt => "disponível",
-            _ => "available",
-        };
+    private static string AvailableWord() => LocalizedText.Available();
 
-    private static string UnavailableWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "no disponible",
-            FlowHelper.UiLang.Pt => "indisponível",
-            _ => "unavailable",
-        };
+    private static string UnavailableWord() => LocalizedText.Unavailable();
 
-    private static string PointsWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Puntos de habilidad",
-            FlowHelper.UiLang.Pt => "Pontos de habilidade",
-            _ => "Skill points",
-        };
+    private static string PointsWord() => LocalizedText.SkillPoints();
 
-    private static string MoneyWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Monedas",
-            FlowHelper.UiLang.Pt => "Moedas",
-            _ => "Coins",
-        };
+    private static string MoneyWord() => LocalizedText.Coins();
 
-    private static string CantResetWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "No se puede restablecer en este árbol",
-            FlowHelper.UiLang.Pt => "Não é possível redefinir nesta árvore",
-            _ => "Can't reset on this tree",
-        };
+    private static string CantResetWord() => LocalizedText.CannotResetTree();
 
-    private static string TreeWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Árbol",
-            FlowHelper.UiLang.Pt => "Árvore",
-            _ => "Tree",
-        };
+    private static string TreeWord() => LocalizedText.Tree();
 
-    private static string CostWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Coste",
-            FlowHelper.UiLang.Pt => "Custo",
-            _ => "Cost",
-        };
+    private static string CostWord() => LocalizedText.Cost();
 
-    private static string LockedWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "bloqueada",
-            FlowHelper.UiLang.Pt => "bloqueada",
-            _ => "locked",
-        };
+    private static string LockedWord() => LocalizedText.LockedF();
 
-    private static string AcquiredWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "adquirida",
-            FlowHelper.UiLang.Pt => "adquirida",
-            _ => "acquired",
-        };
+    private static string AcquiredWord() => LocalizedText.Acquired();
 
-    private static string UnlockQuestion()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "¿Desbloquear esta habilidad?",
-            FlowHelper.UiLang.Pt => "Desbloquear esta habilidade?",
-            _ => "Unlock this skill?",
-        };
+    private static string UnlockQuestion() => LocalizedText.UnlockSkillQuestion();
 
-    private static string YesWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Sí",
-            FlowHelper.UiLang.Pt => "Sim",
-            _ => "Yes",
-        };
+    private static string YesWord() => LocalizedText.Yes();
 
-    private static string NoWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "No",
-            FlowHelper.UiLang.Pt => "Não",
-            _ => "No",
-        };
+    private static string NoWord() => LocalizedText.No();
 }

@@ -24,6 +24,11 @@ public class DialogFlowHooks
 
     private static string _lastAnnounced;
     private static int _lastButtonIndex = -2;
+    private static int _enrollingRetries;
+
+    // The style-obtained dialog announces once; give the master-name lookup a
+    // couple of seconds' worth of polls before latching a nameless read.
+    private const int ENROLLING_MAX_RETRIES = 24;
 
     /// <summary>True while a UIFlowDialog param is active (buttons handled here).</summary>
     public static bool IsDialogActive { get; private set; }
@@ -48,6 +53,7 @@ public class DialogFlowHooks
         {
             _lastAnnounced = null;
             _lastButtonIndex = -2;
+            _enrollingRetries = 0;
             IsDialogActive = false;
             return;
         }
@@ -122,17 +128,41 @@ public class DialogFlowHooks
         }
 
         // Style-obtained dialog: the body reads "...obtained 's Battle Style..."
-        // with the master's name drawn as a texture. Resolve it from the param's
-        // MasterId and splice it in (and prefer the full body GUI text, which the
-        // Message/Text field truncates to the first sentence).
+        // with the master's name rendered from a separate WLTAG element. Resolve
+        // the name (param MasterId, then the GUI's e_text_style WLTAG) and splice
+        // it in. The dialog announces once — hold off while the name is still
+        // unresolvable instead of latching a nameless read.
         if (foundType != null && foundType.Contains("Enrolling"))
         {
-            string body = ReadEnrollingBody() ?? message;
+            string body = ReadGuiElementText("Enrolling", "e_text_body")
+                ?? message?.Replace('\n', ' ');
             int masterId = FlowHelper.ReadIntField(param, "MasterId", 0);
             string master = masterId > 0 ? FlowHelper.ResolveMasterFighterName((uint)masterId) : null;
+            if (string.IsNullOrWhiteSpace(master))
+                master = FlowHelper.ResolveWLTags(ReadGuiElementRaw("Enrolling", "e_text_style"));
+            if (string.IsNullOrWhiteSpace(master) && _enrollingRetries++ < ENROLLING_MAX_RETRIES)
+                return;
             if (!string.IsNullOrWhiteSpace(master) && !string.IsNullOrEmpty(body))
-                body = body.Replace("'s Battle Style", $"{master}'s Battle Style");
+            {
+                // Splice into the English body; localized bodies phrase the
+                // possessive differently, so fall back to prepending the name
+                string spliced = body.Replace("'s Battle Style", $"{master}'s Battle Style");
+                body = spliced != body ? spliced : $"{master}. {body}";
+            }
             if (!string.IsNullOrEmpty(body)) message = body;
+        }
+
+        // New-special-move dialog: the command line, its supplement notes and
+        // the style tag ("MAI") are separate fields/GUI texts the generic
+        // title+message read skipped — the dialog sounded half-read.
+        string command = null, supplement = null, style = null;
+        if (foundType != null && foundType.Contains("SPMoveGet"))
+        {
+            command = FlowHelper.CleanTags(FlowHelper.SpeakableIcons(
+                FlowHelper.ReadStringField(param, "CommandMessage")));
+            supplement = FlowHelper.CleanTags(FlowHelper.SpeakableIcons(
+                FlowHelper.ReadStringField(param, "SupplementCommandMessage")));
+            style = ReadGuiElementText("SPMoveGet", "e_text_style");
         }
 
         // Tips windows show page indicators (e.g. "1 / 3")
@@ -141,6 +171,9 @@ public class DialogFlowHooks
 
         var parts = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrEmpty(title)) parts.Add(title);
+        if (!string.IsNullOrEmpty(style)) parts.Add(style);
+        if (!string.IsNullOrEmpty(command)) parts.Add(command);
+        if (!string.IsNullOrEmpty(supplement)) parts.Add(supplement);
         if (!string.IsNullOrEmpty(message)) parts.Add(message);
         if (!string.IsNullOrEmpty(page) && !string.IsNullOrEmpty(pageTotal))
             parts.Add($"{page} / {pageTotal}");
@@ -159,16 +192,29 @@ public class DialogFlowHooks
         ScreenReaderService.Speak(announcement, interrupt: isMessageBox);
     }
 
-    /// <summary>Full body text of the style-obtained dialog ("Enrolling" GUI,
-    /// element "e_text_body") — the param's Message field truncates it.</summary>
-    private static string ReadEnrollingBody()
+    /// <summary>Cleaned text of one named element in a dialog's own GUI view
+    /// (dialogs render parts of their content outside the param's fields).</summary>
+    private static string ReadGuiElementText(string owner, string element)
     {
         try
         {
-            foreach (var (owner, view) in GuiTextReader.FindGuiViews("Enrolling"))
-                foreach (var t in GuiTextReader.ReadViewTexts(view, owner))
-                    if (t.Name == "e_text_body" && !string.IsNullOrWhiteSpace(t.Text))
-                        return t.Text.Replace('\n', ' ').Trim();
+            foreach (var t in GuiTextReader.ReadTextsByOwner(owner))
+                if (t.Name == element && !string.IsNullOrWhiteSpace(t.Text))
+                    return t.Text.Replace('\n', ' ').Trim();
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>Raw (tags intact) text of one named GUI element — for WLTAG-composed
+    /// texts whose cleaned form is empty.</summary>
+    private static string ReadGuiElementRaw(string owner, string element)
+    {
+        try
+        {
+            foreach (var t in GuiTextReader.ReadTextsByOwner(owner))
+                if (t.Name == element && !string.IsNullOrWhiteSpace(t.Raw))
+                    return t.Raw;
         }
         catch { }
         return null;

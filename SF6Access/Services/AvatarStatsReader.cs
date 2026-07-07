@@ -59,9 +59,13 @@ public static class AvatarStatsReader
     /// the slot's ItemParamList by its announced name.
     /// </summary>
     public static List<Stat> ReadItemStats(ManagedObject equipParam, string itemName)
+        => ReadStatsOfItem(FindItemParam(equipParam, itemName));
+
+    /// <summary>The stats a WTItemParam grants (only the non-zero ones) — the
+    /// shared core of ReadItemStats, also used by the shop readers.</summary>
+    public static List<Stat> ReadStatsOfItem(ManagedObject itemParam)
     {
         var result = new List<Stat>();
-        var itemParam = FindItemParam(equipParam, itemName);
         if (itemParam == null) return result;
 
         var statusData = FlowHelper.Call(itemParam, "GetEquipStatus", false) as ManagedObject;
@@ -77,6 +81,30 @@ public static class AvatarStatsReader
             if (value == 0f) continue;   // the item doesn't have this stat — skip it
 
             result.Add(new Stat(type, StatLabel(type), ((int)value).ToString()));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Stats shown by a UIPartsPlayerEquipStatus widget, from its mLabelList
+    /// (StatusLabel = StatusType + mTextValue gui text) — for panes whose stat
+    /// captions are textures (shop enhance target/material info). Zero and
+    /// empty values are skipped (rows the item doesn't affect).
+    /// </summary>
+    public static List<Stat> ReadStatsFromEquipStatusWidget(ManagedObject widget)
+    {
+        var result = new List<Stat>();
+        var labels = FlowHelper.GetObjectField(widget, "mLabelList");
+        int count = FlowHelper.GetListCount(labels);
+        for (int i = 0; i < count; i++)
+        {
+            var label = FlowHelper.GetListItem(labels, i);
+            if (label == null) continue;
+
+            int type = FlowHelper.ReadIntField(label, "StatusType", -1);
+            string value = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(label, "mTextValue"))?.Trim();
+            if (type < 0 || string.IsNullOrEmpty(value) || value == "0") continue;
+            result.Add(new Stat(type, StatLabel(type), value));
         }
         return result;
     }
@@ -180,34 +208,20 @@ public static class AvatarStatsReader
         return null;
     }
 
-    /// <summary>Localized stat label for a WTPlayerStatusType value.</summary>
+    /// <summary>Localized stat label for a WTPlayerStatusType value
+    /// (1 VitalMax, 6 PunchPower, 7 KickPower, 8 ThrowPower, 9 SpecialPower,
+    /// 10 Defense — words in LocalizedText).</summary>
     private static string StatLabel(int type)
     {
-        var lang = FlowHelper.GetDisplayLang();
-        // WTStatusDefine.WTPlayerStatusType: 1=VitalMax, 6=PunchPower, 7=KickPower,
-        // 8=ThrowPower, 9=SpecialPower, 10=Defense.
-        switch (type)
-        {
-            case 1: return lang switch { FlowHelper.UiLang.Es => "Vitalidad", FlowHelper.UiLang.Pt => "Vitalidade", _ => "Vitality" };
-            case 6: return lang switch { FlowHelper.UiLang.Es => "Puño", FlowHelper.UiLang.Pt => "Soco", _ => "Punch" };
-            case 7: return lang switch { FlowHelper.UiLang.Es => "Patada", FlowHelper.UiLang.Pt => "Chute", _ => "Kick" };
-            case 8: return lang switch { FlowHelper.UiLang.Es => "Agarre", FlowHelper.UiLang.Pt => "Agarre", _ => "Throw" };
-            case 9: return lang switch { FlowHelper.UiLang.Es => "Ataque único", FlowHelper.UiLang.Pt => "Ataque único", _ => "Unique Attack" };
-            case 10: return lang switch { FlowHelper.UiLang.Es => "Defensa", FlowHelper.UiLang.Pt => "Defesa", _ => "Defense" };
-            default:
-                // Unknown type: fall back to the enum constant name so nothing is mislabeled
-                string enumName = FlowHelper.ResolveEnumName("app.worldtour.WTStatusDefine.WTPlayerStatusType", type);
-                return string.IsNullOrEmpty(enumName) ? $"Stat {type}" : enumName;
-        }
+        string label = LocalizedText.StatLabel(type);
+        if (label != null) return label;
+
+        // Unknown type: fall back to the enum constant name so nothing is mislabeled
+        string enumName = FlowHelper.ResolveEnumName("app.worldtour.WTStatusDefine.WTPlayerStatusType", type);
+        return string.IsNullOrEmpty(enumName) ? $"Stat {type}" : enumName;
     }
 
-    private static string PerksLabel()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Ventajas",
-            FlowHelper.UiLang.Pt => "Vantagens",
-            _ => "Perks",
-        };
+    private static string PerksLabel() => LocalizedText.Perks();
 
     /// <summary>Try the common accessors a UIParts widget exposes for its root via.gui control.</summary>
     private static ManagedObject GetWidgetControl(ManagedObject widget)

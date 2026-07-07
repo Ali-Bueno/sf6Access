@@ -169,7 +169,9 @@ public class MainMenuHooks
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
                 StatusMenuHooks.IsInStatusMenu ||
-                WTMPauseHooks.IsInWTMPause ||
+                // Exception: the use-item confirm popup's Yes/No buttons only
+                // ever surface through this generic reader — don't mute them
+                (WTMPauseHooks.IsInWTMPause && !WTMPauseHooks.IsItemConfirmOpen) ||
                 GroupFocusHooks.ShouldSuppressFocus)
             {
                 // Timestamped trace of real navigation presses — measures how

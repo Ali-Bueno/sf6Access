@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Localization
+- Every message the mod speaks with its own words (damage/price labels, "Completed", "Slot 3", "Empty", command inputs like "quarter circle forward, heavy punch", the skill tree words, the title-screen prompt, etc.) is now localized to ALL the game's languages: Japanese, English, French, Italian, German, Spanish (incl. Latin American), Russian, Polish, Brazilian Portuguese, Korean, Traditional and Simplified Chinese, and Arabic — following the game's own language setting. Previously only English, Spanish and Portuguese were covered.
+- The translations live in plain text files (`reframework/plugins/managed/SF6Access.lang/*.txt`, one per language, `key=text`): anyone can correct or improve a translation with a text editor, no recompiling needed. Missing keys fall back to English.
+
+### Versus / matchmaking
+- The VS screen now announces the point values with the rank: League Points for ranked tiers ("Diamond 3 12345 LP") and the Master Rating for Master players ("Master 1497 MR"), for both sides.
+
+### Fighting Ground
+- Combo Trials list: each trial now announces whether you have already completed it ("Completed" / "Not completed"), read from your save data — the on-screen check mark was invisible to the screen reader.
+- Training Attack Data: finished combos are no longer silently dropped when the game's hit counter and the data panel disagree by a hit (multi-hit supers). The panel's own final numbers are always announced, so the damage readout matches what actually landed.
+
+### World Tour — master fights and results
+- Master-fight pause menu: every tab now reads correctly — the move lists (Special / Super Arts / Other) announce the focused move with its command, category, labeled damage and description; the Perks tab reads each perk with its tooltip; the Battle Information tab reads the enemy (name and level) and each Drop Lock objective with its reward; the Items tab reads each item with its owned count ("x2") and description, and the "use this item?" popup reads its question, effect and the Yes/No buttons.
+- Avatar battle results: the EXP summary no longer reads the animating count-up; the "New Special Move" popup now reads everything on it (move name, style, command, notes and description) instead of stopping halfway; and the "New Fighting Style" popup reliably includes the master's name.
+
+### World Tour — shops and items
+- The smartphone's item app ("View consumable and sellable items") is now read: category tabs, each item with its owned count and description, and the use-item confirmation.
+- The shop is now read: the top menu (Buy / Sell / Enhance / Color), the buy (general and apparel), sell, enhance and dye gear lists — each item with its name, labeled price, effect and description — the category tabs, the buy/sell mode line ("Get - Takeout" / "Sell - All") when you toggle it, and the purchase/sale popup (quantity, running total and its buttons). The dye detail window reads its cost and each gear variant with the dyes it needs.
+- New shortcut: G (keyboard) or Start (gamepad) reads your money on demand — your Zenny in the World Tour shops and item app, and your Drive Tickets and Fighter Coins in the in-game store.
+
+### In-game store
+- Each product now announces its price with the currency it costs — "300 Fighter Coins" or "50 Drive Tickets" — after the product name, since the currency was only shown as an icon. Products bought through the platform store (real money) are left as they were.
+- The Hub Goods Shop (the gear store reached from the in-game store) is now read: each gear piece with its name, price and the stats it grants.
+- Gear in the avatar shops (buy, enhance) now announces its stats ("Defense 5, Kick Strength 13") after the price, read from the game's own item data when the on-screen compare panel isn't available.
+
 ### World Tour — Avatar Status menu
 - Skills tab (skill tree): the tree is now navigable. Each node announces its name, its state (acquired / available / locked / unavailable), category, cost and description. Switching skill trees announces the tree number, and the G key announces your available skill points and your coins. The "Unlock this skill?" confirmation reads the skill, its cost and the Yes/No buttons. The "Reset Skills" dialog reads its heading, the reset resource you have (which is separate from your coins) and its Yes / No / View Skills buttons.
 - Special Moves and Super Arts tabs: empty move-set slots no longer go silent when several are in a row (each is read with its slot), and the move command is now read in your control scheme, including Modern/Casual inputs. The set-type tab (Grounded / Aerial / Super Arts) is announced when you switch it with Tab.

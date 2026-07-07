@@ -560,12 +560,7 @@ public class StatusMenuHooks
             var eq = FlowHelper.Call(window, "IsEquip", (uint)skillId);
             if (eq is not bool on) return null;
 
-            return FlowHelper.GetDisplayLang() switch
-            {
-                FlowHelper.UiLang.Es => on ? "activado" : "desactivado",
-                FlowHelper.UiLang.Pt => on ? "ativado" : "desativado",
-                _ => on ? "on" : "off",
-            };
+            return LocalizedText.OnOff(on);
         }
         catch { return null; }
     }

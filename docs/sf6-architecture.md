@@ -176,13 +176,24 @@ verifying the text is image/texture-based and truly unreadable, and document WHY
 2. Guids from data fields (`SpinText_MessageList`, `TableDataManager`, record `messageId.GUID`).
 3. GUI tree walk (`GuiTextReader`).
 4. Poll across frames for text set programmatically (typewriter/late-load).
-5. Hardcoded fallback (documented), usually with an En/Es/Pt table keyed on `FlowHelper.GetDisplayLang()`.
+5. Mod-specific fallback (documented) via **`Services/LocalizedText.cs`** — never add an inline
+   language switch in a hook. The code holds ONLY the English defaults; the translations live in
+   **`SF6Access/lang/*.txt`** (one `key=text` UTF-8 file per game language, copied on build to
+   `<game>\reframework\plugins\managed\SF6Access.lang\`), loaded by `Services/LangFile.cs` with the
+   chain: current-language file → `en.txt` → in-code English. Translators can fix any wording
+   without recompiling; non-English files only need the keys that DIFFER from `en.txt`.
 
-- Display language: `OptionManager.GetOptionValue(611)` (DispLanguage `TypeId`); the value is a
-  language LIST index — 1=English, 5=Español, 8=Português BR, 13=Español LATAM.
+- Display language: `OptionManager.GetOptionValue(611)` (DispLanguage `TypeId`); the value is the
+  game's language-LIST index, in options-menu order: 0 Ja, 1 En, 2 Fr, 3 It, 4 De, 5 Es, 6 Ru, 7 Pl,
+  8 Pt-BR, 9 Ko, 10 Zh-Hant, 11 Zh-Hans, 12 Ar, 13 Es-LATAM (1/5/8/13 runtime-confirmed anchors).
+  `FlowHelper.UiLang` covers all of them; lang file names = the enum member lowercased ("zhhant.txt").
+  Currency/brand proper nouns (Zenny, Fighter Coins, Drive Tickets, World Tour, Battle Hub…) stay in
+  English, matching the game's own localizations.
 - Input tags kept as speech by `SpeakableIcons`: `<INPT id="BTL_X" type="dc">` (type="g"=stick),
-  `<CMD _236>` (numpad motion), `<ICON …>`, `<TYPEICON c>`. Per-language name tables live in
-  `FlowHelper.InputIdNames` / `CommandWords`.
+  `<CMD _236>` (numpad motion), `<ICON …>`, `<TYPEICON c>`. The English vocabulary (directions,
+  motions, attack icons, input glyphs) lives in **`Services/FlowHelperVocab.cs`** (partial
+  FlowHelper); other languages override per key ("dir.2", "motion.236", "icon.lp", "input.BTL_X")
+  in their lang file. RELEASE PACKAGING: the `SF6Access.lang` folder must ship with the DLL.
 
 ## Research / dump tools (`Services/ObjectDumper.cs`, `ScreenshotService.cs`)
 

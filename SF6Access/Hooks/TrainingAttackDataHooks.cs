@@ -189,9 +189,11 @@ public class TrainingAttackDataHooks
             }
 
             // HUD counter faded and the numbers stayed put — the combo really
-            // ended. Announce only when the HUD count matches our tracked
-            // player's data (the counter exists per side); on a mismatch leave
-            // _dirty set so the quiet-frames fallback picks it up
+            // ended. The display data is the panel's own latched result, so it
+            // is announced as-is: the old equality gate against the HUD count
+            // (count == _hudCount) silently DROPPED combos whenever the two
+            // sources disagreed by a hit (multi-hit supers advanced one source
+            // before the other), which under-reported damage to the player.
             if (_hudEndFrame >= 0)
             {
                 if (_pollCounter - _hudEndFrame < END_CONFIRM_FRAMES) return;
@@ -199,16 +201,16 @@ public class TrainingAttackDataHooks
                 // still part of the combo; wait for it to truly end
                 if (TeamComboStillActive()) return;
                 _hudEndFrame = -1;
-                if (_dirty && count > 0 && count == _hudCount)
+                if (_dirty && count > 0)
                 {
                     _dirty = false;
                     _lastChangeFrame = _pollCounter;
+                    if (count != _hudCount)
+                        API.LogInfo($"[SF6Access] HUD/data combo count differ (announcing data): hud={_hudCount}, data={count}");
                     if (!TrainingMenuHooks.IsInTrainingMenu)
                         AnnounceCombo(count, damage);
                     return;
                 }
-                if (_dirty)
-                    API.LogInfo($"[SF6Access] HUD combo end mismatch: hud={_hudCount}, data={count}");
             }
 
             // Quiet-frames fallback: silent while the HUD counter is still up
@@ -276,9 +278,10 @@ public class TrainingAttackDataHooks
         var ds = FlowHelper.GetTrainingDisplaySetting();
         if (ds != null && !FlowHelper.ReadBoolField(ds, "Is_AttackAllView")) return;
 
+        string hits = LocalizedText.Hits();
         string announcement = damage > 0
-            ? (count > 0 ? $"{damage}. {count} hits" : damage.ToString())
-            : $"{count} hits";
+            ? (count > 0 ? $"{damage}. {count} {hits}" : damage.ToString())
+            : $"{count} {hits}";
         API.LogInfo($"[SF6Access] Attack data: {announcement}");
         ScreenReaderService.Speak(announcement, interrupt: false);
     }

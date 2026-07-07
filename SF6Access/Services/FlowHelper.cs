@@ -11,7 +11,7 @@ namespace SF6Access.Services;
 /// Field reads use GetField + GetDataBoxed directly because interface-declared
 /// property getters do not dispatch on IL2CPP concrete types.
 /// </summary>
-public static class FlowHelper
+public static partial class FlowHelper
 {
     private static Field _handlesField;
     private static Method _msgGetMethod;
@@ -188,6 +188,56 @@ public static class FlowHelper
                     {
                         if (!found.ContainsKey(prefix) && name.StartsWith(prefix))
                             found[prefix] = (name, param);
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return found;
+    }
+
+    /// <summary>
+    /// Find flow Params for several types in one pass, keeping _Handles order
+    /// (index 0 = newest / topmost). Lets multi-screen adapters arbitrate which
+    /// of several COEXISTING Params owns the screen: backed-out screens can
+    /// linger in the handles (RestoreFlow), so a fixed priority goes stale —
+    /// the first watched type in handle order is the active one.
+    /// </summary>
+    public static System.Collections.Generic.List<(string typeName, ManagedObject param)>
+        FindFlowParamsOrdered(string[] typeFullNames)
+    {
+        var found = new System.Collections.Generic.List<(string, ManagedObject)>();
+        var seen = new System.Collections.Generic.HashSet<string>();
+        CacheTDB();
+        if (_handlesField == null) return found;
+        try
+        {
+            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+            if (flowMgr == null) return found;
+
+            var handles = _handlesField.GetDataBoxed(typeof(object), flowMgr.GetAddress(), false) as ManagedObject;
+            if (handles == null) return found;
+
+            var td = handles.GetTypeDefinition();
+            var countMethod = td?.GetMethod("get_Count");
+            var getItemMethod = td?.GetMethod("get_Item(System.Int32)");
+            if (countMethod == null || getItemMethod == null) return found;
+
+            int count = Convert.ToInt32(countMethod.InvokeBoxed(typeof(int), handles, Array.Empty<object>()));
+            for (int i = 0; i < count && i < 50; i++)
+            {
+                try
+                {
+                    var handle = getItemMethod.InvokeBoxed(typeof(object), handles, new object[] { i }) as ManagedObject;
+                    var param = handle?.GetField("<Param>k__BackingField") as ManagedObject;
+                    string name = param?.GetTypeDefinition()?.FullName;
+                    if (name == null) continue;
+
+                    foreach (var target in typeFullNames)
+                    {
+                        if (name == target && seen.Add(target))
+                            found.Add((name, param));
                     }
                 }
                 catch { }
@@ -970,134 +1020,22 @@ public static class FlowHelper
         catch { return text; }
     }
 
-    // --- Spoken command vocabulary, per display language ---
-    // Indexed by digit 0-9 (numpad notation): 2=down, 6=forward...
-    private sealed class CommandWords
-    {
-        public string[] Directions;     // numpad 0-9
-        public System.Collections.Generic.Dictionary<string, string> Motions;
-        public System.Collections.Generic.Dictionary<string, string> Icons;
-        public System.Collections.Generic.Dictionary<string, string> Inputs;
-    }
-
-    private static readonly CommandWords WordsEn = new()
-    {
-        Directions = new[] { "neutral", "down-back", "down", "down-forward", "back",
-            "neutral", "forward", "up-back", "up", "up-forward" },
-        Motions = new()
-        {
-            { "236", "quarter circle forward" }, { "214", "quarter circle back" },
-            { "623", "forward, down, down-forward" }, { "421", "back, down, down-back" },
-            { "41236", "half circle forward" }, { "63214", "half circle back" },
-            { "236236", "double quarter circle forward" }, { "214214", "double quarter circle back" },
-            { "22", "down, down" }, { "44", "back, back" }, { "66", "forward, forward" },
-        },
-        Icons = new()
-        {
-            { "+", "plus" }, { "p", "punch" }, { "k", "kick" },
-            { "lp", "light punch" }, { "mp", "medium punch" }, { "hp", "heavy punch" },
-            { "lk", "light kick" }, { "mk", "medium kick" }, { "hk", "heavy kick" },
-            { "ls", "light attack" }, { "ms", "medium attack" }, { "hs", "heavy attack" },
-            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "throw" },
-            { "sm", "special move" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutral" },
-        },
-        Inputs = new()
-        {
-            { "BTL_LR_LSX", "left or right" }, { "BTL_UD_LSY", "up or down" },
-            { "BTL_PLUS_LS_U", "up" }, { "BTL_PLUS_LS_D", "down" },
-            { "BTL_PLUS_LS_L", "left" }, { "BTL_PLUS_LS_R", "right" },
-            { "BTL_LS_U", "up" }, { "BTL_LS_D", "down" }, { "BTL_LS_L", "left" }, { "BTL_LS_R", "right" },
-            { "BTL_X", "square" }, { "BTL_Y", "triangle" }, { "BTL_A", "cross" }, { "BTL_B", "circle" },
-            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
-            { "BTL_U", "up" }, { "BTL_D", "down" }, { "BTL_L", "left" }, { "BTL_R", "right" },
-            { "UIDecide", "confirm" }, { "UICancel", "cancel" },
-            { "MouseL", "left click" }, { "MouseR", "right click" },
-        },
-    };
-
-    private static readonly CommandWords WordsEs = new()
-    {
-        Directions = new[] { "neutral", "abajo-atrás", "abajo", "abajo-adelante", "atrás",
-            "neutral", "adelante", "arriba-atrás", "arriba", "arriba-adelante" },
-        Motions = new()
-        {
-            { "236", "cuarto de círculo adelante" }, { "214", "cuarto de círculo atrás" },
-            { "623", "adelante, abajo, abajo-adelante" }, { "421", "atrás, abajo, abajo-atrás" },
-            { "41236", "medio círculo adelante" }, { "63214", "medio círculo atrás" },
-            { "236236", "dos cuartos de círculo adelante" }, { "214214", "dos cuartos de círculo atrás" },
-            { "22", "abajo, abajo" }, { "44", "atrás, atrás" }, { "66", "adelante, adelante" },
-        },
-        Icons = new()
-        {
-            { "+", "más" }, { "p", "puño" }, { "k", "patada" },
-            { "lp", "puño ligero" }, { "mp", "puño medio" }, { "hp", "puño fuerte" },
-            { "lk", "patada ligera" }, { "mk", "patada media" }, { "hk", "patada fuerte" },
-            { "ls", "ataque ligero" }, { "ms", "ataque medio" }, { "hs", "ataque fuerte" },
-            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "agarre" },
-            { "sm", "golpe especial" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutral" },
-        },
-        Inputs = new()
-        {
-            { "BTL_LR_LSX", "izquierda o derecha" }, { "BTL_UD_LSY", "arriba o abajo" },
-            { "BTL_PLUS_LS_U", "arriba" }, { "BTL_PLUS_LS_D", "abajo" },
-            { "BTL_PLUS_LS_L", "izquierda" }, { "BTL_PLUS_LS_R", "derecha" },
-            { "BTL_LS_U", "arriba" }, { "BTL_LS_D", "abajo" }, { "BTL_LS_L", "izquierda" }, { "BTL_LS_R", "derecha" },
-            { "BTL_X", "cuadrado" }, { "BTL_Y", "triángulo" }, { "BTL_A", "equis" }, { "BTL_B", "círculo" },
-            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
-            { "BTL_U", "arriba" }, { "BTL_D", "abajo" }, { "BTL_L", "izquierda" }, { "BTL_R", "derecha" },
-            { "UIDecide", "confirmar" }, { "UICancel", "cancelar" },
-            { "MouseL", "clic izquierdo" }, { "MouseR", "clic derecho" },
-        },
-    };
-
-    private static readonly CommandWords WordsPt = new()
-    {
-        Directions = new[] { "neutro", "baixo-trás", "baixo", "baixo-frente", "trás",
-            "neutro", "frente", "cima-trás", "cima", "cima-frente" },
-        Motions = new()
-        {
-            { "236", "quarto de círculo para frente" }, { "214", "quarto de círculo para trás" },
-            { "623", "frente, baixo, baixo-frente" }, { "421", "trás, baixo, baixo-trás" },
-            { "41236", "meio círculo para frente" }, { "63214", "meio círculo para trás" },
-            { "236236", "dois quartos de círculo para frente" }, { "214214", "dois quartos de círculo para trás" },
-            { "22", "baixo, baixo" }, { "44", "trás, trás" }, { "66", "frente, frente" },
-        },
-        Icons = new()
-        {
-            { "+", "mais" }, { "p", "soco" }, { "k", "chute" },
-            { "lp", "soco leve" }, { "mp", "soco médio" }, { "hp", "soco forte" },
-            { "lk", "chute leve" }, { "mk", "chute médio" }, { "hk", "chute forte" },
-            { "ls", "ataque leve" }, { "ms", "ataque médio" }, { "hs", "ataque forte" },
-            { "di", "drive impact" }, { "dp", "drive parry" }, { "tr", "arremesso" },
-            { "sm", "golpe especial" }, { "sa", "super art" }, { "auto", "auto" }, { "n", "neutro" },
-        },
-        Inputs = new()
-        {
-            { "BTL_LR_LSX", "esquerda ou direita" }, { "BTL_UD_LSY", "cima ou baixo" },
-            { "BTL_PLUS_LS_U", "cima" }, { "BTL_PLUS_LS_D", "baixo" },
-            { "BTL_PLUS_LS_L", "esquerda" }, { "BTL_PLUS_LS_R", "direita" },
-            { "BTL_LS_U", "cima" }, { "BTL_LS_D", "baixo" }, { "BTL_LS_L", "esquerda" }, { "BTL_LS_R", "direita" },
-            { "BTL_X", "quadrado" }, { "BTL_Y", "triângulo" }, { "BTL_A", "xis" }, { "BTL_B", "círculo" },
-            { "BTL_LB", "L1" }, { "BTL_RB", "R1" }, { "BTL_LT", "L2" }, { "BTL_RT", "R2" },
-            { "BTL_L3", "L3" }, { "BTL_R3", "R3" }, { "BTL_LSB", "L3" }, { "BTL_RSB", "R3" },
-            { "BTL_U", "cima" }, { "BTL_D", "baixo" }, { "BTL_L", "esquerda" }, { "BTL_R", "direita" },
-            { "UIDecide", "confirmar" }, { "UICancel", "cancelar" },
-            { "MouseL", "clique esquerdo" }, { "MouseR", "clique direito" },
-        },
-    };
 
     // Display language option (app.Option TypeId DispLanguage = 611); value is
-    // the index in the language list: 1=English, 5=Spanish, 8=Portuguese (BR),
-    // 13=Latin American Spanish
+    // the index in the game's language list, in its options-menu order:
+    // 0 Japanese, 1 English, 2 French, 3 Italian, 4 German, 5 Spanish,
+    // 6 Russian, 7 Polish, 8 Portuguese (BR), 9 Korean, 10 Traditional Chinese,
+    // 11 Simplified Chinese, 12 Arabic, 13 Latin American Spanish (added later).
+    // Anchors 1/5/8/13 are runtime-confirmed; the rest follow the menu order.
     private const int DISP_LANGUAGE_TYPE_ID = 611;
-    private static CommandWords _words = WordsEn;
+    private static CommandWords _words;
+    private static UiLang _wordsLang = (UiLang)(-1);
     private static long _wordsCheckedTick;
     private static ManagedObject _optionManager;
 
-    /// <summary>Display-language bucket (collapses the dialects we have words for).</summary>
-    public enum UiLang { En, Es, Pt }
+    /// <summary>Display-language bucket. The member order is the LocalizedText
+    /// table index — keep both in sync.</summary>
+    public enum UiLang { En, Es, Pt, Ja, Fr, It, De, Ru, Pl, Ko, ZhHant, ZhHans, Ar }
 
     /// <summary>Current display language, from the app.Option DispLanguage value.</summary>
     public static UiLang GetDisplayLang()
@@ -1109,8 +1047,18 @@ public static class FlowHelper
             int lang = result != null ? Convert.ToInt32(result) : -1;
             return lang switch
             {
+                0 => UiLang.Ja,
+                2 => UiLang.Fr,
+                3 => UiLang.It,
+                4 => UiLang.De,
                 5 or 13 => UiLang.Es,
+                6 => UiLang.Ru,
+                7 => UiLang.Pl,
                 8 => UiLang.Pt,
+                9 => UiLang.Ko,
+                10 => UiLang.ZhHant,
+                11 => UiLang.ZhHans,
+                12 => UiLang.Ar,
                 _ => UiLang.En,
             };
         }
@@ -1120,22 +1068,20 @@ public static class FlowHelper
     private static CommandWords CurrentWords()
     {
         long now = System.Environment.TickCount64;
-        if (now - _wordsCheckedTick < 10000) return _words;
+        if (_words != null && now - _wordsCheckedTick < 10000) return _words;
         _wordsCheckedTick = now;
 
         try
         {
-            var words = GetDisplayLang() switch
+            var lang = GetDisplayLang();
+            if (_words == null || lang != _wordsLang)
             {
-                UiLang.Es => WordsEs,
-                UiLang.Pt => WordsPt,
-                _ => WordsEn,
-            };
-            if (words != _words)
-                API.LogInfo($"[SF6Access] Command vocabulary switched (display language={GetDisplayLang()})");
-            _words = words;
+                _wordsLang = lang;
+                _words = BuildWords();
+                API.LogInfo($"[SF6Access] Command vocabulary switched (display language={lang})");
+            }
         }
-        catch { }
+        catch { _words ??= WordsEn; }
         return _words;
     }
 

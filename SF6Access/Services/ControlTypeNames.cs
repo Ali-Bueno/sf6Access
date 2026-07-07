@@ -12,15 +12,6 @@ namespace SF6Access.Services;
 /// </summary>
 public static class ControlTypeNames
 {
-    // Last-resort fallback when the game lookup fails (English used for any
-    // language outside these three — GetDisplayLang only buckets En/Es/Pt).
-    private static readonly string[][] Names =
-    {
-        new[] { "Classic", "Modern", "Dynamic" },     // En
-        new[] { "Clásico", "Moderno", "Dinámico" },   // Es
-        new[] { "Clássico", "Moderno", "Dinâmico" },  // Pt
-    };
-
     private static Method _dispMessage;
     private static bool _lookedUp;
 
@@ -32,7 +23,8 @@ public static class ControlTypeNames
         string fromGame = ResolveFromGame(index);
         if (!string.IsNullOrWhiteSpace(fromGame)) return fromGame;
 
-        return Names[(int)FlowHelper.GetDisplayLang()][index];
+        // Last-resort fallback when the game lookup fails
+        return LocalizedText.ControlType(index);
     }
 
     /// <summary>

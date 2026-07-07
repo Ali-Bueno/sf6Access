@@ -19,15 +19,6 @@ public sealed class ChatMenuHooks : SingleParamScreenAdapter
 {
     private const string CHAT_GUI = "BattleHubChatMenu";
 
-    // Localized labels for the chat input-bar elements (icons, no in-game text).
-    // Indexed [lang][slot]; slots: 0 Message, 1 Send, 2 Phrases, 3 Stickers.
-    private static readonly string[][] Labels =
-    {
-        new[] { "Message", "Send", "Phrases", "Stickers" },      // En
-        new[] { "Mensaje", "Enviar", "Frases", "Stickers" },     // Es
-        new[] { "Mensagem", "Enviar", "Frases", "Stickers" },    // Pt
-    };
-
     protected override string ParamType => "app.UIFlowChat.Menu.Param";
 
     public ChatMenuHooks()
@@ -116,7 +107,8 @@ public sealed class ChatMenuHooks : SingleParamScreenAdapter
             if (key == _lastFocusKey) return;
             _lastFocusKey = key;
 
-            string label = Labels[(int)FlowHelper.GetDisplayLang()][slot];
+            // Chat input-bar element labels are icons (no in-game text)
+            string label = LocalizedText.ChatSlot(slot);
             API.LogInfo($"[SF6Access] Chat input focus: {label}");
             ScreenReaderService.Speak(label);
         }

@@ -324,6 +324,12 @@ public class FlowTrackerHooks
 
     private static string FindAnnouncement(string flowName)
     {
+        // The title-screen prompt is a full instruction sentence — localized
+        // (the mode NAMES in the table are brand names the game itself keeps
+        // in English across languages).
+        if (flowName.Contains("UIFlowTitle", StringComparison.OrdinalIgnoreCase))
+            return LocalizedText.TitleScreenPrompt();
+
         // Exact match first
         if (FlowAnnouncements.TryGetValue(flowName, out var exact))
             return exact;

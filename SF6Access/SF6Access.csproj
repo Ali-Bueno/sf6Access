@@ -39,10 +39,14 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Copy output DLL and TolkDotNet.dll to REFramework managed plugins folder -->
+  <!-- Copy output DLL, TolkDotNet.dll and the translation files to the game -->
   <Target Name="CopyToGame" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SF6Path)\reframework\plugins\managed" />
     <Copy SourceFiles="..\references\tolk\TolkDotNet.dll" DestinationFolder="$(SF6Path)\reframework\plugins\managed\dependencies" />
+    <ItemGroup>
+      <LangFiles Include="lang\*.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LangFiles)" DestinationFolder="$(SF6Path)\reframework\plugins\managed\SF6Access.lang" />
   </Target>
 
 </Project>

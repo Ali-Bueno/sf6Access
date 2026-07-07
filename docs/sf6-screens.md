@@ -159,6 +159,16 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   read BOTH, take max. API: `TeamOf`, `NoteTeams`, `CountOf(team,out damage)`, `IsComboActive`, `Clear`.
 - Used as a NON-destructive suppressor over the working HUD-hook + quiet-frames + `PlayerLocalData`
   (comboDamage/prevComboCount) path — do not replace that with cTeam-only (broke damage announcing).
+- **Do NOT gate the announcement on `count == hudCount`** (removed 2026-07-06): the training data
+  and the HUD counter advance at different times on multi-hit supers, and the equality gate silently
+  dropped the whole combo readout on any mismatch (tester: "small hits get missed, damage dropped").
+  The `PlayerLocalData` values are the panel's own latched result — announce them once the HUD end is
+  confirmed AND `mComboCount` cleared AND the numbers were stable for `END_CONFIRM_FRAMES`; log the
+  HUD/data difference instead.
+- Other latched sources (unused, candidates): `CommentBattleParamRecorder.ComboFinishChecker`
+  (`LastComboCount`/`LastComboDamage`, `OnFinishCombo` edge — commentator system, may be inert when
+  commentary is off); `cTeam.mComboCountOld` (short, previous-frame count); `FBattleMediator.AtckInfo`
+  (`ComboDamage`/`HitCount`) + `FBattleMediator.GetComboDamage(int teamID)`.
 
 ---
 
@@ -200,6 +210,12 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   - `app.esports.UI11413.Param` = **Character Guides**, `app.esports.UI11414.Param` = **Combo Trials
     list** — both expose `EConfigInputType ConfigInputType`, `via.gui.Text TextControlType`,
     `bool UpdateControlType()`. Hook `UpdateControlType` (post), read `TextControlType` (game text).
+  - **Trial clear status** (`ComboTrialListHooks`): the check mark is a texture. UI11414.Param's
+    `PartsScrollListItem.SelectedIndex` indexes `CurrentItemDataInfoList` (List<ItemDataInfo>) →
+    `BattleFGComboTrialData.UniqueID` (uint) → `SystemSaveManager.Data.ComboTrialSaveData.IsClear(id)`
+    (method inherited from `PracticeSaveDataBase`; per-trial records are `PracticeSubData`
+    {UniqueID, IsClear, IsNew}). Announced deferred ~12 frames so it queues behind the generic row
+    read; wording hardcoded En/Es/Pt (no game text for it).
 - `app.EConfigInputType` (sbyte): NOT_SPECIFIED=-1, NORMAL=0 (Classic), CASUAL=1 (Modern),
   SUPER_EASY=2 (Dynamic). `Services/ControlTypeNames.Resolve` prefers
   `app.IDScriptExtensions.DispMessage(EConfigInputType)` (localized), hardcoded table as fallback.
@@ -220,9 +236,10 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
 - **Rank (data-driven):** `league_rank` IS an `app.AppDefine.LeagueRankWithLevel`. Resolve via
   `Services/LeagueRankResolver` (`GetRecord` uses `app.helper.hGUI.GetLeagueRankWithLevelUserData`;
   `Format(record, tierOnly)` → "Diamond 3" from `leagueRank.messageId.GUID` + `rankLevel`). Reject when
-  `IsMaster && master_rating <= 0` (unranked sentinel); non-master → "Tier Level"; master → tier +
-  " {master_rating}". `league_rank=39` is a VALID rank ("New Challenger 1"), not a sentinel;
-  `league_point=-1` = pre-placement.
+  `IsMaster && master_rating <= 0` (unranked sentinel); non-master → "Tier Level {league_point} LP"
+  (LP skipped when ≤ 0 — pre-placement is -1); master → "Tier {master_rating} MR" (tester request:
+  the point values are announced alongside the rank). `league_rank=39` is a VALID rank
+  ("New Challenger 1"), not a sentinel.
 - **Control type:** `PlayerData.mInputType` (`app.EConfigInputType` sbyte; NOT_SPECIFIED=-1 reads as
   byte 255 → reject). Gate on `mIsPlayer` (CPU sides default NORMAL). `Services/ControlTypeNames`.
 
@@ -396,6 +413,17 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `GetFocusMode()` (0 ItemList,1 Button). Shop buy `app.UIFlowOnlineShopGoodsBuy.UIFlowParam` (GUI
   `OnlineShopBuyDialog`: `e_productname`, `e_text_count`, `e_text_total`, `e_coin_num_used`;
   `ChoiceList` `UIPartsSimpleList`).
+- In-game store top (`OnlineShopHooks`): `app.UIFlowOnlineShop.UIFlowParam` — `CategoryList`/`GoodsList`
+  (UIPartsScrollList), and the balance widgets `TicketText` (UIPartsTicketText) / `FighterCoinText`
+  (UIPartsFighterCoinText), both `UIPartsMoneyTextBase` with an authoritative **`GetWalletMoney()`**
+  method (the captions are icons). G / Start announces "Drive Tickets N. Fighter Coins N".
+- **Product price + currency**: the currency is only an icon. The param's `CurrentGoodsInfo`
+  (GoodsInfo, updates with the focused product) has `Prices`/`SalePrices` (+`_IsNowSale`) — lists of
+  **`System.Tuple<UIFlowOnlineShop.CurrencyType, System.Int32>`** (log-confirmed; a REFERENCE type:
+  read the private `m_Item1`/`m_Item2` fields or the `get_Item1/2` getters — there are no `Item1`
+  fields); enum: FIGHTER_COIN_PAID=0, FIGHTER_COIN_FREE=1, TICKET=3 (Drive Tickets). The currency
+  side is the one in {0,1,3}. Platform-store products (Steam) have EMPTY wallet prices — no
+  announcement. Announced deferred ~12 frames behind the generic row read.
 
 ---
 
@@ -582,14 +610,23 @@ not resolve these. Recipes:
   MainMenuHooks focus fallback, which spoke the rows' raw `SA {0}` templates):
   - **Escape.Param**: single-option confirm; GUI `WTMBattlePauseEscape` `e_text_title_tutorial` ×2
     (title + question) + `e_text_0` (Confirm). Announce once on entry. CONFIRMED working.
-  - **Item.Param**: `_lineupGrid` (ScrollGrid; cells only carry `e_text_total` counts). Selected item's
-    name/description from GUI `WTMBattlePauseItem` `e_text_name`/`e_text_detail`. CONFIRMED working.
+  - **Item.Param**: `_lineupGrid` (ScrollGrid; cells only carry `e_text_total` counts — the selected
+    cell's one is the item's owned count, appended as "xN"). Selected item's name/description from GUI
+    `WTMBattlePauseItem` `e_text_name`/`e_text_detail`. CONFIRMED working. The use-item confirm popup
+    creates **no flow param** (Item.Param stays active): GUI `UIWidget_ItemConfirmWindow` with
+    `e_text_detail` (question "Use Energy Drink S?"), `e_text_name` (effect) and `e_text_value`
+    (amount); the GUI view disappears entirely when closed — announce once per appearance. Its Yes/No
+    buttons only surface through the generic FocusChanged reader (MainMenuHooks), which is otherwise
+    suppressed during WTM pause — `IsItemConfirmOpen` lifts that suppression while the popup is up.
   - **PerkList.Param**: `_scrollList`; rows carry `e_txt_num` (bare "0" — skip) + `e_text_name`.
     Tooltip = GUI `WTMBattlePausePerkList` `e_text_detail`, a WLTAG-composed raw → `ResolveWLTags`.
   - **BattleInfo.Param**: `_mainGroup`, `_enemyInfoList` (List<EnemyInfo>), `_streetEnemyList` (null in
-    master fights), `_seriousItemInfoList` (ScrollList, NON-navigable) — announce once on entry. Per-row
-    texts: `e_text_droplock` (objective), `e_text_head` (reward), `e_text_total` (target), two
-    `e_text_value` (progress = the LAST in tree order). Enemy: `e_text_num` (Lv) + `e_text_name`
+    master fights), `_seriousItemInfoList` (ScrollList, NON-navigable) — announce once on entry.
+    `UIPartsScrollList` has NO `_Children` field (verified in the log), so the rows can't be walked from
+    the param; read the flat GUI owner `WTMBattlePauseBattleInfo` instead: each row renders
+    `e_text_droplock` (keep-condition) directly followed by its `e_text_head` (reward) — pair them in
+    tree order, dedupe (the widget duplicates rows). The bare `e_text_value`/`e_text_total` counters
+    interleave across rows — don't announce them. Enemy: `e_text_num` (Lv) + `e_text_name`
     (master-name WLTAG → `ResolveWLTags`).
   - **SpecialMoves/SuperArts.Param** (`ActionSkillList` + `ActionSetTypeList` tabs + `ActionSkillDetail`)
     and **OtherMoves.Param** (`mSkillList` + `mCategoryTabList` + `mSkillDetailWindow`): read the move
@@ -607,6 +644,16 @@ not resolve these. Recipes:
   the texts settle (two equal reads) or on timeout. **Do not poll the reward lists before the summary
   is announced**: the focused reward row contains the animating EXP number and the poller read the
   whole count-up ("22", "27" … "100").
+- New-move popup `app.UIFlowDialog.SPMoveGetParam` (auto-appears over the result): `TitleMessage`,
+  `Message` (full description), `CommandMessage` (`<CMD _236><ICON +><ICON s>…` → `SpeakableIcons`),
+  `SupplementCommandMessage` ("(Hold the button…)"); the style tag ("MAI") is GUI-only
+  (`SPMoveGet` `e_text_style`). Title+Message alone sounded half-read — announce all five parts.
+- Style-obtained popup `app.UIFlowDialog.EnrollingParam`: `TitleMessage`/`Message` are **null**;
+  `MasterId` (uint) is set. GUI `Enrolling`: `e_text_body` is the raw body WITHOUT the name
+  ("You've obtained 's Battle Style…" — the game splices the name at render time from
+  `e_text_style`, a master WLTAG). Resolve the name (MasterId → `ResolveMasterFighterName`, fallback
+  `ResolveWLTags(e_text_style raw)`) and splice/prepend it; the dialog announces once, so RETRY
+  (don't latch) while the name is still unresolvable.
 
 ### WLTAG resolution (`FlowHelper.ResolveWLTags`)
 - Render-time composed texts (perk tooltips, master names) read as raw `<WLTAG CmdNo="2" Arg0="X"
@@ -614,9 +661,75 @@ not resolve these. Recipes:
   entry → `CmdWordList(Arg0=wordType, Arg1=messageId)` returns the localized string. Word type 2 =
   master names (textures, exchange returns empty) → fall back to `ResolveMasterFighterName(Arg1)`.
 
-### Shop (not read) — `app.UIFlowShop.*`
-- BuyItemList (Apparel/General), SellItemList, StrengthTarget(List) (enhance),
-  ColorStainingList/Detail (dye). Flow-transition detection only.
+### Shop (`ShopHooks`) — `app.UIFlowShop.*`
+- **WTTopMenu.Param**: `List` (UIPartsSimpleList) — the Buy/Sell/Enhance/Dye menu; stays in the
+  handles while an item list is open (item list wins).
+- **BuyItemList.ParamGeneral / BuyItemList.ParamApparel / SellItemList.Param** all inherit
+  `app.UIFlowShop.ItemListBaseParam` (fields in `sf6 code/.../UIFlowShop.cs`): `_categoryTab`
+  (UIPartsScrollList; current category mirrored in the `_categoryText` gui text), `_itemGrid` +
+  `_itemGrid_PickUp` (UIPartsScrollGrid — apparel's pick-up section uses the second one),
+  `_itemDetail`, `_itemEffectList`, `ProductList` (List<WTShopProduct>).
+- **Selected item name/description: try the param's `_itemDetail` widget's control first** (hidden
+  texts included — "Toggle Item Detail Display" hides the panel) and the effect pair from
+  `_itemEffectList` (`e_text_value` precedes its `e_text_name`). Its control/element layout is
+  UNVERIFIED on some lists — trusting it alone MUTED the whole shop, so when it yields no name fall
+  back to the flat `ShopItemList` owner scan, SKIPPING the `_playerEquipStatus` compare panel's stat
+  labels: those are the `e_text_name` entries directly preceded by an `e_text_current` value
+  ("Defense" got announced as the item name in the gear lists). Grid cells carry only numbers:
+  `e_text_price` (announce with a localized "Price" label — the zenny caption is an icon),
+  `e_text_num` (NOT the owned count: it's 0 even on sellable items — don't announce),
+  `e_text_equip_value`. `e_text_stateName` = buy/sell mode line ("Get - Takeout" / "Sell - All"),
+  announced on toggle.
+- **Hub goods shop** (Battle Hub gear store, reached from the in-game store): same family —
+  `app.UIFlowShop.BuyItemList.ParamOnline` (inherits ParamApparel) + `OnlineMain.Param`, with its
+  OWN GUI owner **`ShopOnlineItemList`** and an extra grid `_itemGridView`
+  (UIPartsOnlineShopViewScrollGrid) — try `_itemGrid` → `_itemGrid_PickUp` → `_itemGridView`.
+  Cells carry TWO `e_text_price` (tickets + zenny) and `e_text_shop_value` (stock).
+  **Grid polling caveat**: a list param can host SEVERAL live grids (normal / pick-up / hub "Group
+  View") and the inactive ones keep a stale `SelectedIndex` — poll all of them and announce for the
+  one that CHANGED ("first grid with an index" froze on the hub's normal grid: only the entry item
+  ever announced). The hub view mode also has its own `_categoryTabView`/`_categoryTextView` pair.
+- **Gear stats**: buy lists render an item-vs-equipped compare block as STRICT triplets in tree
+  order — `e_text_value` (gear's value) directly followed by `e_text_current` (equipped) then
+  `e_text_name` (LOCALIZED label) → "Defense 5". Adjacency is REQUIRED: loose value/name pairing
+  read the player-status panel instead and announced the avatar's totals ("Defense 377") on every
+  item. Enhance lists: the focused gear's stats live in the side panes' `UIPartsPlayerEquipStatus`
+  (`StrengthTarget.Param._targetInfo` for the target list, `StrengthResult.Param._materialInfo` for
+  the material list) — captions are textures, so read `mLabelList` (StatusLabel = `StatusType` +
+  `mTextValue`) via `AvatarStatsReader.ReadStatsFromEquipStatusWidget`. Last resort for buy lists:
+  `ProductList` → match `_productName` → `_itemParamList[0]` → `ReadStatsOfItem`
+  (WTItemParam.GetEquipStatus, non-zero only). Do NOT use `WTShopProduct.TryGetItemParam`
+  (out-param — AV risk).
+- **Buy/sell confirm popup**: its OWN flow param under prefix `app.UIFlowShop.DialogUI.` —
+  `SellDialog.SellParam_Single/_Mul`, `BuyDialog.BuyParam_Single/_Mul/_Online`. `ParamSingle` (decompiled)
+  has `Spin` (UIPartsSpin quantity), `_total` (via.gui.Text), `Group` (UIPartsGroup — the
+  Spin/Decide/Return rows, focus read via `GroupFocusPoller`); `ParamMul` has `ChoiceList` instead.
+  Shared GUI owner `ShopBuyPopup`: `e_text_title` ("Sell"/"Buy"), first `e_text_num` = quantity,
+  first `e_text_total` = the already-labeled "Total:  N" (the SECOND e_text_total is the player's
+  money — don't read it).
+- **StrengthTargetList.Param** (enhance), **StrengthMaterialList.Param** (the material list after
+  picking a gear piece; state "Materials - All") and **ColorStainingList.Param** (dye) also inherit
+  `ItemListBaseParam` — handled by the same item-list poll (their GUI is the same `ShopItemList`;
+  state lines "Enhance - All" / "Color - Gear"). **StrengthTarget.Param** / **StrengthResult.Param**
+  (the target/result side panes; GUIs `ShopStrengthTarget`/`ShopStrengthResult` — bare stat values
+  with texture labels) are not announced.
+- **Screen arbitration**: backed-out shop screens LINGER in `_Handles` (`RestoreFlow`) — a fixed
+  priority goes stale (the enhance list kept owning the screen after backing out to the top menu,
+  which then read nothing). Use `FlowHelper.FindFlowParamsOrdered` (handle order, index 0 = newest):
+  the first watched type wins; also reset the reader cursors when the active param's ADDRESS changes
+  (re-entering can rebuild the param on the same index).
+- **Zenny readout**: read the money from the on-screen GUI (first `e_text_total` of `ShopBg`, or of
+  `ui50201` in the device item app), NOT from `Wallet.get_Money` while a button is being processed:
+  when the readout shortcut doubled as a game action (R3), the getter access-violated
+  (log-confirmed c0000005) and returned 0. Wallet getter kept only as fallback.
+- **ColorStainingDetail.Param** (dye detail window): persists while browsing the gear list — gate on
+  its `IsShow` bool (byte read). `_scrollList` (UIPartsScrollList) rows = gear variants + the dyes
+  each needs (read via `ReadSelectedItemText`); `_priceText` (via.gui.Text) = the dye cost
+  (announced with the localized Price label on open); `_changeRate` = the raw price uint.
+- **G / Start currency shortcut** (`ReadoutShortcut`, per-frame poll): announces the current
+  Zenny (GUI-first, see above; `CurrencyReader`) anywhere in the shop and in the device item app.
+  Pad button = Start/Options (0x8000) — R3/L3, Triangle/Y AND Square/X are all game actions in these
+  menus (R3 also triggered the wallet AV above; Square is the gear action).
 
 ### Emulator pause, gallery, profile, tips
 - Emulator pause: `app.UIFlowEmulatorPauseMenu.Param` (only `outSelectedIndex`);
@@ -628,5 +741,11 @@ not resolve these. Recipes:
 - Tips: `app.UITipsMenu.Param`. Item tooltips: GUI `InputGuide` `e_text`. Rotating hints
   `GameGuideWidget`.
 
-### Unidentified (need a dump)
-- `UI50000` / `UI50010` / `UI50201`.
+### Device (in-game smartphone) — `app.UIFlowUI50xxx`
+- **UI50000.Param** = device desktop/top (`_partsGridDesctopMainApp` app grid, `_commonInfo`,
+  World Tour/Battle Hub info parts). **UI50010.Param** = the phone 3D-mesh boot/render flow
+  (no UI to read). **UI50201.Param** = the item app ("View consumable and sellable items"),
+  read by `DeviceItemAppHooks`: `PartsSimpleListTabMenu` (category tabs), `PartsScrollGridItem`
+  (grid; cells only carry counts), `PartsItemDetail`; selected item name/description in GUI
+  `ui50201` (`e_text_name`/`e_text_detail`, same shape as the WTM pause Item tab — shared
+  `ItemGridReader`/`ItemConfirmWatcher` in `Services/Ui/ItemUiReaders.cs`).

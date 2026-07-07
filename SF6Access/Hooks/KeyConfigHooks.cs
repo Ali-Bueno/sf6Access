@@ -727,17 +727,7 @@ public class KeyConfigHooks
     }
 
     /// <summary>Currently pressed buttons of the merged gamepad device.</summary>
-    private static uint ReadPadButtons()
-    {
-        try
-        {
-            var pad = API.GetNativeSingleton("via.hid.GamePad");
-            var device = (pad as IObject)?.Call("get_MergedDevice");
-            var button = (device as IObject)?.Call("get_Button");
-            return button != null ? Convert.ToUInt32(button) : 0;
-        }
-        catch { return 0; }
-    }
+    private static uint ReadPadButtons() => ReadoutShortcut.ReadPadButtons();
 
     /// <summary>
     /// Physical input → assigned action name, for BOTH devices regardless of

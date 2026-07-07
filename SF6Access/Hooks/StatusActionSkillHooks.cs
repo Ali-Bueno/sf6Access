@@ -331,29 +331,11 @@ public class StatusActionSkillHooks
         return true;
     }
 
-    private static string YesWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Sí",
-            FlowHelper.UiLang.Pt => "Sim",
-            _ => "Yes",
-        };
+    private static string YesWord() => LocalizedText.Yes();
 
-    private static string NoWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "No",
-            FlowHelper.UiLang.Pt => "Não",
-            _ => "No",
-        };
+    private static string NoWord() => LocalizedText.No();
 
-    private static string LockedWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "bloqueado",
-            FlowHelper.UiLang.Pt => "bloqueado",
-            _ => "locked",
-        };
+    private static string LockedWord() => LocalizedText.LockedM();
 
     /// <summary>
     /// Name of the current move set-type tab (Grounded / Air / Super Arts), switched
@@ -369,38 +351,15 @@ public class StatusActionSkillHooks
             foreach (var t in GuiTextReader.ReadControlTexts(item, visibleOnly: true))
                 if (!string.IsNullOrWhiteSpace(t.Text)) return t.Text.Trim();
         }
-        return setType switch
-        {
-            1 => "Grounded",
-            2 => "Air",
-            3 => "Super Arts",
-            _ => null,
-        };
+        return LocalizedText.SetType(setType);
     }
 
     private static string SectionName(int state)
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => state == STATE_CHOICE ? "Movimientos aprendidos" : "Conjunto de movimientos",
-            FlowHelper.UiLang.Pt => state == STATE_CHOICE ? "Movimentos aprendidos" : "Conjunto de movimentos",
-            _ => state == STATE_CHOICE ? "Moves Learned" : "Move Set",
-        };
+        => state == STATE_CHOICE ? LocalizedText.MovesLearned() : LocalizedText.MoveSet();
 
-    private static string EmptyWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Vacío",
-            FlowHelper.UiLang.Pt => "Vazio",
-            _ => "Empty",
-        };
+    private static string EmptyWord() => LocalizedText.Empty();
 
-    private static string SlotWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Ranura",
-            FlowHelper.UiLang.Pt => "Espaço",
-            _ => "Slot",
-        };
+    private static string SlotWord() => LocalizedText.Slot();
 
     private static void Reset()
     {

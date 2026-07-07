@@ -185,38 +185,14 @@ public sealed class StatusMySetActionSkillHooks : SingleParamScreenAdapter
             foreach (var t in GuiTextReader.ReadControlTexts(item, visibleOnly: true))
                 if (!string.IsNullOrWhiteSpace(t.Text)) return t.Text.Trim();
         }
-        return setType switch
-        {
-            1 => "Grounded",
-            2 => "Aerial",
-            3 => "SA",
-            _ => null,
-        };
+        return LocalizedText.SetType(setType);
     }
 
-    private static string SlotWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Ranura",
-            FlowHelper.UiLang.Pt => "Espaço",
-            _ => "Slot",
-        };
+    private static string SlotWord() => LocalizedText.Slot();
 
-    private static string PresetWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Preajuste",
-            FlowHelper.UiLang.Pt => "Predefinição",
-            _ => "Preset",
-        };
+    private static string PresetWord() => LocalizedText.Preset();
 
-    private static string EmptyWord()
-        => FlowHelper.GetDisplayLang() switch
-        {
-            FlowHelper.UiLang.Es => "Vacío",
-            FlowHelper.UiLang.Pt => "Vazio",
-            _ => "Empty",
-        };
+    private static string EmptyWord() => LocalizedText.Empty();
 
     private void ResetState()
     {

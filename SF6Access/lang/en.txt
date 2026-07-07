@@ -1,0 +1,138 @@
+# SF6Access — English (reference file: every key the mod uses).
+# Format: key=text (UTF-8). Lines starting with # are comments.
+# Other language files only need the keys whose text differs from English;
+# any missing key falls back to en.txt, then to the mod's built-in English.
+
+# --- Shared phrases ---
+damage=Damage
+price=Price
+completed=Completed
+not_completed=Not completed
+on=on
+off=off
+yes=Yes
+no=No
+locked_m=locked
+locked_f=locked
+acquired=acquired
+available=available
+unavailable=unavailable
+skill_points=Skill points
+coins=Coins
+cannot_reset_tree=Can't reset on this tree
+tree=Tree
+cost=Cost
+unlock_skill_q=Unlock this skill?
+reset_skills_title=Reset Skills. Reset your skills?
+view_skills=View Skills
+reset_resource=Reset resource
+slot=Slot
+preset=Preset
+empty=Empty
+moves_learned=Moves Learned
+move_set=Move Set
+perks=Perks
+hits=hits
+title_prompt=Title screen. Press F on keyboard, A on Xbox controller, or Cross on PlayStation controller
+
+# --- Avatar combat stats (WTPlayerStatusType) ---
+stat.1=Vitality
+stat.6=Punch
+stat.7=Kick
+stat.8=Throw
+stat.9=Unique Attack
+stat.10=Defense
+
+# --- Control types (fallback when the game lookup fails) ---
+control.0=Classic
+control.1=Modern
+control.2=Dynamic
+
+# --- Battle Hub chat input bar ---
+chat.0=Message
+chat.1=Send
+chat.2=Phrases
+chat.3=Stickers
+
+# --- Move set types (fallback when the game tab label is unreadable) ---
+settype.1=Grounded
+settype.2=Air
+settype.3=Super Arts
+
+# --- Command directions (numpad notation 0-9) ---
+dir.0=neutral
+dir.1=down-back
+dir.2=down
+dir.3=down-forward
+dir.4=back
+dir.5=neutral
+dir.6=forward
+dir.7=up-back
+dir.8=up
+dir.9=up-forward
+
+# --- Command motions ---
+motion.236=quarter circle forward
+motion.214=quarter circle back
+motion.623=forward, down, down-forward
+motion.421=back, down, down-back
+motion.41236=half circle forward
+motion.63214=half circle back
+motion.236236=double quarter circle forward
+motion.214214=double quarter circle back
+motion.22=down, down
+motion.44=back, back
+motion.66=forward, forward
+
+# --- Attack icons ---
+icon.+=plus
+icon.p=punch
+icon.k=kick
+icon.lp=light punch
+icon.mp=medium punch
+icon.hp=heavy punch
+icon.lk=light kick
+icon.mk=medium kick
+icon.hk=heavy kick
+icon.ls=light attack
+icon.ms=medium attack
+icon.hs=heavy attack
+icon.di=drive impact
+icon.dp=drive parry
+icon.tr=throw
+icon.sm=special move
+icon.sa=super art
+icon.auto=auto
+icon.n=neutral
+
+# --- Input glyphs ---
+input.BTL_LR_LSX=left or right
+input.BTL_UD_LSY=up or down
+input.BTL_PLUS_LS_U=up
+input.BTL_PLUS_LS_D=down
+input.BTL_PLUS_LS_L=left
+input.BTL_PLUS_LS_R=right
+input.BTL_LS_U=up
+input.BTL_LS_D=down
+input.BTL_LS_L=left
+input.BTL_LS_R=right
+input.BTL_X=square
+input.BTL_Y=triangle
+input.BTL_A=cross
+input.BTL_B=circle
+input.BTL_LB=L1
+input.BTL_RB=R1
+input.BTL_LT=L2
+input.BTL_RT=R2
+input.BTL_L3=L3
+input.BTL_R3=R3
+input.BTL_LSB=L3
+input.BTL_RSB=R3
+input.BTL_U=up
+input.BTL_D=down
+input.BTL_L=left
+input.BTL_R=right
+input.UIDecide=confirm
+input.UICancel=cancel
+input.MouseL=left click
+input.MouseR=right click
