@@ -460,3 +460,6 @@ avdesc.61501.3=sombra amplia clara en el párpado
 avdesc.61501.4=sombra alargada con rabillo
 avdesc.61501.5=sombra clara ovalada brillante
 avdesc.61501.6=sombra tenue difusa
+avdesc.61508.1=un solo lunar
+avdesc.61508.2=dos lunares juntos
+avdesc.61508.3=tres lunares en triángulo

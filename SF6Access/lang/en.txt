@@ -499,3 +499,6 @@ avdesc.61501.3=broad light eyeshadow on the lid
 avdesc.61501.4=elongated winged shadow
 avdesc.61501.5=bright pale oval shadow
 avdesc.61501.6=faint diffuse shadow
+avdesc.61508.1=single mole
+avdesc.61508.2=two moles together
+avdesc.61508.3=three moles in a triangle
