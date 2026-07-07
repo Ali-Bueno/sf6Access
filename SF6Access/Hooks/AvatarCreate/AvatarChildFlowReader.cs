@@ -158,6 +158,8 @@ internal sealed class AvatarChildFlowReader
         public int PageCapacity;   // cells per full page (max ItemMax seen)
         public int Rows;           // grid rows, for column-major → visual mapping
         public bool LayoutResolved;
+        public int PendingIndex = int.MinValue;  // change waiting to stabilize
+        public int PendingPage = int.MinValue;
     }
 
     private void PollPresetGrid(GridTracker t)
@@ -178,9 +180,26 @@ internal sealed class AvatarChildFlowReader
             if (page < 0) page = FlowHelper.CallInt(grid, "get_CurrentPageNum");
 
             bool first = t.LastIndex == int.MinValue;
-            if (idx == t.LastIndex && page == t.LastPage) return;
+            if (idx == t.LastIndex && page == t.LastPage)
+            {
+                t.PendingIndex = int.MinValue;
+                return;
+            }
+
+            // Page flips update CurrentPageNum and SelectedIndex on DIFFERENT
+            // frames — announcing on first sight of a change speaks a mixed
+            // old/new pair ("9" then "7", double speech). Only announce once
+            // the new pair has been identical for two consecutive polls.
+            if (idx != t.PendingIndex || page != t.PendingPage)
+            {
+                t.PendingIndex = idx;
+                t.PendingPage = page;
+                return;
+            }
+
             t.LastIndex = idx;
             t.LastPage = page;
+            t.PendingIndex = int.MinValue;
             if (first) return; // seed silently; announcements on navigation only
 
             // Cells show a number that runs ACROSS pages (page 2 = "7".."12",
