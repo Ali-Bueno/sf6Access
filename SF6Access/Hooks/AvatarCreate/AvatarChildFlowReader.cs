@@ -156,7 +156,8 @@ internal sealed class AvatarChildFlowReader
         public int LastIndex = int.MinValue;
         public int LastPage = int.MinValue;
         public int PageCapacity;   // cells per full page (max ItemMax seen)
-        public int Rows;           // grid rows, for column-major → visual mapping
+        public int Rows;           // grid layout, for Column/Row → visual number
+        public int Cols;
         public bool LayoutResolved;
         public int PendingIndex = int.MinValue;  // change waiting to stabilize
         public int PendingPage = int.MinValue;
@@ -205,10 +206,25 @@ internal sealed class AvatarChildFlowReader
             // Cells show a number that runs ACROSS pages (page 2 = "7".."12",
             // confirmed by screenshots). COMPUTE it — reading the cell's text
             // gave stale numbers from recycled pool cells ("6" on cell 9).
-            // SelectedIndex runs DOWN columns while the numbers run across
-            // rows (user-verified: the top row announced 1,3,5) — remap.
+            // SelectedIndex order VARIES PER GRID (row-major on the avatar
+            // grid, column-major on hair — log-verified), so the only reliable
+            // source is the focused preset data's own Column/Row position.
             if (max > t.PageCapacity) t.PageCapacity = max;
-            int visual = ToVisualIndex(t, grid, idx, max, page);
+            ResolveLayout(t, grid, page, max);
+
+            int visual = -1;
+            var data = FlowHelper.Call(grid, "get_CurrentSelectPresetData") as ManagedObject;
+            if (data != null && t.Cols > 0)
+            {
+                int col = FlowHelper.ReadIntField(data, "Column", -1);
+                int row = FlowHelper.ReadIntField(data, "Row", -1);
+                if (col >= 0 && row >= 0) visual = row * t.Cols + col;
+            }
+            if (visual < 0)
+                visual = t.Rows > 1 && max % t.Rows == 0
+                    ? (idx % t.Rows) * (max / t.Rows) + (idx / t.Rows)  // column-major heuristic
+                    : idx;
+
             int number = (page > 0 && t.PageCapacity > 0 ? page * t.PageCapacity : 0) + visual + 1;
 
             // Cell text is used only when it's a real label (has letters —
@@ -247,40 +263,32 @@ internal sealed class AvatarChildFlowReader
     }
 
     /// <summary>
-    /// Column-major SelectedIndex → row-major visual position. Row count comes
-    /// from the preset bank's page info; the observed creator layout (2 rows ×
-    /// 3 columns for 6-cell pages) is the documented fallback.
+    /// Rows/columns of the grid's pages, from the preset bank's page info
+    /// (handles the count-vs-max-index ambiguity by validating against
+    /// ItemMax); the observed creator layout (2 rows × 3 columns for 6-cell
+    /// pages) is the documented fallback.
     /// </summary>
-    private int ToVisualIndex(GridTracker t, ManagedObject grid, int idx, int max, int page)
+    private void ResolveLayout(GridTracker t, ManagedObject grid, int page, int max)
     {
-        if (!t.LayoutResolved && max > 0)
+        if (t.LayoutResolved || max <= 0) return;
+        t.LayoutResolved = true;
+        int r = -1, c = -1;
+        try
         {
-            t.LayoutResolved = true;
-            int r = -1, c = -1;
-            try
+            var bank = FlowHelper.GetObjectField(grid, "PresetBank");
+            var pageInfo = FlowHelper.Call(bank, "GetPageInfo", page) as ManagedObject
+                           ?? FlowHelper.Call(bank, "GetPageInfo", (uint)page) as ManagedObject;
+            r = FlowHelper.CallInt(pageInfo, "GetMaxRow");
+            c = FlowHelper.CallInt(pageInfo, "GetMaxColumn");
+            if (r > 0 && c > 0)
             {
-                var bank = FlowHelper.GetObjectField(grid, "PresetBank");
-                var pageInfo = FlowHelper.Call(bank, "GetPageInfo", page) as ManagedObject
-                               ?? FlowHelper.Call(bank, "GetPageInfo", (uint)page) as ManagedObject;
-                r = FlowHelper.CallInt(pageInfo, "GetMaxRow");
-                c = FlowHelper.CallInt(pageInfo, "GetMaxColumn");
-                if (r > 0 && c > 0)
-                {
-                    if (r * c == max) t.Rows = r;                       // counts
-                    else if ((r + 1) * (c + 1) == max) t.Rows = r + 1;  // max indices
-                }
+                if (r * c == max) { t.Rows = r; t.Cols = c; }                          // counts
+                else if ((r + 1) * (c + 1) == max) { t.Rows = r + 1; t.Cols = c + 1; } // max indices
             }
-            catch { }
-            if (t.Rows <= 0 && max == 6) t.Rows = 2; // observed 2×3 layout
-            API.LogInfo($"[SF6Access] Avatar grid {t.Field}: layout rows={t.Rows} (bank r={r}, c={c}, ItemMax={max})");
         }
-
-        if (t.Rows > 1 && max % t.Rows == 0)
-        {
-            int cols = max / t.Rows;
-            return (idx % t.Rows) * cols + (idx / t.Rows);
-        }
-        return idx;
+        catch { }
+        if (t.Cols <= 0 && max == 6) { t.Rows = 2; t.Cols = 3; } // observed 2×3 layout
+        API.LogInfo($"[SF6Access] Avatar grid {t.Field}: layout rows={t.Rows}, cols={t.Cols} (bank r={r}, c={c}, ItemMax={max})");
     }
 
     private static string ReadPresetName(ManagedObject grid, ManagedObject worker)
