@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -17,48 +16,69 @@ namespace SF6Access.Hooks;
 ///   the player advances through; each card's caption ("Special Artwork: ...",
 ///   "SF Legacy: ...") lives in the `text` element and is announced as it
 ///   changes.
+///
+/// ScreenAdapter (multi-Param): either screen being present keeps the adapter
+/// active; each poll handles its own param independently. Registered in
+/// ScreenRegistry.
 /// </summary>
-public class ArcadeResultHooks
+public sealed class ArcadeResultHooks : ScreenAdapter
 {
     private const string RESULT_PARAM = "app.UIFlowUI11105.Param";
     private const string ENDCARD_PARAM = "app.UIFlowArcadeEndCard.Param";
+    private static readonly string[] Types = { RESULT_PARAM, ENDCARD_PARAM };
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 10;
+    public override string[] OwnedTypes => Types;
 
     // Let the victory quote (announced by ArcadeHooks) be spoken first: the
     // tally shares the screen with the quote, so wait a beat before reading it.
-    private const int RESULT_DELAY = 60;
+    // 6 read ticks at the 10-frame interval = the original 60-frame delay.
+    private const int RESULT_DELAY_TICKS = 6;
 
-    private static bool _announcedResult;
-    private static int _resultSeenFrame = -1;
-    private static string _lastCard;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ArcadeResultHooks()
     {
-        API.LogInfo("[SF6Access] ArcadeResultHooks initialized");
+        SearchInterval = 10;
+        ReadInterval = 10;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        _pollCounter++;
-        if (_pollCounter % POLL_INTERVAL != 0) return;
+    private ManagedObject _resultParam;
+    private ManagedObject _endcardParam;
+    private int _tick;
+    private bool _announcedResult;
+    private int _resultSeenTick = -1;
+    private string _lastCard;
 
+    protected override bool Locate()
+    {
+        var found = FlowHelper.FindFlowParams(Types);
+        found.TryGetValue(RESULT_PARAM, out _resultParam);
+        found.TryGetValue(ENDCARD_PARAM, out _endcardParam);
+        return _resultParam != null || _endcardParam != null;
+    }
+
+    protected override void OnDeactivate()
+    {
+        _resultParam = null;
+        _endcardParam = null;
+        _announcedResult = false;
+        _resultSeenTick = -1;
+        _lastCard = null;
+    }
+
+    protected override void OnPoll()
+    {
+        _tick++;
         PollResult();
         PollEndCard();
     }
 
-    private static void PollResult()
+    private void PollResult()
     {
         try
         {
-            var param = FlowHelper.FindFlowParam(RESULT_PARAM);
-            if (param == null)
+            if (_resultParam == null)
             {
                 _announcedResult = false; // screen gone — arm for the next stage
-                _resultSeenFrame = -1;
+                _resultSeenTick = -1;
                 return;
             }
             if (_announcedResult) return;
@@ -66,17 +86,17 @@ public class ArcadeResultHooks
             // mIsActive/mIsFadeIn stay false even while the tally is on screen, so
             // trigger on the populated total instead, after a short delay so the
             // victory quote (which shares the screen) is announced first.
-            int total = FlowHelper.ReadIntField(param, "mTotalScore", 0);
+            int total = FlowHelper.ReadIntField(_resultParam, "mTotalScore", 0);
             if (total == 0) return; // data not populated yet
 
-            if (_resultSeenFrame < 0) { _resultSeenFrame = _pollCounter; return; }
-            if (_pollCounter - _resultSeenFrame < RESULT_DELAY) return;
+            if (_resultSeenTick < 0) { _resultSeenTick = _tick; return; }
+            if (_tick - _resultSeenTick < RESULT_DELAY_TICKS) return;
 
-            int score = FlowHelper.ReadIntField(param, "mRewardScore", 0);
-            int timeBonus = FlowHelper.ReadIntField(param, "mTimeScore", 0);
-            int vitalBonus = FlowHelper.ReadIntField(param, "mLifeScore", 0);
-            int finishBonus = FlowHelper.ReadIntField(param, "mFinishTypeScore", 0);
-            int subtotal = FlowHelper.ReadIntField(param, "mRoundScore", 0);
+            int score = FlowHelper.ReadIntField(_resultParam, "mRewardScore", 0);
+            int timeBonus = FlowHelper.ReadIntField(_resultParam, "mTimeScore", 0);
+            int vitalBonus = FlowHelper.ReadIntField(_resultParam, "mLifeScore", 0);
+            int finishBonus = FlowHelper.ReadIntField(_resultParam, "mFinishTypeScore", 0);
+            int subtotal = FlowHelper.ReadIntField(_resultParam, "mRoundScore", 0);
 
             // The final stage shows only the running total (no breakdown), so omit
             // the zero rows instead of reading "Score 0. Time bonus 0...".
@@ -91,28 +111,27 @@ public class ArcadeResultHooks
             _announcedResult = true;
             string text = string.Join(". ", parts) + ".";
             API.LogInfo($"[SF6Access] Arcade result: {text}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            Speak(text, interrupt: false);
         }
         catch { }
     }
 
-    private static void PollEndCard()
+    private void PollEndCard()
     {
         try
         {
-            var param = FlowHelper.FindFlowParam(ENDCARD_PARAM);
-            if (param == null)
+            if (_endcardParam == null)
             {
                 _lastCard = null; // gallery closed — re-announce on the next entry
                 return;
             }
 
-            string caption = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "text"));
+            string caption = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_endcardParam, "text"));
             if (string.IsNullOrWhiteSpace(caption) || caption == _lastCard) return;
             _lastCard = caption;
 
             API.LogInfo($"[SF6Access] Arcade end card: {caption}");
-            ScreenReaderService.Speak(caption);
+            Speak(caption);
         }
         catch { }
     }

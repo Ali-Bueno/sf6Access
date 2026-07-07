@@ -47,6 +47,30 @@ public class ScreenRegistry
         UiDispatcher.Register(new AvatarArcadeTopHooks());
         UiDispatcher.Register(new StatusSkillHooks());
 
+        // Category B batch 1 — multi-param / prefix screens
+        UiDispatcher.Register(new ArcadeResultHooks());
+        UiDispatcher.Register(new CharDetailSettingHooks());
+        UiDispatcher.Register(new LeagueSelectHooks());
+        UiDispatcher.Register(new ProfileHooks());
+
+        // Category B batch 2 — auto-shown displays / overlays
+        UiDispatcher.Register(new BattleHubResultHooks());
+        UiDispatcher.Register(new ItemPreviewHooks());
+        UiDispatcher.Register(new DeathMatchSettingHooks());
+        UiDispatcher.Register(new BootMessageHooks());
+        UiDispatcher.Register(new TutorialHooks());
+
+        // Category B batch 3 — dialogs / training sub-lists / status tabs / stage select
+        UiDispatcher.Register(new TrainingSubListHooks());
+        UiDispatcher.Register(new DialogFlowHooks());
+        UiDispatcher.Register(new StatusActionSkillHooks());
+        UiDispatcher.Register(new StageSelectHooks());
+
+        // Category B batch 4 — the big custom-walk screens
+        UiDispatcher.Register(new StatusMenuHooks());
+        UiDispatcher.Register(new AvatarCreateHooks());
+        UiDispatcher.Register(new FighterSettingHooks());
+
         // New screen readers built on the foundation
         UiDispatcher.Register(new AvatarResultHooks());
         UiDispatcher.Register(new WTMPauseHooks());

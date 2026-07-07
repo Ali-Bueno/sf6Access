@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -25,8 +24,13 @@ namespace SF6Access.Hooks;
 /// for the delta. So each gauge is announced once, as soon as that data is populated,
 /// with no dependency on the count-up animation. The rank name is resolved through
 /// the shared LeagueRankResolver (no hardcoded tiers).
+///
+/// ScreenAdapter (multi-Param): Locate() finds all watched params (and rank
+/// gauges by prefix) each tick; deactivating clears the per-param memory, which
+/// is the original "reset when it disappears" behavior. Registered in
+/// ScreenRegistry.
 /// </summary>
-public class BattleHubResultHooks
+public sealed class BattleHubResultHooks : ScreenAdapter
 {
     // Params whose announcement is the joined text of the listed via.gui.Text fields.
     private static readonly Dictionary<string, string[]> TextParams = new()
@@ -40,38 +44,57 @@ public class BattleHubResultHooks
 
     private const string RANK_GAUGE = "app.UIFlowRankGauge.Param";
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 12;
+    private static readonly string[] SearchTypes = BuildSearchTypes();
+
+    private static string[] BuildSearchTypes()
+    {
+        var targets = new List<string>(TextParams.Keys) { COUNTER_PARAM };
+        return targets.ToArray();
+    }
+
+    public override string[] OwnedTypes => SearchTypes;
+
+    public BattleHubResultHooks()
+    {
+        // The original hook did everything on one 12-frame tick.
+        SearchInterval = 12;
+        ReadInterval = 12;
+    }
+
+    private Dictionary<string, ManagedObject> _found = new();
+    private List<(string typeName, ManagedObject param)> _gauges = new();
 
     // Last announced text per param type, so a display is read once until it changes.
-    private static readonly Dictionary<string, string> _lastText = new();
+    private readonly Dictionary<string, string> _lastText = new();
 
     // RankGauge instances already announced (keyed by object address): both
     // players' gauges are announced once each; cleared when a gauge disappears.
-    private static readonly HashSet<ulong> _rankAnnounced = new();
+    private readonly HashSet<ulong> _rankAnnounced = new();
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override bool Locate()
     {
-        API.LogInfo("[SF6Access] BattleHubResultHooks initialized");
+        _found = FlowHelper.FindFlowParams(SearchTypes);
+        _gauges = FlowHelper.FindFlowParamsByPrefix(RANK_GAUGE);
+        return _found.Count > 0 || _gauges.Count > 0;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnDeactivate()
     {
-        _pollCounter++;
-        if (_pollCounter % POLL_INTERVAL != 0) return;
+        _found.Clear();
+        _gauges.Clear();
+        _lastText.Clear();
+        _rankAnnounced.Clear();
+    }
 
-        var targets = new List<string>(TextParams.Keys) { COUNTER_PARAM };
-        var found = FlowHelper.FindFlowParams(targets.ToArray());
-
+    protected override void OnPoll()
+    {
         foreach (var kvp in TextParams)
         {
-            found.TryGetValue(kvp.Key, out var param);
+            _found.TryGetValue(kvp.Key, out var param);
             Announce(kvp.Key, param == null ? null : JoinTextFields(param, kvp.Value));
         }
 
-        found.TryGetValue(COUNTER_PARAM, out var counter);
+        _found.TryGetValue(COUNTER_PARAM, out var counter);
         Announce(COUNTER_PARAM, counter == null ? null : BuildCounter(counter));
 
         PollRankGauges();
@@ -83,10 +106,10 @@ public class BattleHubResultHooks
     /// count-up wait. Both players' gauges are announced once each; the announced
     /// set is pruned when a gauge disappears so the next match announces again.
     /// </summary>
-    private static void PollRankGauges()
+    private void PollRankGauges()
     {
         var present = new HashSet<ulong>();
-        foreach (var (_, param) in FlowHelper.FindFlowParamsByPrefix(RANK_GAUGE))
+        foreach (var (_, param) in _gauges)
         {
             ulong addr = FlowHelper.AddressOf(param);
             if (addr == 0) continue;
@@ -99,7 +122,7 @@ public class BattleHubResultHooks
 
             _rankAnnounced.Add(addr);
             API.LogInfo($"[SF6Access] Rank gauge: {text}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            Speak(text, interrupt: false);
         }
 
         if (_rankAnnounced.Count == 0) return;
@@ -144,7 +167,7 @@ public class BattleHubResultHooks
     }
 
     /// <summary>Announce a param's text once; reset its memory when it disappears.</summary>
-    private static void Announce(string typeName, string text)
+    private void Announce(string typeName, string text)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -155,7 +178,7 @@ public class BattleHubResultHooks
 
         _lastText[typeName] = text;
         API.LogInfo($"[SF6Access] {typeName}: {text}");
-        ScreenReaderService.Speak(text, interrupt: false);
+        Speak(text, interrupt: false);
     }
 
     /// <summary>Join the messages of the named via.gui.Text fields, skipping empties and duplicates.</summary>

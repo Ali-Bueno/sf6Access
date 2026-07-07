@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -16,8 +15,13 @@ namespace SF6Access.Hooks;
 /// Avatar Training uses a parallel widget family (UIAvatarTrainingDummyStatusMenu_*)
 /// with the SAME field/method names and eMenuState values, so the same logic reads
 /// it once its param types are watched too.
+///
+/// ScreenAdapter (multi-Param, priority order). SearchInterval = ReadInterval = 5:
+/// equipping a move can recreate the Param mid-screen, so the live instance is
+/// re-found every read tick (stale instance read nothing / close detection must
+/// stay fast). Registered in ScreenRegistry.
 /// </summary>
-public class StatusActionSkillHooks
+public sealed class StatusActionSkillHooks : ScreenAdapter
 {
     // All four tabs share the ActionSkillEquipBase shape (MenuState +
     // mSkillPanelList_Set/_Select + mSkillDetail), so the same field/method names
@@ -31,6 +35,8 @@ public class StatusActionSkillHooks
         "app.UIAvatarTrainingDummyStatusMenu_SuperArts.Param",
     };
 
+    public override string[] OwnedTypes => ParamTypes;
+
     // eMenuState: 0=SET_LIST (Move Set slots), 1=CHOICE_LIST (Moves Learned),
     // 2=ATTENTION (confirm popup), 4=CHARGESKILL_ATTENTION.
     private const int STATE_SET = 0;
@@ -38,87 +44,70 @@ public class StatusActionSkillHooks
     private const int STATE_ATTENTION = 2;
     private const int STATE_CHARGE_ATTENTION = 4;
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
-
-    private static ManagedObject _param;
-    private static int _lastState = -2;
-    private static int _lastIndex = -2;
-    private static string _lastText;
-    private static bool _attentionOpen;
-    private static string _lastAttentionButton;
-    private static int _loggedState = -99;
-    private static int _lastSetType = int.MinValue;  // WTActionSkillSetType tab (Grounded/Air/Super Arts)
-
-    public static bool IsActive => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public StatusActionSkillHooks()
     {
-        API.LogInfo("[SF6Access] StatusActionSkillHooks initialized");
+        SearchInterval = 5;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _param;
+    private int _lastState = -2;
+    private int _lastIndex = -2;
+    private string _lastText;
+    private bool _attentionOpen;
+    private string _lastAttentionButton;
+    private int _loggedState = -99;
+    private int _lastSetType = int.MinValue;  // WTActionSkillSetType tab (Grounded/Air/Super Arts)
+
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL == 0) TryActivate();
-            return;
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL != 0) return;
-
-        // Re-find the live param every read: equipping a move can recreate it, and
-        // a stale instance reads nothing ("stopped reading after confirming").
-        var current = FindParam();
-        if (current == null) { Reset(); return; }
-        if (FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_param))
-        {
-            _param = current;
-            _lastState = -2;
-            _lastIndex = -2;
-            _lastText = null;
-            _attentionOpen = false;
-            _lastAttentionButton = null;
-            _lastSetType = int.MinValue;
-        }
-
-        PollState();
-    }
-
-    private static ManagedObject FindParam()
-    {
+        var found = FlowHelper.FindFlowParams(ParamTypes);
+        ManagedObject current = null;
         foreach (var type in ParamTypes)
         {
-            var p = FlowHelper.FindFlowParam(type);
-            if (p != null) return p;
+            if (found.TryGetValue(type, out current) && current != null) break;
         }
-        return null;
+        if (current == null)
+        {
+            _param = null;
+            return false;
+        }
+
+        // Re-bind when the game recreated the Param (equip flow does this).
+        if (_param == null || FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_param))
+        {
+            _param = current;
+            ResetState();
+        }
+        return true;
     }
 
-    private static void TryActivate()
+    protected override void OnActivate()
     {
-        var p = FindParam();
-        if (p == null) return;
+        API.LogInfo("[SF6Access] Status action-skill tab active");
+        PollState(); // the original announced the initial row immediately
+    }
 
-        _param = p;
+    protected override void OnDeactivate()
+    {
+        API.LogInfo("[SF6Access] Status action-skill tab ended");
+        _param = null;
+        ResetState();
+    }
+
+    private void ResetState()
+    {
         _lastState = -2;
         _lastIndex = -2;
         _lastText = null;
         _attentionOpen = false;
         _lastAttentionButton = null;
         _lastSetType = int.MinValue;
-        _isActive = true;
-        API.LogInfo("[SF6Access] Status action-skill tab active");
-        PollState();
     }
 
-    private static void PollState()
+    protected override void OnPoll() => PollState();
+
+    private void PollState()
     {
         if (_param == null) return;
 
@@ -218,7 +207,7 @@ public class StatusActionSkillHooks
         _lastText = text;
 
         API.LogInfo($"[SF6Access] Action skill [{state}/{idx}]: {text}");
-        ScreenReaderService.Speak(text, interrupt: !first);
+        Speak(text, interrupt: !first);
     }
 
     /// <summary>
@@ -275,7 +264,7 @@ public class StatusActionSkillHooks
     /// Announces the question on open and the focused Yes/No button as it changes.
     /// Returns true while the popup is open so the lists aren't read underneath.
     /// </summary>
-    private static bool PollAttention()
+    private bool PollAttention()
     {
         string head = null, notice = null;
         ManagedObject view = null;
@@ -320,13 +309,13 @@ public class StatusActionSkillHooks
 
             string text = string.Join(". ", parts);
             API.LogInfo($"[SF6Access] Action skill confirm: {text}");
-            ScreenReaderService.Speak(text, interrupt: true);
+            Speak(text, interrupt: true);
         }
         else if (!string.IsNullOrWhiteSpace(button) && button != _lastAttentionButton)
         {
             _lastAttentionButton = button;
             API.LogInfo($"[SF6Access] Action skill confirm button: {button}");
-            ScreenReaderService.Speak(button, interrupt: true);
+            Speak(button, interrupt: true);
         }
         return true;
     }
@@ -342,7 +331,7 @@ public class StatusActionSkillHooks
     /// with Tab. Prefer the game's own localized tab label; fall back to the
     /// WTStyleDefine.WTActionSkillSetType enum (Ground=1, Air=2, SuperArts=3).
     /// </summary>
-    private static string ReadSetTypeName(int setType)
+    private string ReadSetTypeName(int setType)
     {
         var tab = FlowHelper.GetObjectField(_param, "mSetTypeTab");
         var item = FlowHelper.Call(tab, "get_SelectedItem") as ManagedObject;
@@ -360,16 +349,4 @@ public class StatusActionSkillHooks
     private static string EmptyWord() => LocalizedText.Empty();
 
     private static string SlotWord() => LocalizedText.Slot();
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Status action-skill tab ended");
-        _isActive = false;
-        _param = null;
-        _lastState = -2;
-        _lastIndex = -2;
-        _lastText = null;
-        _attentionOpen = false;
-        _lastAttentionButton = null;
-    }
 }

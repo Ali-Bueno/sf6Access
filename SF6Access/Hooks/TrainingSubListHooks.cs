@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,8 +10,11 @@ namespace SF6Access.Hooks;
 /// app.training.UIFlowTrainingMenu_SpinList/_TextList.Param with their own
 /// FocusIndex + ViewDataList; TrainingManager's Primary/SecondaryIndex does
 /// not move there, so TrainingMenuHooks stays silent.
+///
+/// ScreenAdapter (multi-Param, priority order): the first watched type found
+/// wins; a type change re-arms the state. Registered in ScreenRegistry.
 /// </summary>
-public class TrainingSubListHooks
+public sealed class TrainingSubListHooks : ScreenAdapter
 {
     private static readonly string[] WatchedTypes =
     {
@@ -21,6 +23,8 @@ public class TrainingSubListHooks
         "app.training.UIFlowTrainingMenu_TextList.Param",
     };
 
+    public override string[] OwnedTypes => WatchedTypes;
+
     // The reversal "Delay Settings" picker (opened with R) is a SpinList whose
     // values (0F/1F/2F...) live in _MenuList, not the parent's _SecondaryList
     private const string SPINLIST_TYPE = "app.training.UIFlowTrainingMenu_SpinList.Param";
@@ -28,59 +32,64 @@ public class TrainingSubListHooks
     // app.training.ItemType slider variants — value is numeric, not a Guid
     private static readonly int[] SliderItemTypes = { 2, 10, 11, 12, 13, 14, 15 };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 30;
-    private const int POLL_READ_INTERVAL = 5;
-    private const int POLL_VALUE_INTERVAL = 10;
+    // Value edits are checked every 2nd read tick (2 × 5 frames = the original
+    // 10-frame value interval).
+    private const int VALUE_POLL_TICKS = 2;
 
-    private static ManagedObject _param;
-    private static string _activeType;
-    private static int _lastFocus = -2;
-    private static string _lastValue;
-    private static string _lastRowText;
-    private static int _lastSliderValue = int.MinValue;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public TrainingSubListHooks()
     {
-        API.LogInfo("[SF6Access] TrainingSubListHooks initialized");
+        SearchInterval = 30;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _param;
+    private string _activeType;
+    private int _tick;
+    private int _lastFocus = -2;
+    private string _lastValue;
+    private string _lastRowText;
+    private int _lastSliderValue = int.MinValue;
+
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        // Re-bind every search — the game recreates Params per visit
+        var found = FlowHelper.FindFlowParams(WatchedTypes);
+        string type = null;
+        ManagedObject param = null;
+        foreach (var t in WatchedTypes)
         {
-            // Re-bind every search — the game recreates Params per visit
-            var found = FlowHelper.FindFlowParams(WatchedTypes);
-            string type = null;
-            ManagedObject param = null;
-            foreach (var t in WatchedTypes)
-            {
-                if (found.TryGetValue(t, out param)) { type = t; break; }
-            }
-
-            if (type != _activeType)
-            {
-                _activeType = type;
-                _lastFocus = -2;
-                _lastValue = null;
-                _lastRowText = null;
-                _lastSliderValue = int.MinValue;
-                if (type != null)
-                    API.LogInfo($"[SF6Access] Training sub-list active: {type}");
-            }
-            _param = param;
+            if (found.TryGetValue(t, out param)) { type = t; break; }
         }
 
-        if (_param == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollFocus();
+        if (type != _activeType)
+        {
+            _activeType = type;
+            ResetState();
+            if (type != null)
+                API.LogInfo($"[SF6Access] Training sub-list active: {type}");
+        }
+        _param = param;
+        return param != null;
     }
 
-    private static void PollFocus()
+    protected override void OnDeactivate()
     {
+        _param = null;
+        _activeType = null;
+        ResetState();
+    }
+
+    private void ResetState()
+    {
+        _lastFocus = -2;
+        _lastValue = null;
+        _lastRowText = null;
+        _lastSliderValue = int.MinValue;
+    }
+
+    protected override void OnPoll()
+    {
+        _tick++;
         try
         {
             int focus = FlowHelper.ReadIntField(_param, "FocusIndex", int.MinValue);
@@ -92,7 +101,7 @@ public class TrainingSubListHooks
 
             if (focus == _lastFocus)
             {
-                if (_pollCounter % POLL_VALUE_INTERVAL == 0) PollValueChange();
+                if (_tick % VALUE_POLL_TICKS == 0) PollValueChange();
                 return;
             }
 
@@ -103,7 +112,7 @@ public class TrainingSubListHooks
         catch { }
     }
 
-    private static void AnnounceRow(int focus, bool interrupt)
+    private void AnnounceRow(int focus, bool interrupt)
     {
         var viewData = FindViewData(focus);
         var rowData = FlowHelper.GetObjectField(viewData, "Data");
@@ -127,7 +136,7 @@ public class TrainingSubListHooks
         {
             _lastRowText = ReadRowGuiText();
             API.LogInfo($"[SF6Access] Training sub-list value: {value}");
-            ScreenReaderService.Speak(value, interrupt);
+            Speak(value, interrupt);
             return;
         }
 
@@ -153,11 +162,11 @@ public class TrainingSubListHooks
 
         string announcement = string.Join(". ", parts);
         API.LogInfo($"[SF6Access] Training sub-list [{focus}]: {announcement}");
-        ScreenReaderService.Speak(announcement, interrupt);
+        Speak(announcement, interrupt);
     }
 
     /// <summary>Left/right edits on the focused row.</summary>
-    private static void PollValueChange()
+    private void PollValueChange()
     {
         var viewData = FindViewData(_lastFocus);
         var rowData = FlowHelper.GetObjectField(viewData, "Data");
@@ -170,7 +179,7 @@ public class TrainingSubListHooks
             if (firstValue) return;
 
             API.LogInfo($"[SF6Access] Training sub-list value: {value}");
-            ScreenReaderService.Speak(value);
+            Speak(value);
             return;
         }
 
@@ -185,7 +194,7 @@ public class TrainingSubListHooks
         string diff = FlowHelper.DiffSegments(previous, rowText);
         if (string.IsNullOrEmpty(diff)) return;
         API.LogInfo($"[SF6Access] Training sub-list row changed: {diff}");
-        ScreenReaderService.Speak(diff);
+        Speak(diff);
     }
 
     /// <summary>
@@ -193,7 +202,7 @@ public class TrainingSubListHooks
     /// the value (e_txt_0). Return only the requested element so left/right
     /// edits announce the frame value alone, not "Delay Settings" each time.
     /// </summary>
-    private static string ReadMenuListText(string elementName)
+    private string ReadMenuListText(string elementName)
     {
         try
         {
@@ -212,10 +221,10 @@ public class TrainingSubListHooks
         return null;
     }
 
-    private static string ReadMenuListValue() => ReadMenuListText("e_txt_0");
+    private string ReadMenuListValue() => ReadMenuListText("e_txt_0");
 
     /// <summary>Focused row GUI text via the inherited secondary list.</summary>
-    private static string ReadRowGuiText()
+    private string ReadRowGuiText()
     {
         try
         {
@@ -231,7 +240,7 @@ public class TrainingSubListHooks
 
     /// <summary>Current value of a row: slider number, or the manager's
     /// currently-selected value child message.</summary>
-    private static string ReadCurrentValue(ManagedObject viewData, ManagedObject rowData)
+    private string ReadCurrentValue(ManagedObject viewData, ManagedObject rowData)
     {
         // SpinList value picker (Delay Settings): the selected frame value is
         // the focused child of _MenuList (e_txt_0 = "1F"), not in ViewData or
@@ -264,7 +273,7 @@ public class TrainingSubListHooks
         catch { return null; }
     }
 
-    private static ManagedObject FindViewData(int focus)
+    private ManagedObject FindViewData(int focus)
     {
         try
         {

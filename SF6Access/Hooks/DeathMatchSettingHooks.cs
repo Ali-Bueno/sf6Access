@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,8 +10,12 @@ namespace SF6Access.Hooks;
 /// focus reader announced only the option names — each panel's description
 /// lives in a separate e_text_desc element that updates with the selection,
 /// so the focused option is announced together with its tooltip.
+///
+/// ScreenAdapter: locates by prefixes (base + custom-room variant), re-binds on
+/// instance change. MainMenuHooks reads IsInDeathMatchSetting for suppression.
+/// Registered in ScreenRegistry.
 /// </summary>
-public class DeathMatchSettingHooks
+public sealed class DeathMatchSettingHooks : ScreenAdapter
 {
     private static readonly string[] ParamPrefixes =
     {
@@ -20,63 +23,59 @@ public class DeathMatchSettingHooks
         "app.UIFlowCustomRoomDeathMatchSetting",
     };
 
+    public override string[] OwnedTypes => ParamPrefixes;
+
     // Param.SettingList fields holding the two panels (rules / gimmicks)
     private static readonly string[] PanelFields = { "Rule", "Gimmick" };
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static DeathMatchSettingHooks _self;
+    public static bool IsInDeathMatchSetting => _self != null && _self.Active;
 
-    private static ManagedObject _param;
-    private static readonly int[] _lastIndex = { -2, -2 };
-    private static readonly string[] _lastDesc = new string[2];
-
-    public static bool IsInDeathMatchSetting => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public DeathMatchSettingHooks()
     {
-        API.LogInfo("[SF6Access] DeathMatchSettingHooks initialized");
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _param;
+    private readonly int[] _lastIndex = { -2, -2 };
+    private readonly string[] _lastDesc = new string[2];
+
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        var found = FlowHelper.FindFirstFlowParamsByPrefixes(ParamPrefixes);
+        ManagedObject param = null;
+        foreach (var entry in found.Values)
         {
-            var found = FlowHelper.FindFirstFlowParamsByPrefixes(ParamPrefixes);
-            ManagedObject param = null;
-            foreach (var entry in found.Values)
-            {
-                param = entry.param;
-                break;
-            }
-
-            if (param == null)
-            {
-                if (_isActive) Reset();
-            }
-            else if (!_isActive || FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_param))
-            {
-                _param = param;
-                _isActive = true;
-                for (int i = 0; i < 2; i++)
-                {
-                    _lastIndex[i] = -2;
-                    _lastDesc[i] = null;
-                }
-                API.LogInfo("[SF6Access] DeathMatchSetting active");
-            }
+            param = entry.param;
+            break;
         }
 
-        if (_isActive && _pollCounter % POLL_READ_INTERVAL == 0)
-            PollPanels();
+        if (param == null)
+        {
+            _param = null;
+            return false;
+        }
+
+        // Re-bind on first find or instance change (stale-param pattern).
+        if (_param == null || FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_param))
+        {
+            _param = param;
+            ResetPanels();
+            API.LogInfo("[SF6Access] DeathMatchSetting active");
+        }
+        return true;
     }
 
-    private static void PollPanels()
+    protected override void OnDeactivate()
+    {
+        API.LogInfo("[SF6Access] DeathMatchSetting ended");
+        _param = null;
+        ResetPanels();
+    }
+
+    protected override void OnPoll()
     {
         for (int i = 0; i < PanelFields.Length; i++)
         {
@@ -121,7 +120,7 @@ public class DeathMatchSettingHooks
                 if (string.IsNullOrEmpty(announcement)) continue;
 
                 API.LogInfo($"[SF6Access] DeathMatch {PanelFields[i]} [{idx}]: {announcement}");
-                ScreenReaderService.Speak(announcement, interrupt: !first && indexChanged);
+                Speak(announcement, interrupt: !first && indexChanged);
             }
             catch { }
         }
@@ -145,12 +144,9 @@ public class DeathMatchSettingHooks
         return null;
     }
 
-    private static void Reset()
+    private void ResetPanels()
     {
-        API.LogInfo("[SF6Access] DeathMatchSetting ended");
-        _isActive = false;
-        _param = null;
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < PanelFields.Length; i++)
         {
             _lastIndex[i] = -2;
             _lastDesc[i] = null;

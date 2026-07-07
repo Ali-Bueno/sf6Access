@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -12,19 +11,19 @@ namespace SF6Access.Hooks;
 /// Message, so change detection re-reads each page. Message box button
 /// navigation is polled from the param's SimpleList_2/SimpleList_3 because
 /// UIAgent.FocusChanged does not fire for these dialogs in every context.
+///
+/// ScreenAdapter (multi-prefix): also watches app.UIFlowItemPreview for the
+/// item-received popups. MainMenuHooks reads IsDialogActive for suppression —
+/// it is true only while a UIFlowDialog param exists (not for preview-only).
+/// Registered in ScreenRegistry.
 /// </summary>
-public class DialogFlowHooks
+public sealed class DialogFlowHooks : ScreenAdapter
 {
     private const string TYPE_PREFIX = "app.UIFlowDialog.";
     private const string ITEM_PREVIEW_PREFIX = "app.UIFlowItemPreview";
     private static readonly string[] WatchedPrefixes = { TYPE_PREFIX, ITEM_PREVIEW_PREFIX };
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 5;
-
-    private static string _lastAnnounced;
-    private static int _lastButtonIndex = -2;
-    private static int _enrollingRetries;
+    public override string[] OwnedTypes => WatchedPrefixes;
 
     // The style-obtained dialog announces once; give the master-name lookup a
     // couple of seconds' worth of polls before latching a nameless read.
@@ -33,27 +32,49 @@ public class DialogFlowHooks
     /// <summary>True while a UIFlowDialog param is active (buttons handled here).</summary>
     public static bool IsDialogActive { get; private set; }
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    public DialogFlowHooks()
     {
-        API.LogInfo("[SF6Access] DialogFlowHooks initialized");
+        // The original hook did its find+read in one 5-frame tick.
+        SearchInterval = 5;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private System.Collections.Generic.Dictionary<string, (string typeName, ManagedObject param)> _found = new();
+
+    private string _lastAnnounced;
+    private int _lastButtonIndex = -2;
+    private int _enrollingRetries;
+    private string _lastItemPreview;
+
+    protected override bool Locate()
     {
-        if (++_pollCounter % POLL_INTERVAL != 0) return;
-
         // Single pass over the flow handles for both watched prefixes
-        var found = FlowHelper.FindFirstFlowParamsByPrefixes(WatchedPrefixes);
+        _found = FlowHelper.FindFirstFlowParamsByPrefixes(WatchedPrefixes);
+        return _found.Count > 0;
+    }
 
-        PollItemPreview(found.TryGetValue(ITEM_PREVIEW_PREFIX, out var preview) ? preview.param : null);
+    protected override void OnDeactivate()
+    {
+        _found.Clear();
+        ResetDialogState();
+        _lastItemPreview = null;
+        IsDialogActive = false;
+    }
 
-        if (!found.TryGetValue(TYPE_PREFIX, out var dialog))
+    private void ResetDialogState()
+    {
+        _lastAnnounced = null;
+        _lastButtonIndex = -2;
+        _enrollingRetries = 0;
+    }
+
+    protected override void OnPoll()
+    {
+        PollItemPreview(_found.TryGetValue(ITEM_PREVIEW_PREFIX, out var preview) ? preview.param : null);
+
+        if (!_found.TryGetValue(TYPE_PREFIX, out var dialog))
         {
-            _lastAnnounced = null;
-            _lastButtonIndex = -2;
-            _enrollingRetries = 0;
+            ResetDialogState();
             IsDialogActive = false;
             return;
         }
@@ -63,13 +84,11 @@ public class DialogFlowHooks
         PollButtonSelection(dialog.param);
     }
 
-    private static string _lastItemPreview;
-
     /// <summary>
     /// Item-received popups (claiming rewards etc.): app.UIFlowItemPreview
     /// params carry a UIPartsItemPreview with title/description texts.
     /// </summary>
-    private static void PollItemPreview(ManagedObject param)
+    private void PollItemPreview(ManagedObject param)
     {
         try
         {
@@ -90,12 +109,12 @@ public class DialogFlowHooks
             _lastItemPreview = text;
 
             API.LogInfo($"[SF6Access] Item preview: {text}");
-            ScreenReaderService.Speak(text);
+            Speak(text);
         }
         catch { }
     }
 
-    private static void AnnounceDialogText(ManagedObject param, string foundType)
+    private void AnnounceDialogText(ManagedObject param, string foundType)
     {
         // Resolve platform tags first: the Steam-store dialog's whole message
         // is a <PLATMSG> tag that plain tag stripping erased ("Confirmation")
@@ -189,7 +208,7 @@ public class DialogFlowHooks
         bool isMessageBox = foundType?.Contains("MessageBox") == true;
 
         API.LogInfo($"[SF6Access] Dialog [{foundType}]: {announcement}");
-        ScreenReaderService.Speak(announcement, interrupt: isMessageBox);
+        Speak(announcement, interrupt: isMessageBox);
     }
 
     /// <summary>Cleaned text of one named element in a dialog's own GUI view
@@ -221,7 +240,7 @@ public class DialogFlowHooks
     }
 
     /// <summary>Announce the focused button when navigating a message box.</summary>
-    private static void PollButtonSelection(ManagedObject param)
+    private void PollButtonSelection(ManagedObject param)
     {
         try
         {
@@ -263,7 +282,7 @@ public class DialogFlowHooks
             if (string.IsNullOrEmpty(label)) label = idx == 0 ? "Yes" : "No";
 
             API.LogInfo($"[SF6Access] Dialog button [{idx}]: {label}");
-            ScreenReaderService.Speak(label);
+            Speak(label);
         }
         catch { }
     }

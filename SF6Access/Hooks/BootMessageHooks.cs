@@ -2,9 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -16,8 +15,12 @@ namespace SF6Access.Hooks;
 ///   visible scene texts — covers the autosave caution, Microsoft Azure
 ///   PlayFab notice and other splash screens that have no flow params.
 /// Announces each message once when its text appears or changes.
+///
+/// ScreenAdapter: the boot-phase scan has NO flow param, so Locate() also
+/// reports active while the boot phase is still running; after the title screen
+/// the adapter only wakes for the watched params. Registered in ScreenRegistry.
 /// </summary>
-public class BootMessageHooks
+public sealed class BootMessageHooks : ScreenAdapter
 {
     private const string CONSENT_TYPE = "app.UIFlowFirstBootConsentDialog.Param";
     private const string WARNING_TYPE = "app.UIFlowWarningMessage.Param";
@@ -25,48 +28,60 @@ public class BootMessageHooks
 
     private static readonly string[] WatchedTypes = { CONSENT_TYPE, WARNING_TYPE, ACCOUNT_TYPE };
 
+    public override string[] OwnedTypes => WatchedTypes;
+
     // GUI owners that are chrome or already read by other hooks — excluded
     // from generic scene scans (InputGuide alone changes between screens and
     // would re-trigger a full re-announcement)
     private static readonly string[] IgnoredOwners =
         { "InputGuide", "Resident_Cmn", "Ticker", "OnlineBannerUI", "GameGuideWidget", "MessageBox" };
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 60;
-
-    // Last announced text per flow type (cleared when the flow ends)
-    private static readonly Dictionary<string, string> _lastAnnounced = new();
-
-    private static bool _bootPhaseOver;
-    private static string _lastBootText;
-    private static bool _languageListAnnounced;
-    private static string _lastAccountText;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public BootMessageHooks()
     {
-        API.LogInfo("[SF6Access] BootMessageHooks initialized");
+        // The original hook did its find+read in one 60-frame tick.
+        SearchInterval = 60;
+        ReadInterval = 60;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private Dictionary<string, ManagedObject> _found = new();
+
+    // Last announced text per flow type (cleared when the flow ends)
+    private readonly Dictionary<string, string> _lastAnnounced = new();
+
+    private bool _bootPhaseOver;
+    private string _lastBootText;
+    private bool _languageListAnnounced;
+    private string _lastAccountText;
+
+    protected override bool Locate()
     {
-        if (++_pollCounter % POLL_INTERVAL != 0) return;
+        _found = FlowHelper.FindFlowParams(WatchedTypes);
+        // The boot splash/legal screens have no flow params — stay active until
+        // the title screen ends the boot phase.
+        return _found.Count > 0 || !_bootPhaseOver;
+    }
 
-        var found = FlowHelper.FindFlowParams(WatchedTypes);
+    protected override void OnDeactivate()
+    {
+        _found.Clear();
+        _lastAnnounced.Clear();
+        _lastAccountText = null;
+    }
 
-        CheckFlow(found, CONSENT_TYPE, ReadConsentText);
-        CheckFlow(found, WARNING_TYPE, ReadWarningText);
+    protected override void OnPoll()
+    {
+        CheckFlow(_found, CONSENT_TYPE, ReadConsentText);
+        CheckFlow(_found, WARNING_TYPE, ReadWarningText);
 
         PollBootScreens();
-        PollAccountCreate(found);
+        PollAccountCreate(_found);
     }
 
     /// <summary>
     /// Until the title screen appears, read every visible on-screen text:
     /// splash/legal screens (PlayFab, autosave caution...) have no flow params.
     /// </summary>
-    private static void PollBootScreens()
+    private void PollBootScreens()
     {
         if (_bootPhaseOver) return;
 
@@ -110,7 +125,7 @@ public class BootMessageHooks
             if (languageList) _languageListAnnounced = true;
 
             API.LogInfo($"[SF6Access] Boot screen: {Truncate(text, 200)}");
-            ScreenReaderService.Speak(text, interrupt: false);
+            Speak(text, interrupt: false);
         }
         catch { }
     }
@@ -129,7 +144,7 @@ public class BootMessageHooks
     /// string, so the scene-wide scan sees nothing — walk the screen's own
     /// GUI tree (reached from its button list) with MessageId resolution.
     /// </summary>
-    private static void PollAccountCreate(Dictionary<string, ManagedObject> found)
+    private void PollAccountCreate(Dictionary<string, ManagedObject> found)
     {
         if (!found.TryGetValue(ACCOUNT_TYPE, out var param))
         {
@@ -158,7 +173,7 @@ public class BootMessageHooks
             if (string.IsNullOrWhiteSpace(announcement)) return;
 
             API.LogInfo($"[SF6Access] Account create screen: {Truncate(announcement, 200)}");
-            ScreenReaderService.Speak(announcement, interrupt: false);
+            Speak(announcement, interrupt: false);
         }
         catch { }
     }
@@ -199,7 +214,7 @@ public class BootMessageHooks
         return false;
     }
 
-    private static void CheckFlow(Dictionary<string, ManagedObject> found, string type,
+    private void CheckFlow(Dictionary<string, ManagedObject> found, string type,
         System.Func<ManagedObject, string> readText)
     {
         if (!found.TryGetValue(type, out var param))
@@ -220,7 +235,7 @@ public class BootMessageHooks
         _lastAnnounced[type] = text;
 
         API.LogInfo($"[SF6Access] BootMessage [{type}]: {Truncate(text, 200)}");
-        ScreenReaderService.Speak(text);
+        Speak(text);
     }
 
     private static string ReadConsentText(ManagedObject param)

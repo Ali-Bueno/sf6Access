@@ -1,48 +1,37 @@
 using System;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
 /// <summary>
 /// Accessibility for stage select screen.
 /// Polls UIFlowStageSelect.Param to announce the selected stage.
+///
+/// ScreenAdapter (multi-Param, priority order). MainMenuHooks routes stage-item
+/// focus events here via the static OnStageItemFocused(). Registered in
+/// ScreenRegistry.
 /// </summary>
-public class StageSelectHooks
+public sealed class StageSelectHooks : ScreenAdapter
 {
-    private static ManagedObject _stageParam;
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
+    // Specific param types to match (skip Title which is just animation)
+    private static readonly string[] StageParamTypes =
+    {
+        "app.menu.UIFlowStageSelect.Param",
+        "app.UIFlowGenericStageSetting.Param",
+    };
 
-    // Cached TDB lookups
-    private static bool _tdbCached;
-    private static bool _fieldsLogged;
-
-    // State tracking
-    private static string _lastStageName = "";
+    public override string[] OwnedTypes => StageParamTypes;
 
     // BGM selection (Q/E on the stage select screen toggles Stage BGM /
     // Character BGM / a specific track). The value lives in the "StageSelect"
     // GUI's e_text_bgm element, not in a Param field — cache the view and poll.
     private const string BGM_GUI = "StageSelect";
     private const string BGM_TEXT = "e_text_bgm";
-    private static readonly System.Collections.Generic.List<(string owner, ManagedObject view)> _bgmViews = new();
-    private static string _lastBgm = "";
 
-    // Cached message resolution
-    private static Method _msgGetMethod;
-
-    // Specific param types to match (skip Title which is just animation)
-    private static readonly string[] StageParamTypes = new[]
-    {
-        "app.menu.UIFlowStageSelect.Param",
-        "app.UIFlowGenericStageSetting.Param",
-    };
-
-    public static bool IsInStageSelect => _isActive;
+    private static StageSelectHooks _self;
+    public static bool IsInStageSelect => _self != null && _self.Active;
 
     /// <summary>
     /// Called from MainMenuHooks when a stage list item gets focus (p_FGStageSelectListItem_).
@@ -50,60 +39,77 @@ public class StageSelectHooks
     /// </summary>
     public static void OnStageItemFocused()
     {
-        if (!_isActive || _stageParam == null) return;
-        ReadAndAnnounce();
+        var self = _self;
+        if (self == null || !self.Active || self._stageParam == null) return;
+        self.ReadAndAnnounce();
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnLateUpdate()
+    public StageSelectHooks()
     {
-        _pollCounter++;
+        SearchInterval = 60;
+        ReadInterval = 5;
+        _self = this;
+    }
 
-        if (!_isActive)
+    private ManagedObject _stageParam;
+
+    // Cached TDB lookups
+    private static bool _tdbCached;
+    private static Method _msgGetMethod;
+    private bool _fieldsLogged;
+
+    // State tracking
+    private string _lastStageName = "";
+
+    private readonly System.Collections.Generic.List<(string owner, ManagedObject view)> _bgmViews = new();
+    private string _lastBgm = "";
+
+    protected override bool Locate()
+    {
+        CacheTDB();
+        var found = FlowHelper.FindFlowParams(StageParamTypes);
+        ManagedObject current = null;
+        foreach (var matchType in StageParamTypes)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryFindStageParam();
-            return;
+            if (found.TryGetValue(matchType, out current) && current != null) break;
+        }
+        if (current == null)
+        {
+            _stageParam = null;
+            return false;
         }
 
+        if (_stageParam == null || FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_stageParam))
+            BindParam(current);
+        else
+        {
+            // Refresh the BGM GUI view (re-created with the screen)
+            _bgmViews.Clear();
+            foreach (var v in GuiTextReader.FindGuiViews(BGM_GUI))
+                _bgmViews.Add(v);
+        }
+        return true;
+    }
+
+    protected override void OnDeactivate()
+    {
+        API.LogInfo("[SF6Access] Stage select ended");
+        _stageParam = null;
+        _lastStageName = "";
+        _bgmViews.Clear();
+        _lastBgm = "";
+    }
+
+    protected override void OnPoll()
+    {
         try
         {
-            // Check if still active periodically; re-bind when the game
-            // recreated the Param (stale instance → silent on re-entry)
-            if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-            {
-                var current = FindStageParam();
-                if (current == null)
-                {
-                    API.LogInfo("[SF6Access] Stage select ended");
-                    _isActive = false;
-                    _stageParam = null;
-                    _lastStageName = "";
-                    _bgmViews.Clear();
-                    _lastBgm = "";
-                    return;
-                }
-                if (FlowHelper.AddressOf(current) != FlowHelper.AddressOf(_stageParam))
-                    BindParam(current);
-
-                // Refresh the BGM GUI view (re-created with the screen)
-                _bgmViews.Clear();
-                foreach (var v in GuiTextReader.FindGuiViews(BGM_GUI))
-                    _bgmViews.Add(v);
-            }
-
-            // Poll for stage name + BGM changes every few frames
-            if (_pollCounter % 5 == 0)
-            {
-                ReadAndAnnounce();
-                PollBgm();
-            }
+            ReadAndAnnounce();
+            PollBgm();
         }
         catch (Exception ex)
         {
             API.LogError($"[SF6Access] StageSelect poll error: {ex.Message}");
-            _isActive = false;
-            _stageParam = null;
         }
     }
 
@@ -114,29 +120,9 @@ public class StageSelectHooks
         _msgGetMethod = TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
     }
 
-    private static void TryFindStageParam()
-    {
-        CacheTDB();
-        var current = FindStageParam();
-        if (current != null)
-            BindParam(current);
-    }
-
-    private static ManagedObject FindStageParam()
-    {
-        var found = FlowHelper.FindFlowParams(StageParamTypes);
-        foreach (var matchType in StageParamTypes)
-        {
-            if (found.TryGetValue(matchType, out var param) && param != null)
-                return param;
-        }
-        return null;
-    }
-
-    private static void BindParam(ManagedObject param)
+    private void BindParam(ManagedObject param)
     {
         _stageParam = param;
-        _isActive = true;
         _lastStageName = "";
         _fieldsLogged = false;
         _lastBgm = "";
@@ -152,7 +138,7 @@ public class StageSelectHooks
     /// the StageSelect GUI's e_text_bgm element ("Stage BGM", "Character BGM",
     /// a track name...).
     /// </summary>
-    private static void PollBgm()
+    private void PollBgm()
     {
         foreach (var (owner, view) in _bgmViews)
         {
@@ -169,7 +155,7 @@ public class StageSelectHooks
                     if (first) return; // Don't announce the initial value
 
                     API.LogInfo($"[SF6Access] Stage BGM: {bgm}");
-                    ScreenReaderService.Speak(bgm);
+                    Speak(bgm);
                     return;
                 }
             }
@@ -177,7 +163,7 @@ public class StageSelectHooks
         }
     }
 
-    private static void LogParamFields(ManagedObject param)
+    private void LogParamFields(ManagedObject param)
     {
         if (_fieldsLogged) return;
         _fieldsLogged = true;
@@ -230,18 +216,18 @@ public class StageSelectHooks
         }
     }
 
-    private static void ReadAndAnnounce()
+    private void ReadAndAnnounce()
     {
         string stageName = ReadStageName();
         if (!string.IsNullOrEmpty(stageName) && stageName != _lastStageName)
         {
             _lastStageName = stageName;
             API.LogInfo($"[SF6Access] Stage: {stageName}");
-            ScreenReaderService.Speak(stageName);
+            Speak(stageName);
         }
     }
 
-    private static string ReadStageName()
+    private string ReadStageName()
     {
         if (_stageParam == null) return null;
 
@@ -363,5 +349,4 @@ public class StageSelectHooks
         }
         return null;
     }
-
 }

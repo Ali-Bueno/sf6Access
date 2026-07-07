@@ -1,9 +1,8 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,39 +12,57 @@ namespace SF6Access.Hooks;
 /// Polls StatusMenuParam.TabIndex for tab changes and UIStatusMenu_Equip.Param
 /// focus state for the equip tab: slot list (mTopList), item grid (mItemList,
 /// item name read from mEquipItemLabel) and preset list (mPresetList).
+///
+/// ScreenAdapter (G-key pattern): ReadInterval = 1 so the G shortcut edge is
+/// sampled every frame; the heavier reads run every READ_TICKS frames via an
+/// instance counter. Child params (equip/master) are re-tracked in Locate()
+/// every SearchInterval. MainMenuHooks + GuideTextHooks read IsInStatusMenu.
+/// Registered in ScreenRegistry.
 /// </summary>
-public class StatusMenuHooks
+public sealed class StatusMenuHooks : ScreenAdapter
 {
     private const string STATUS_PARAM_TYPE = "app.UIStatusMenu.StatusMenuParam";
     private const string EQUIP_PARAM_TYPE = "app.UIStatusMenu_Equip.Param";
     private const string MASTER_PARAM_TYPE = "app.UIStatusMenu_Master.Param";
 
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static readonly string[] Types = { STATUS_PARAM_TYPE, EQUIP_PARAM_TYPE, MASTER_PARAM_TYPE };
+    public override string[] OwnedTypes => Types;
 
-    private static ManagedObject _statusParam;
-    private static ManagedObject _equipParam;
-    private static ManagedObject _masterParam;
+    // Heavier reads run every 5th frame (the original POLL_READ_INTERVAL).
+    private const int READ_TICKS = 5;
 
-    private static int _lastTab = -2;
-    private static int _lastGroupFocus = -2;
-    private static int _lastTopIndex = -2;
-    private static int _lastItemIndex = -2;
-    private static int _lastPresetIndex = -2;
-    private static string _lastItemName;
-    private static string _lastMasterText;
+    private static StatusMenuHooks _self;
+    public static bool IsInStatusMenu => _self != null && _self.Active;
+
+    public StatusMenuHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 1; // per-frame G-key edge; reads gated by READ_TICKS
+        _self = this;
+    }
+
+    private ManagedObject _statusParam;
+    private ManagedObject _equipParam;
+    private ManagedObject _masterParam;
+
+    private int _frame;
+    private int _lastTab = -2;
+    private int _lastGroupFocus = -2;
+    private int _lastTopIndex = -2;
+    private int _lastItemIndex = -2;
+    private int _lastPresetIndex = -2;
+    private string _lastItemName;
+    private string _lastMasterText;
 
     // Stats panel (mEquipStatus): announced once on entering the equip tab and
     // re-read on the G key. The item grid announces each focused item's stats.
-    private static bool _statsAnnounced;
+    private bool _statsAnnounced;
 
     // Unique-moves popup (UniqueMovesWindow) opened from the Style slot — a
     // move list with name / command / description that overlays the equip screen.
-    private static bool _uniqueWindowWasOpen;
-    private static int _lastUniqueIndex = -2;
-    private static string _lastUniqueState;
+    private bool _uniqueWindowWasOpen;
+    private int _lastUniqueIndex = -2;
+    private string _lastUniqueState;
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
@@ -54,7 +71,7 @@ public class StatusMenuHooks
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
     private const int VK_G = 0x47;
-    private static bool _lastGState;
+    private bool _lastGState;
 
     /// <summary>True only when the game window is the foreground app — so the G
     /// shortcut never fires while the user is typing in another window.</summary>
@@ -78,57 +95,47 @@ public class StatusMenuHooks
         "Accessory 1", "Accessory 2", "Accessory 3", "My set", "Equip type"
     };
 
-    public static bool IsInStatusMenu => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    protected override bool Locate()
     {
-        API.LogInfo("[SF6Access] StatusMenuHooks initialized");
-    }
-
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        _pollCounter++;
-
-        if (!_isActive)
+        var current = FlowHelper.TrackFlowParam(STATUS_PARAM_TYPE, _statusParam, out bool changed);
+        if (current == null)
         {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryActivate();
-            return;
+            _statusParam = null;
+            return false;
         }
 
-        // G re-reads the full stats panel on demand (only with the game focused,
-        // so it never fires while the user types in another window)
-        bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
-        if (gDown && !_lastGState && IsGameForeground()) AnnounceStatsSummary(interrupt: true);
-        _lastGState = gDown;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        if (changed)
         {
-            var current = FlowHelper.TrackFlowParam(STATUS_PARAM_TYPE, _statusParam, out bool changed);
-            if (current == null)
-            {
-                Reset();
-                return;
-            }
-            if (changed)
-                TryActivate(); // menu was recreated — re-bind params
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
+            // Menu opened or was recreated — re-bind all params + reset state
+            _statusParam = current;
+            var found = FlowHelper.FindFlowParams(Types);
+            found.TryGetValue(EQUIP_PARAM_TYPE, out _equipParam);
+            found.TryGetValue(MASTER_PARAM_TYPE, out _masterParam);
+            ResetState();
+            API.LogInfo($"[SF6Access] Status menu active (equip={_equipParam != null})");
             PollState();
+        }
+        else
+        {
+            // Child params come and go as the user switches tabs / reopens
+            // sub-screens — track the live instances
+            _equipParam = FlowHelper.TrackFlowParam(EQUIP_PARAM_TYPE, _equipParam, out bool equipChangedDummy);
+            _masterParam = FlowHelper.TrackFlowParam(MASTER_PARAM_TYPE, _masterParam, out bool masterChangedDummy);
+        }
+        return true;
     }
 
-    private static void TryActivate()
+    protected override void OnDeactivate()
     {
-        var found = FlowHelper.FindFlowParams(new[] { STATUS_PARAM_TYPE, EQUIP_PARAM_TYPE, MASTER_PARAM_TYPE });
-        if (!found.TryGetValue(STATUS_PARAM_TYPE, out var statusParam)) return;
+        API.LogInfo("[SF6Access] Status menu ended");
+        _statusParam = null;
+        _equipParam = null;
+        _masterParam = null;
+        ResetState();
+    }
 
-        _statusParam = statusParam;
-        found.TryGetValue(EQUIP_PARAM_TYPE, out _equipParam);
-        found.TryGetValue(MASTER_PARAM_TYPE, out _masterParam);
-
+    private void ResetState()
+    {
         _lastTab = -2;
         _lastGroupFocus = -2;
         _lastTopIndex = -2;
@@ -140,23 +147,23 @@ public class StatusMenuHooks
         _uniqueWindowWasOpen = false;
         _lastUniqueIndex = -2;
         _lastUniqueState = null;
-        _isActive = true;
-
-        API.LogInfo($"[SF6Access] Status menu active (equip={_equipParam != null})");
-        PollState();
     }
 
-    private static void PollState()
+    protected override void OnPoll()
+    {
+        // G re-reads the full stats panel on demand (only with the game focused,
+        // so it never fires while the user types in another window)
+        bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
+        if (gDown && !_lastGState && IsGameForeground()) AnnounceStatsSummary(interrupt: true);
+        _lastGState = gDown;
+
+        if (++_frame % READ_TICKS == 0)
+            PollState();
+    }
+
+    private void PollState()
     {
         AnnounceTabChange();
-
-        // Child params come and go as the user switches tabs / reopens
-        // sub-screens — track the live instances
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            _equipParam = FlowHelper.TrackFlowParam(EQUIP_PARAM_TYPE, _equipParam, out bool _equipChanged);
-            _masterParam = FlowHelper.TrackFlowParam(MASTER_PARAM_TYPE, _masterParam, out bool _masterChanged);
-        }
 
         // Master tab: read the focused master's detail window (its own child flow,
         // no equip param) — this is where the avatar's fighting style is equipped
@@ -189,7 +196,7 @@ public class StatusMenuHooks
         }
     }
 
-    private static void AnnounceTabChange()
+    private void AnnounceTabChange()
     {
         int tab = FlowHelper.ReadIntField(_statusParam, "TabIndex");
         if (tab < 0 || tab == _lastTab) return;
@@ -205,11 +212,11 @@ public class StatusMenuHooks
 
         // Announce the initial tab too: it tells the user the menu is open
         API.LogInfo($"[SF6Access] Status menu tab [{tab}]: {label}");
-        ScreenReaderService.Speak(label, interrupt: !first);
+        Speak(label, interrupt: !first);
     }
 
     /// <summary>Equipment slot list (Style / Head / Body / ... / My set).</summary>
-    private static void PollTopList(bool groupChanged)
+    private void PollTopList(bool groupChanged)
     {
         var topList = FlowHelper.GetObjectField(_equipParam, "mTopList");
         int idx = FlowHelper.CallInt(topList, "get_SelectedIndex");
@@ -249,11 +256,11 @@ public class StatusMenuHooks
         string announcement = string.IsNullOrWhiteSpace(tooltip) ? label : $"{label}. {tooltip}";
 
         API.LogInfo($"[SF6Access] Status menu slot [{idx}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
     /// <summary>Item grid: the focused item's name renders in mEquipItemLabel.</summary>
-    private static void PollItemGrid(bool groupChanged)
+    private void PollItemGrid(bool groupChanged)
     {
         var itemList = FlowHelper.GetObjectField(_equipParam, "mItemList");
         int idx = FlowHelper.CallInt(itemList, "get_SelectedIndex");
@@ -280,7 +287,7 @@ public class StatusMenuHooks
         }
 
         API.LogInfo($"[SF6Access] Status menu item [{idx}]: {name}");
-        ScreenReaderService.Speak(name);
+        Speak(name);
 
         // Announce only the stats this item grants (the equipped totals are
         // available on demand via G). Styles aren't gear items — skip them.
@@ -288,7 +295,7 @@ public class StatusMenuHooks
     }
 
     /// <summary>Preset (my set) list rows.</summary>
-    private static void PollPresetList(bool groupChanged)
+    private void PollPresetList(bool groupChanged)
     {
         var presetList = FlowHelper.GetObjectField(_equipParam, "mPresetList");
         int idx = FlowHelper.CallInt(presetList, "get_SelectedIndex");
@@ -302,7 +309,7 @@ public class StatusMenuHooks
         if (string.IsNullOrEmpty(label)) return;
 
         API.LogInfo($"[SF6Access] Status menu preset [{idx}]: {label}");
-        ScreenReaderService.Speak(label);
+        Speak(label);
     }
 
     /// <summary>
@@ -310,7 +317,7 @@ public class StatusMenuHooks
     /// focused master's name, level and style detail. The master names are
     /// rendered as text here (unlike the equip slots), so read them directly.
     /// </summary>
-    private static void PollMasterTab()
+    private void PollMasterTab()
     {
         var detail = FlowHelper.GetObjectField(_masterParam, "mMasterDetailWindow");
         if (detail == null) return;
@@ -330,10 +337,10 @@ public class StatusMenuHooks
         _lastMasterText = text;
 
         API.LogInfo($"[SF6Access] Status master: {text}");
-        ScreenReaderService.Speak(text, interrupt: !first);
+        Speak(text, interrupt: !first);
     }
 
-    private static string ReadEquipItemLabel()
+    private string ReadEquipItemLabel()
     {
         try
         {
@@ -346,14 +353,14 @@ public class StatusMenuHooks
     }
 
     /// <summary>True when the focused equip slot is Style (TopFocusType.STYLE = 0).</summary>
-    private static bool IsStyleSlot()
+    private bool IsStyleSlot()
         => FlowHelper.ReadIntField(_equipParam, "TopFocus") == 0;
 
     /// <summary>
     /// Name of the currently-equipped style ("Ryu's Style"), via the player's
     /// equipped style id (WTPlayerData.Style.StyleEquipId) → master fighter name.
     /// </summary>
-    private static string ResolveEquippedStyleName()
+    private string ResolveEquippedStyleName()
     {
         try
         {
@@ -382,7 +389,7 @@ public class StatusMenuHooks
     /// element, so read it from the equip data (EquipParamMap, keyed by the
     /// WTEquipItemSlot the focus index maps to).
     /// </summary>
-    private static string ResolveSlotEquippedItem(int focusIndex)
+    private string ResolveSlotEquippedItem(int focusIndex)
     {
         try
         {
@@ -431,7 +438,7 @@ public class StatusMenuHooks
     /// (Arg1 is the master id). Resolve the real localized style name
     /// ("Luke's Style") from the master profile table instead.
     /// </summary>
-    private static string ResolveStyleName(int idx)
+    private string ResolveStyleName(int idx)
     {
         if (idx < 0) return null;
         try
@@ -488,7 +495,7 @@ public class StatusMenuHooks
     /// equip screen: announces the focused move's name, command and description.
     /// Returns true while the popup is open so the caller skips normal polling.
     /// </summary>
-    private static bool PollUniqueMovesWindow()
+    private bool PollUniqueMovesWindow()
     {
         var window = FlowHelper.GetObjectField(_equipParam, "UniqueMovesWindow");
         bool open = window != null && IsWidgetShown(window);
@@ -527,7 +534,7 @@ public class StatusMenuHooks
         if (toggled)
         {
             API.LogInfo($"[SF6Access] Unique move toggled [{idx}]: {head}");
-            ScreenReaderService.Speak(head, interrupt: true);
+            Speak(head, interrupt: true);
             return true;
         }
 
@@ -539,7 +546,7 @@ public class StatusMenuHooks
 
         string text = string.Join(". ", parts);
         API.LogInfo($"[SF6Access] Unique move [{idx}]: {text}");
-        ScreenReaderService.Speak(text, interrupt: !firstOpen);
+        Speak(text, interrupt: !firstOpen);
         return true;
     }
 
@@ -592,39 +599,24 @@ public class StatusMenuHooks
     }
 
     /// <summary>Speak the equipped avatar's stats summary (totals + perks).</summary>
-    private static void AnnounceStatsSummary(bool interrupt)
+    private void AnnounceStatsSummary(bool interrupt)
     {
         if (_equipParam == null) return;
         string summary = AvatarStatsReader.ReadSummary(_statusParam, _equipParam);
         if (string.IsNullOrWhiteSpace(summary)) return;
 
         API.LogInfo($"[SF6Access] Status stats: {summary}");
-        ScreenReaderService.Speak(summary, interrupt);
+        Speak(summary, interrupt);
     }
 
     /// <summary>Announce only the stats the focused gear item grants.</summary>
-    private static void AnnounceItemStats(string itemName)
+    private void AnnounceItemStats(string itemName)
     {
         string text = AvatarStatsReader.FormatStats(
             AvatarStatsReader.ReadItemStats(_equipParam, itemName));
         if (string.IsNullOrWhiteSpace(text)) return;
 
         API.LogInfo($"[SF6Access] Status item stats: {text}");
-        ScreenReaderService.Speak(text, interrupt: false);
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] Status menu ended");
-        _isActive = false;
-        _statusParam = null;
-        _equipParam = null;
-        _masterParam = null;
-        _lastItemName = null;
-        _lastMasterText = null;
-        _statsAnnounced = false;
-        _uniqueWindowWasOpen = false;
-        _lastUniqueIndex = -2;
-        _lastUniqueState = null;
+        Speak(text, interrupt: false);
     }
 }

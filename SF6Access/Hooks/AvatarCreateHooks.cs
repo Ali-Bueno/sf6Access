@@ -4,19 +4,26 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
 /// <summary>
 /// Accessibility for World Tour character creation screen.
 /// Uses polling via UIFlowManager handles + direct field reads.
+///
+/// ScreenAdapter with a CUSTOM _Handles walk in Locate(): one pass finds the
+/// main param (UIFlowUI61000.Param) and tracks the first worldtour child flow
+/// (sliders / content grids live there). ReadInterval = 1 — the original hook
+/// polled categories/sliders every frame. The F11 avatar dump stays a static
+/// [Callback] so the research tool keeps working outside this screen (it also
+/// lists worldtour flow handles). Registered in ScreenRegistry.
 /// </summary>
-public class AvatarCreateHooks
+public sealed class AvatarCreateHooks : ScreenAdapter
 {
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
@@ -25,39 +32,45 @@ public class AvatarCreateHooks
     private static bool _lastF11State;
     private static bool _isDumping;
 
-    private static Method _msgGetMethod;
+    // The main param is matched by Contains on this fragment (namespace varies).
+    private const string MAIN_PARAM_FRAGMENT = "UIFlowUI61000.Param";
+    private static readonly string[] Types = { "app.worldtour.UIFlowUI61000.Param" };
+    public override string[] OwnedTypes => Types;
+
+    private static AvatarCreateHooks _self;
+
+    public AvatarCreateHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 1; // the original polled every frame while active
+        _self = this;
+    }
 
     // ---- Param polling ----
-    private static ManagedObject _avatarParam;
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
+    private ManagedObject _avatarParam;
 
     // ---- Cached TDB fields ----
     private static Field _handlesField;
-    private static Field _guideDescField;
-    private static Field _currentMainCatField;
-    private static Field _currentMiddleCatField;
     private static bool _tdbCached;
-    private static bool _paramFieldsCached;
+    private Field _guideDescField;
+    private Field _currentMainCatField;
+    private Field _currentMiddleCatField;
+    private bool _paramFieldsCached;
 
     // ---- State tracking ----
-    private static int _lastMainCategory = -1;
-    private static int _lastMiddleCategory = -1;
-    private static string _lastGuideDesc = "";
+    private int _lastMainCategory = -1;
+    private int _lastMiddleCategory = -1;
+    private string _lastGuideDesc = "";
 
     // ---- Child flow tracking ----
-    private static ManagedObject _childFlowParam;
-    private static string _lastChildFlowType = "";
+    private ManagedObject _childFlowParam;
+    private string _lastChildFlowType = "";
 
     // ---- Slider tracking ----
-    private static ManagedObject[] _sliders;
-    private static string[] _sliderNames;
-    private static float[] _sliderValues;
-    private static bool _slidersDiscovered;
-
-    // ---- Guid cache ----
-    private static readonly Dictionary<string, string> _guidCache = new();
+    private ManagedObject[] _sliders;
+    private string[] _sliderNames;
+    private float[] _sliderValues;
+    private bool _slidersDiscovered;
 
     private static string DumpPath =>
         Path.Combine(Services.ObjectDumper.DumpDir, "sf6access_avatar_dump.txt");
@@ -81,48 +94,17 @@ public class AvatarCreateHooks
         [8] = new[] { "Recipe" },
     };
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        HandleF11Dump();
-        PollAvatarParam();
-
-        if (!_isActive) return;
-
-        CacheParamFields();
-        PollMainCategory();
-        PollMiddleCategory();
-        PollGuideDescription();
-        PollChildFlow();
-        PollContentList();
-    }
-
     #region Param Discovery
 
-    private static void PollAvatarParam()
+    protected override bool Locate()
     {
-        _pollCounter++;
-        if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-
         try
         {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) return;
-
-            if (!_tdbCached)
-            {
-                _tdbCached = true;
-                _handlesField = TDB.Get().FindType("app.UIFlowManager")?.GetField("_Handles");
-            }
-            if (_handlesField == null) return;
-
-            ulong mgrAddr = flowMgr.GetAddress();
-            if (mgrAddr == 0) return;
-            var handles = _handlesField.GetDataBoxed(typeof(ManagedObject), mgrAddr, false) as ManagedObject;
-            if (handles == null) return;
+            var handles = GetFlowHandles();
+            if (handles == null) return _avatarParam != null;
 
             var countObj = (handles as IObject)?.Call("get_Count");
-            if (countObj == null) return;
+            if (countObj == null) return _avatarParam != null;
             int count = Convert.ToInt32(countObj);
 
             bool foundMain = false;
@@ -146,14 +128,13 @@ public class AvatarCreateHooks
 
                 string typeName = param.GetTypeDefinition()?.FullName ?? "";
 
-                if (typeName.Contains("UIFlowUI61000.Param"))
+                if (typeName.Contains(MAIN_PARAM_FRAGMENT))
                 {
                     foundMain = true;
                     // Re-bind when the instance changed (recreated on re-entry)
                     if (FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_avatarParam))
                     {
                         _avatarParam = param;
-                        _isActive = true;
                         API.LogInfo($"[SF6Access] Avatar Param found: {typeName}");
                     }
                 }
@@ -166,38 +147,69 @@ public class AvatarCreateHooks
                 }
             }
 
+            if (!foundMain)
+            {
+                _avatarParam = null;
+                return false;
+            }
+
             // Update child flow — compare the INSTANCE too: re-entering the
             // same sub-menu (hair, face...) recreates a param of the same type
             // and the old one would keep being read (silent menu)
-            if (foundMain)
+            if (firstChildType != _lastChildFlowType ||
+                FlowHelper.AddressOf(firstChildParam) != FlowHelper.AddressOf(_childFlowParam))
             {
-                if (firstChildType != _lastChildFlowType ||
-                    FlowHelper.AddressOf(firstChildParam) != FlowHelper.AddressOf(_childFlowParam))
-                {
-                    _childFlowParam = firstChildParam;
-                    _lastChildFlowType = firstChildType;
-                    ResetSliders();
-                    if (!string.IsNullOrEmpty(firstChildType))
-                        API.LogInfo($"[SF6Access] Child flow: {firstChildType}");
-                }
+                _childFlowParam = firstChildParam;
+                _lastChildFlowType = firstChildType;
+                ResetSliders();
+                if (!string.IsNullOrEmpty(firstChildType))
+                    API.LogInfo($"[SF6Access] Child flow: {firstChildType}");
             }
-
-            if (!foundMain && _isActive)
-            {
-                _avatarParam = null;
-                _childFlowParam = null;
-                _isActive = false;
-                _lastChildFlowType = "";
-                ResetState();
-            }
+            return true;
         }
         catch (Exception ex)
         {
             API.LogError($"[SF6Access] PollAvatarParam error: {ex.Message}");
+            return _avatarParam != null;
         }
     }
 
-    private static void CacheParamFields()
+    protected override void OnDeactivate()
+    {
+        _avatarParam = null;
+        _childFlowParam = null;
+        _lastChildFlowType = "";
+        ResetState();
+    }
+
+    protected override void OnPoll()
+    {
+        CacheParamFields();
+        PollMainCategory();
+        PollMiddleCategory();
+        PollGuideDescription();
+        PollChildFlow();
+        PollContentList();
+    }
+
+    private static ManagedObject GetFlowHandles()
+    {
+        var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
+        if (flowMgr == null) return null;
+
+        if (!_tdbCached)
+        {
+            _tdbCached = true;
+            _handlesField = TDB.Get().FindType("app.UIFlowManager")?.GetField("_Handles");
+        }
+        if (_handlesField == null) return null;
+
+        ulong mgrAddr = flowMgr.GetAddress();
+        if (mgrAddr == 0) return null;
+        return _handlesField.GetDataBoxed(typeof(ManagedObject), mgrAddr, false) as ManagedObject;
+    }
+
+    private void CacheParamFields()
     {
         if (_paramFieldsCached || _avatarParam == null) return;
         _paramFieldsCached = true;
@@ -226,7 +238,7 @@ public class AvatarCreateHooks
         }
     }
 
-    private static void ResetState()
+    private void ResetState()
     {
         _lastMainCategory = -1;
         _lastMiddleCategory = -1;
@@ -238,7 +250,7 @@ public class AvatarCreateHooks
         ResetSliders();
     }
 
-    private static void ResetSliders()
+    private void ResetSliders()
     {
         _sliders = null;
         _sliderNames = null;
@@ -247,14 +259,13 @@ public class AvatarCreateHooks
         _contentList = null;
         _lastContentIndex = -1;
         _lastContentMax = -1;
-        _isGroupMode = false;
     }
 
     #endregion
 
     #region State Polling
 
-    private static void PollMainCategory()
+    private void PollMainCategory()
     {
         try
         {
@@ -284,7 +295,7 @@ public class AvatarCreateHooks
 
             string name = GetMainCategoryName(cat);
             API.LogInfo($"[SF6Access] Main category: {cat} = {name}");
-            ScreenReaderService.Speak(name);
+            Speak(name);
         }
         catch (Exception ex)
         {
@@ -292,7 +303,7 @@ public class AvatarCreateHooks
         }
     }
 
-    private static void PollMiddleCategory()
+    private void PollMiddleCategory()
     {
         try
         {
@@ -319,7 +330,7 @@ public class AvatarCreateHooks
 
             string name = GetSubCategoryName(_lastMainCategory, mid);
             API.LogInfo($"[SF6Access] Sub-category: {mid} = {name}");
-            ScreenReaderService.Speak(name);
+            Speak(name);
         }
         catch (Exception ex)
         {
@@ -331,7 +342,7 @@ public class AvatarCreateHooks
     /// Poll GuideDescriptionString field - announces when guide text changes
     /// (e.g. entering a sub-menu shows description of what you're editing)
     /// </summary>
-    private static void PollGuideDescription()
+    private void PollGuideDescription()
     {
         if (_guideDescField == null) return;
 
@@ -348,7 +359,7 @@ public class AvatarCreateHooks
             if (!string.IsNullOrEmpty(cleaned))
             {
                 API.LogInfo($"[SF6Access] Guide: {cleaned}");
-                ScreenReaderService.Speak(cleaned, false); // Don't interrupt category announcements
+                Speak(cleaned, false); // Don't interrupt category announcements
             }
         }
         catch { }
@@ -359,7 +370,7 @@ public class AvatarCreateHooks
     /// Uses getValue() for absolute values (real height, etc.) and getRate() as fallback.
     /// Names come from the *Buffer fields on the child flow.
     /// </summary>
-    private static void PollChildFlow()
+    private void PollChildFlow()
     {
         if (_childFlowParam == null) return;
 
@@ -390,7 +401,7 @@ public class AvatarCreateHooks
 
                 string announcement = name != null ? $"{name}: {formatted}" : formatted;
                 API.LogInfo($"[SF6Access] Slider [{i}]: {announcement} (raw={value:F4})");
-                ScreenReaderService.Speak(announcement);
+                Speak(announcement);
             }
         }
         catch (Exception ex)
@@ -439,12 +450,11 @@ public class AvatarCreateHooks
     }
 
     // ---- Scroll grid/list tracking (for non-slider content like hair, presets) ----
-    private static ManagedObject _contentList;
-    private static int _lastContentIndex = -1;
-    private static int _lastContentMax = -1;
-    private static bool _isGroupMode;
+    private ManagedObject _contentList;
+    private int _lastContentIndex = -1;
+    private int _lastContentMax = -1;
 
-    private static void PollContentList()
+    private void PollContentList()
     {
         if (_contentList == null) return;
 
@@ -467,12 +477,12 @@ public class AvatarCreateHooks
 
             string announcement = $"{idx + 1} of {_lastContentMax}";
             API.LogInfo($"[SF6Access] Content: {announcement}");
-            ScreenReaderService.Speak(announcement);
+            Speak(announcement);
         }
         catch { }
     }
 
-    private static void DiscoverSliders()
+    private void DiscoverSliders()
     {
         try
         {
@@ -513,7 +523,7 @@ public class AvatarCreateHooks
 
             _sliders = new ManagedObject[len];
             _sliderValues = new float[len];
-            _sliderNames = names.Count >= len ? names.ToArray() : names.ToArray();
+            _sliderNames = names.ToArray();
 
             for (int i = 0; i < len; i++)
             {
@@ -549,7 +559,7 @@ public class AvatarCreateHooks
     /// find a scroll grid, list, or group component to track selection.
     /// Searches both methods and fields on the child flow.
     /// </summary>
-    private static void DiscoverContentList()
+    private void DiscoverContentList()
     {
         try
         {
@@ -595,7 +605,7 @@ public class AvatarCreateHooks
                 try
                 {
                     var mainCtrl = (_avatarParam as IObject)?.Call("get_PartsMainCtrl") as ManagedObject;
-                    if (mainCtrl != null && TryReadGroupComponent(mainCtrl, "PartsMainCtrl"))
+                    if (mainCtrl != null && TryReadListComponent(mainCtrl, "PartsMainCtrl"))
                         return;
                 }
                 catch { }
@@ -609,7 +619,7 @@ public class AvatarCreateHooks
         }
     }
 
-    private static bool TryFindListOnObject(ManagedObject obj, string label)
+    private bool TryFindListOnObject(ManagedObject obj, string label)
     {
         var td = obj.GetTypeDefinition();
         var methods = td?.GetMethods();
@@ -646,7 +656,7 @@ public class AvatarCreateHooks
         "get_ItemMax", "get_ItemCount", "GetChildCount", "get_Count"
     };
 
-    private static bool TryReadListComponent(ManagedObject component, string label)
+    private bool TryReadListComponent(ManagedObject component, string label)
     {
         // Try direct read first
         if (TryReadIndexAndCount(component, label))
@@ -668,10 +678,9 @@ public class AvatarCreateHooks
         return false;
     }
 
-    private static bool TryReadIndexAndCount(ManagedObject component, string label)
+    private bool TryReadIndexAndCount(ManagedObject component, string label)
     {
         int idx = -1, max = -1;
-        string idxMethod = null;
 
         foreach (var m in IndexMethods)
         {
@@ -679,7 +688,7 @@ public class AvatarCreateHooks
             {
                 var val = (component as IObject)?.Call(m);
                 API.LogInfo($"[SF6Access]   {label}.{m} = {val}");
-                if (val != null) { idx = Convert.ToInt32(val); idxMethod = m; break; }
+                if (val != null) { idx = Convert.ToInt32(val); break; }
             }
             catch (Exception ex) { API.LogInfo($"[SF6Access]   {label}.{m} FAIL: {ex.Message}"); }
         }
@@ -700,14 +709,8 @@ public class AvatarCreateHooks
         _contentList = component;
         _lastContentIndex = idx;
         _lastContentMax = max;
-        _isGroupMode = idxMethod != "get_SelectedIndex";
-        API.LogInfo($"[SF6Access] Content via {label}: idx={idx}, max={max} ({idxMethod})");
+        API.LogInfo($"[SF6Access] Content via {label}: idx={idx}, max={max}");
         return true;
-    }
-
-    private static bool TryReadGroupComponent(ManagedObject group, string label)
-    {
-        return TryReadListComponent(group, label);
     }
 
     #endregion
@@ -731,46 +734,6 @@ public class AvatarCreateHooks
         return $"Item {subIndex + 1}";
     }
 
-    private static string ResolveGuid(REFrameworkNET.ValueType vt, string cacheKey)
-    {
-        if (_guidCache.TryGetValue(cacheKey, out var cached))
-            return cached;
-
-        ulong vtAddr = vt.GetAddress();
-        if (vtAddr == 0) return null;
-
-        bool allZero = true;
-        for (int i = 0; i < 16; i++)
-        {
-            if (Marshal.ReadByte((IntPtr)(long)(vtAddr + (ulong)i)) != 0)
-            { allZero = false; break; }
-        }
-        if (allZero) return null;
-
-        _msgGetMethod ??= TDB.Get().FindType("via.gui.message")?.GetMethod("get(System.Guid)");
-        if (_msgGetMethod == null) return null;
-
-        try
-        {
-            var task = Task.Run(() =>
-            {
-                try { return _msgGetMethod.InvokeBoxed(typeof(string), null, new object[] { vt }) as string; }
-                catch { return null; }
-            });
-
-            if (task.Wait(TimeSpan.FromMilliseconds(200)))
-            {
-                string text = CleanTags(task.Result);
-                if (!string.IsNullOrEmpty(text))
-                    _guidCache[cacheKey] = text;
-                return text;
-            }
-        }
-        catch { }
-
-        return null;
-    }
-
     private static string CleanTags(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
@@ -781,7 +744,11 @@ public class AvatarCreateHooks
 
     #region F11 Dump
 
-    private static void HandleF11Dump()
+    // The dump tool must keep working even when the avatar-create screen is not
+    // active (its handle listing helps World Tour research), so it keeps its own
+    // per-frame callback instead of living in OnPoll.
+    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
+    public static void OnDumpKey()
     {
         bool f11Down = (GetAsyncKeyState(VK_F11) & 0x8000) != 0;
         if (f11Down && !_lastF11State && !_isDumping)
@@ -803,29 +770,30 @@ public class AvatarCreateHooks
 
     private static void DumpAvatarState()
     {
+        var self = _self;
         var sb = new StringBuilder();
         sb.AppendLine($"=== SF6 Avatar State Dump - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-        sb.AppendLine($"AvatarParam: {(_avatarParam != null ? "found" : "null")}");
-        sb.AppendLine($"IsActive: {_isActive}");
-        sb.AppendLine($"LastMainCategory: {_lastMainCategory}");
-        sb.AppendLine($"LastMiddleCategory: {_lastMiddleCategory}");
-        sb.AppendLine($"ChildFlowType: {_lastChildFlowType}");
+        sb.AppendLine($"AvatarParam: {(self?._avatarParam != null ? "found" : "null")}");
+        sb.AppendLine($"IsActive: {self?.Active == true}");
+        sb.AppendLine($"LastMainCategory: {self?._lastMainCategory}");
+        sb.AppendLine($"LastMiddleCategory: {self?._lastMiddleCategory}");
+        sb.AppendLine($"ChildFlowType: {self?._lastChildFlowType}");
         sb.AppendLine();
 
         DumpFlowHandles(sb);
 
-        if (_avatarParam != null)
-            DumpAvatarParamState(sb);
+        if (self?._avatarParam != null)
+            self.DumpAvatarParamState(sb);
 
-        if (_childFlowParam != null)
-            DumpChildFlowState(sb);
+        if (self?._childFlowParam != null)
+            self.DumpChildFlowState(sb);
 
         Directory.CreateDirectory(Path.GetDirectoryName(DumpPath)!);
         File.WriteAllText(DumpPath, sb.ToString());
         API.LogInfo($"[SF6Access] Avatar state dump saved to {DumpPath}");
     }
 
-    private static void DumpAvatarParamState(StringBuilder sb)
+    private void DumpAvatarParamState(StringBuilder sb)
     {
         sb.AppendLine();
         sb.AppendLine("=== Avatar Param State ===");
@@ -860,7 +828,7 @@ public class AvatarCreateHooks
         catch (Exception ex) { sb.AppendLine($"  Fields error: {ex.Message}"); }
     }
 
-    private static void DumpChildFlowState(StringBuilder sb)
+    private void DumpChildFlowState(StringBuilder sb)
     {
         sb.AppendLine();
         sb.AppendLine($"=== Child Flow: {_lastChildFlowType} ===");
@@ -916,19 +884,8 @@ public class AvatarCreateHooks
         sb.AppendLine("=== UIFlowManager Handles (worldtour only) ===");
         try
         {
-            var flowMgr = API.GetManagedSingleton("app.UIFlowManager");
-            if (flowMgr == null) { sb.AppendLine("  null"); return; }
-
-            if (!_tdbCached)
-            {
-                _tdbCached = true;
-                _handlesField = TDB.Get().FindType("app.UIFlowManager")?.GetField("_Handles");
-            }
-            if (_handlesField == null) return;
-
-            ulong mgrAddr = flowMgr.GetAddress();
-            var handles = _handlesField.GetDataBoxed(typeof(ManagedObject), mgrAddr, false) as ManagedObject;
-            if (handles == null) return;
+            var handles = GetFlowHandles();
+            if (handles == null) { sb.AppendLine("  null"); return; }
 
             var countObj = (handles as IObject)?.Call("get_Count");
             int count = countObj != null ? Convert.ToInt32(countObj) : 0;
@@ -953,19 +910,6 @@ public class AvatarCreateHooks
             }
         }
         catch (Exception ex) { sb.AppendLine($"  Error: {ex.Message}"); }
-    }
-
-    private static void DumpCall(StringBuilder sb, ManagedObject obj, string methodName, string prefix = "  ")
-    {
-        try
-        {
-            var result = (obj as IObject)?.Call(methodName);
-            sb.AppendLine($"{prefix}{methodName} = {result}");
-        }
-        catch (Exception ex)
-        {
-            sb.AppendLine($"{prefix}{methodName} ERROR: {ex.Message}");
-        }
     }
 
     #endregion

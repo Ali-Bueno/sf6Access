@@ -1,7 +1,6 @@
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,66 +10,55 @@ namespace SF6Access.Hooks;
 /// (BattlePassFlowParam) and when pressing the preview button R
 /// (DefaultFlowParam). The preview's UIPartsItemPreview holds the item name
 /// (TitleText), its description (DescriptionText) and the action button label.
+///
+/// ScreenAdapter: locates by type-FullName PREFIX (both param variants inherit
+/// FlowParamBase, which owns the Preview part). Registered in ScreenRegistry.
 /// </summary>
-public class ItemPreviewHooks
+public sealed class ItemPreviewHooks : ScreenAdapter
 {
     // Matches DefaultFlowParam and BattlePassFlowParam (both inherit FlowParamBase,
     // which owns the Preview part)
     private const string PARAM_PREFIX = "app.UIFlowItemPreview";
+    private static readonly string[] Types = { PARAM_PREFIX };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 15;
-    private const int POLL_READ_INTERVAL = 6;
+    public override string[] OwnedTypes => Types;
 
-    private static bool _active;
-    private static ManagedObject _param;
-    private static string _lastBody;
-    private static string _lastAction;
-
-    public static bool IsActive => _active;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ItemPreviewHooks()
     {
-        API.LogInfo("[SF6Access] ItemPreviewHooks initialized");
+        SearchInterval = 15;
+        ReadInterval = 6;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _param;
+    private string _lastBody;
+    private string _lastAction;
+
+    protected override bool Locate()
     {
-        _pollCounter++;
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            var param = FlowHelper.FindFlowParamByPrefix(PARAM_PREFIX, out string foundType);
-            if (param != null && !_active)
-            {
-                _active = true;
-                _param = param;
-                _lastBody = null;
-                _lastAction = null;
-                API.LogInfo("[SF6Access] Item preview opened");
-            }
-            else if (param == null && _active)
-            {
-                _active = false;
-                _param = null;
-                _lastBody = null;
-                _lastAction = null;
-                API.LogInfo("[SF6Access] Item preview closed");
-            }
-            else if (param != null)
-            {
-                _param = param; // keep the live instance
-            }
-        }
-
-        if (!_active || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollPreview();
+        // Always keep the live instance (the flow can rebuild its param).
+        _param = FlowHelper.FindFlowParamByPrefix(PARAM_PREFIX, out string foundTypeDummy);
+        return _param != null;
     }
 
-    private static void PollPreview()
+    protected override void OnActivate()
     {
+        _lastBody = null;
+        _lastAction = null;
+        API.LogInfo("[SF6Access] Item preview opened");
+    }
+
+    protected override void OnDeactivate()
+    {
+        _param = null;
+        _lastBody = null;
+        _lastAction = null;
+        API.LogInfo("[SF6Access] Item preview closed");
+    }
+
+    protected override void OnPoll()
+    {
+        if (_param == null) return;
+
         // The Preview part (and its texts) populate a few frames after the
         // param appears — re-read each poll instead of caching once
         var preview = FlowHelper.GetObjectField(_param, "Preview");
@@ -88,7 +76,7 @@ public class ItemPreviewHooks
         {
             _lastBody = body;
             API.LogInfo($"[SF6Access] Item preview: {body}");
-            ScreenReaderService.Speak(body, interrupt: false);
+            Speak(body, interrupt: false);
         }
 
         // Action button(s). The premium-purchase buttons are image-based (no
@@ -115,7 +103,7 @@ public class ItemPreviewHooks
         {
             _lastAction = actionKey;
             API.LogInfo($"[SF6Access] Item preview action (mode={mode}, focusBtn={focusedBtn}): {action}");
-            ScreenReaderService.Speak(action, interrupt: false);
+            Speak(action, interrupt: false);
         }
     }
 

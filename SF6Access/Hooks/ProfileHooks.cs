@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -11,59 +10,74 @@ namespace SF6Access.Hooks;
 /// Profile tabs are pure info panels: their params expose via.gui.Text fields
 /// (character name, play time, league points...) but no navigable lists, so
 /// each tab's texts are read out when the tab flow appears or finishes loading.
+///
+/// ScreenAdapter: locates by type-FullName PREFIX (the tab child flows come and
+/// go as the user switches tabs; the newest match describes the visible panel).
+/// Registered in ScreenRegistry.
 /// </summary>
-public class ProfileHooks
+public sealed class ProfileHooks : ScreenAdapter
 {
     private const string TYPE_PREFIX = "app.UICFNFightersProfileTab";
+    // A prefix, not a concrete Param type — every tab flow shares it.
+    private static readonly string[] Types = { TYPE_PREFIX };
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 30;
+    public override string[] OwnedTypes => Types;
+
     private const int MAX_TEXTS = 30;
 
-    private static string _activeType;
-    private static string _lastAnnounced;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public ProfileHooks()
     {
-        API.LogInfo("[SF6Access] ProfileHooks initialized");
+        // The original hook did its find+read in one 30-frame tick; keep both
+        // intervals equal so search and read land on the same frames.
+        SearchInterval = 30;
+        ReadInterval = 30;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        if (++_pollCounter % POLL_INTERVAL != 0) return;
+    private ManagedObject _param;
+    private string _typeName;
+    private string _activeType;
+    private string _lastAnnounced;
 
-        // Child tab flows come and go as the user switches profile tabs;
-        // the most specific (newest) one describes the visible panel
+    protected override bool Locate()
+    {
         var matches = FlowHelper.FindFlowParamsByPrefix(TYPE_PREFIX);
         if (matches.Count == 0)
         {
-            if (_activeType != null)
-            {
-                API.LogInfo("[SF6Access] Profile ended");
-                _activeType = null;
-                _lastAnnounced = null;
-            }
-            return;
+            _param = null;
+            _typeName = null;
+            return false;
         }
+        (_typeName, _param) = matches[0];
+        return true;
+    }
 
-        var (typeName, param) = matches[0];
+    protected override void OnDeactivate()
+    {
+        _param = null;
+        _typeName = null;
+        _activeType = null;
+        _lastAnnounced = null;
+        API.LogInfo("[SF6Access] Profile ended");
+    }
+
+    protected override void OnPoll()
+    {
+        if (_param == null) return;
 
         // Wait until the panel finished loading its API data when it says so
-        var setuped = FlowHelper.Call(param, "get_IsSetuped");
+        var setuped = FlowHelper.Call(_param, "get_IsSetuped");
         if (setuped is bool b && !b) return;
 
-        string text = ReadPanelTexts(param, typeName);
+        string text = ReadPanelTexts(_param, _typeName);
         if (string.IsNullOrEmpty(text)) return;
 
         // Announce on tab change or when the panel content changes
-        if (typeName == _activeType && text == _lastAnnounced) return;
-        _activeType = typeName;
+        if (_typeName == _activeType && text == _lastAnnounced) return;
+        _activeType = _typeName;
         _lastAnnounced = text;
 
-        API.LogInfo($"[SF6Access] Profile panel [{typeName}]: {text}");
-        ScreenReaderService.Speak(text, interrupt: false);
+        API.LogInfo($"[SF6Access] Profile panel [{_typeName}]: {text}");
+        Speak(text, interrupt: false);
     }
 
     /// <summary>

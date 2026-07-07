@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -13,8 +12,13 @@ namespace SF6Access.Hooks;
 /// FGTutorialBattleAnnounceUI (transient announcements). All carry their text
 /// in string "_Message*" fields and/or via.gui.Text fields — read both and
 /// announce changes.
+///
+/// ScreenAdapter: demo loops tear the overlays down for ~0.5 s, so the per-type
+/// memory must OUTLIVE the params — Locate() keeps the adapter active while any
+/// overlay memory is still aging out, and OnPoll ages/forgets it (the original
+/// EMPTY_FORGET behavior). Registered in ScreenRegistry.
 /// </summary>
-public class TutorialHooks
+public sealed class TutorialHooks : ScreenAdapter
 {
     private static readonly string[] Prefixes =
     {
@@ -22,8 +26,14 @@ public class TutorialHooks
         "app.esports.FGTutorialBattleAnnounce",
     };
 
-    private static int _pollCounter;
-    private const int POLL_INTERVAL = 10;
+    public override string[] OwnedTypes => Prefixes;
+
+    public TutorialHooks()
+    {
+        // The original hook did its find+read in one 10-frame tick.
+        SearchInterval = 10;
+        ReadInterval = 10;
+    }
 
     // Per-overlay state. Demos type messages out (the text grows each poll)
     // and loop the same message — announce a text only once it's STABLE
@@ -39,9 +49,12 @@ public class TutorialHooks
     }
 
     // Loop/step gaps are ~0.5s (verified in logs); a full guide reset passes
-    // through banner+intro for several seconds — 3s separates the two
-    private static readonly Dictionary<string, OverlayState> _overlays = new();
-    private const int EMPTY_FORGET_FRAMES = 180;
+    // through banner+intro for several seconds. 18 read ticks at the 10-frame
+    // interval = the original 180-frame forget threshold.
+    private readonly Dictionary<string, OverlayState> _overlays = new();
+    private const int EMPTY_FORGET_TICKS = 18;
+
+    private int _tick;
 
     // Cached text-bearing field names per param type
     private sealed class TypeFields
@@ -51,67 +64,75 @@ public class TutorialHooks
     }
     private static readonly Dictionary<string, TypeFields> _fieldCache = new();
 
-    [PluginEntryPoint]
-    public static void Initialize()
+    private List<(string typeName, ManagedObject param)> _foundParams = new();
+
+    protected override bool Locate()
     {
-        API.LogInfo("[SF6Access] TutorialHooks initialized");
+        _foundParams.Clear();
+        foreach (var prefix in Prefixes)
+            _foundParams.AddRange(FlowHelper.FindFlowParamsByPrefix(prefix));
+        // Stay active while overlay memory is still aging out — demo loops
+        // tear the params down briefly and must not reset the memory.
+        return _foundParams.Count > 0 || _overlays.Count > 0;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    protected override void OnDeactivate()
     {
-        if (++_pollCounter % POLL_INTERVAL != 0) return;
+        _foundParams.Clear();
+        _overlays.Clear();
+    }
+
+    protected override void OnPoll()
+    {
+        _tick++;
 
         var seen = new HashSet<string>();
-        foreach (var prefix in Prefixes)
+        foreach (var (typeName, param) in _foundParams)
         {
-            foreach (var (typeName, param) in FlowHelper.FindFlowParamsByPrefix(prefix))
+            // The combo trial recipe panel has its own hook
+            if (typeName.Contains("UI11439")) continue;
+            if (!seen.Add(typeName)) continue;
+            try
             {
-                // The combo trial recipe panel has its own hook
-                if (typeName.Contains("UI11439")) continue;
-                if (!seen.Add(typeName)) continue;
-                try
+                string text = ReadTutorialText(typeName, param);
+                _overlays.TryGetValue(typeName, out var state);
+
+                if (string.IsNullOrEmpty(text))
                 {
-                    string text = ReadTutorialText(typeName, param);
-                    _overlays.TryGetValue(typeName, out var state);
-
-                    if (string.IsNullOrEmpty(text))
+                    // Forget only after the text has been gone a while:
+                    // demo loops blank it for a second between cycles
+                    if (state != null)
                     {
-                        // Forget only after the text has been gone a while:
-                        // demo loops blank it for a second between cycles
-                        if (state != null)
-                        {
-                            if (state.EmptySince < 0) state.EmptySince = _pollCounter;
-                            else if (_pollCounter - state.EmptySince > EMPTY_FORGET_FRAMES)
-                                _overlays.Remove(typeName);
-                        }
-                        continue;
+                        if (state.EmptySince < 0) state.EmptySince = _tick;
+                        else if (_tick - state.EmptySince > EMPTY_FORGET_TICKS)
+                            _overlays.Remove(typeName);
                     }
-
-                    if (state == null)
-                        _overlays[typeName] = state = new OverlayState();
-                    state.EmptySince = -1;
-
-                    // Wait for the typewriter to finish: announce only when
-                    // the text is identical across two consecutive polls
-                    if (text != state.LastSeen)
-                    {
-                        state.LastSeen = text;
-                        continue;
-                    }
-
-                    // Suppress only the demo-loop case: the same text (or a
-                    // partially re-typed copy of it) coming straight back
-                    if (state.LastAnnounced != null &&
-                        (state.LastAnnounced == text || state.LastAnnounced.Contains(text)))
-                        continue;
-                    state.LastAnnounced = text;
-
-                    API.LogInfo($"[SF6Access] Tutorial [{typeName}]: {text}");
-                    ScreenReaderService.Speak(text, interrupt: false);
+                    continue;
                 }
-                catch { }
+
+                if (state == null)
+                    _overlays[typeName] = state = new OverlayState();
+                state.EmptySince = -1;
+
+                // Wait for the typewriter to finish: announce only when
+                // the text is identical across two consecutive polls
+                if (text != state.LastSeen)
+                {
+                    state.LastSeen = text;
+                    continue;
+                }
+
+                // Suppress only the demo-loop case: the same text (or a
+                // partially re-typed copy of it) coming straight back
+                if (state.LastAnnounced != null &&
+                    (state.LastAnnounced == text || state.LastAnnounced.Contains(text)))
+                    continue;
+                state.LastAnnounced = text;
+
+                API.LogInfo($"[SF6Access] Tutorial [{typeName}]: {text}");
+                Speak(text, interrupt: false);
             }
+            catch { }
         }
 
         // A type whose param disappeared entirely counts as empty too —
@@ -123,8 +144,8 @@ public class TutorialHooks
         {
             if (seen.Contains(kvp.Key)) continue;
             var state = kvp.Value;
-            if (state.EmptySince < 0) state.EmptySince = _pollCounter;
-            else if (_pollCounter - state.EmptySince > EMPTY_FORGET_FRAMES)
+            if (state.EmptySince < 0) state.EmptySince = _tick;
+            else if (_tick - state.EmptySince > EMPTY_FORGET_TICKS)
                 (gone ??= new List<string>()).Add(kvp.Key);
         }
         if (gone != null)

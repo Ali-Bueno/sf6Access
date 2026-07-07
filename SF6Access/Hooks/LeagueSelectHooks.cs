@@ -1,8 +1,7 @@
 using System;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -16,60 +15,62 @@ namespace SF6Access.Hooks;
 /// "Unspecified" placeholder (read wrongly by the generic reader). The real name
 /// is resolved from the league data via app.helper.hGUI.GetLeagueRankWithLevelUserData,
 /// whose record carries the tier-name message Guid and the division level.
+///
+/// ScreenAdapter (multi-Param): the detail list opens on top of the tier grid and
+/// is preferred while present. Registered in ScreenRegistry.
 /// </summary>
-public class LeagueSelectHooks
+public sealed class LeagueSelectHooks : ScreenAdapter
 {
     private const string LEAGUE_TYPE = "app.UICFNSelectLeague.FlowParam";
     private const string DETAIL_TYPE = "app.UICFNSelectLeagueDetail.FlowParam";
+    private static readonly string[] Types = { DETAIL_TYPE, LEAGUE_TYPE };
 
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 20;
-    private const int POLL_READ_INTERVAL = 5;
+    public override string[] OwnedTypes => Types;
 
-    private static ManagedObject _param;
-    private static bool _isDetail;
-    private static int _lastIndex = -2;
-    private static string _lastName;
-
-    public static bool IsActive => _param != null;
-
-    [PluginEntryPoint]
-    public static void Initialize()
+    public LeagueSelectHooks()
     {
-        API.LogInfo("[SF6Access] LeagueSelectHooks initialized");
+        SearchInterval = 20;
+        ReadInterval = 5;
     }
 
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
+    private ManagedObject _param;
+    private bool _isDetail;
+    private int _lastIndex = -2;
+    private string _lastName;
+
+    protected override bool Locate()
     {
-        _pollCounter++;
+        // The detail list opens on top of the grid — prefer it when present.
+        var found = FlowHelper.FindFlowParams(Types);
+        ManagedObject param = found.TryGetValue(DETAIL_TYPE, out var d) ? d : null;
+        bool isDetail = param != null;
+        if (param == null) found.TryGetValue(LEAGUE_TYPE, out param);
 
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
+        if (param == null)
         {
-            // The detail list opens on top of the grid — prefer it when present.
-            var found = FlowHelper.FindFlowParams(new[] { DETAIL_TYPE, LEAGUE_TYPE });
-            ManagedObject param = found.TryGetValue(DETAIL_TYPE, out var d) ? d : null;
-            bool isDetail = param != null;
-            if (param == null) found.TryGetValue(LEAGUE_TYPE, out param);
-
-            if (param == null)
-            {
-                if (_param != null) { _param = null; _lastIndex = -2; _lastName = null; }
-            }
-            else if (FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_param) || isDetail != _isDetail)
-            {
-                _param = param;
-                _isDetail = isDetail;
-                _lastIndex = -2;
-                _lastName = null;
-            }
+            _param = null;
+            return false;
         }
 
-        if (_param == null || _pollCounter % POLL_READ_INTERVAL != 0) return;
-        PollFocus();
+        // Re-bind on instance change or grid↔detail switch (stale-param pattern).
+        if (FlowHelper.AddressOf(param) != FlowHelper.AddressOf(_param) || isDetail != _isDetail)
+        {
+            _param = param;
+            _isDetail = isDetail;
+            _lastIndex = -2;
+            _lastName = null;
+        }
+        return true;
     }
 
-    private static void PollFocus()
+    protected override void OnDeactivate()
+    {
+        _param = null;
+        _lastIndex = -2;
+        _lastName = null;
+    }
+
+    protected override void OnPoll()
     {
         try
         {
@@ -85,7 +86,7 @@ public class LeagueSelectHooks
             _lastName = name;
 
             API.LogInfo($"[SF6Access] League select [{(_isDetail ? "detail" : "tier")},{idx}]: {name}");
-            ScreenReaderService.Speak(name);
+            Speak(name);
         }
         catch (Exception ex)
         {
@@ -94,7 +95,7 @@ public class LeagueSelectHooks
     }
 
     /// <summary>Tier name for the focused grid cell (CfnLeagueInfo → its first level).</summary>
-    private static string ResolveTierName(int idx)
+    private string ResolveTierName(int idx)
     {
         var list = FlowHelper.GetObjectField(_param, "_LeagueItemList");
         var info = FlowHelper.GetListItem(list, idx);
@@ -110,7 +111,7 @@ public class LeagueSelectHooks
     }
 
     /// <summary>Tier + level for the focused detail-list level.</summary>
-    private static string ResolveDetailName(int idx)
+    private string ResolveDetailName(int idx)
     {
         var list = FlowHelper.GetObjectField(_param, "_LeagueList");
         int enumVal = ReadEnumListItem(list, idx);

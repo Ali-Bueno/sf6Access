@@ -4,9 +4,8 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using REFrameworkNET;
-using REFrameworkNET.Attributes;
-using REFrameworkNET.Callbacks;
 using SF6Access.Services;
+using SF6Access.Services.Ui;
 
 namespace SF6Access.Hooks;
 
@@ -14,15 +13,24 @@ namespace SF6Access.Hooks;
 /// Accessibility for the fighter setting screen (costume, color, control type).
 /// Reads values from Param cache fields (_cacheCostumeIndex, _cacheColorIndex)
 /// and UIFlowUI10511 for controller type. Uses Group._FocusIndex for navigation.
+///
+/// ScreenAdapter with a CUSTOM _Handles walk in Locate(): both players' panels
+/// (P1 + P2) can be mIsActive at once, so the FOCUSED one is preferred (a CPU
+/// P2 panel must not be shadowed by an active P1 human panel earlier in handle
+/// order). Registered in ScreenRegistry.
 /// </summary>
-public class FighterSettingHooks
+public sealed class FighterSettingHooks : ScreenAdapter
 {
-    private static bool _isActive;
-    private static int _pollCounter;
-    private const int POLL_SEARCH_INTERVAL = 60;
-    private const int POLL_READ_INTERVAL = 5;
+    private static readonly string[] Types = { "app.UIFlowUI10505.Param" };
+    public override string[] OwnedTypes => Types;
 
-    // TDB cache
+    public FighterSettingHooks()
+    {
+        SearchInterval = 60;
+        ReadInterval = 5;
+    }
+
+    // TDB cache (type-level lookups, shared)
     private static Field _handlesField;
     private static Method _msgGetMethod;
     private static Method _getDefaultPresetNameMethod;
@@ -38,75 +46,37 @@ public class FighterSettingHooks
     private static bool _tdbCached;
 
     // Active param (the UIFlowUI10505.Param with mIsActive=True)
-    private static ManagedObject _activeParam;
-    private static int _activePlayerIndex;
+    private ManagedObject _activeParam;
+    private int _activePlayerIndex;
 
     // CPU panels (mCpuFlag) replace the control-type spin (index 2) with a
     // "CPU Level" spin; its value lives on the spin itself, not in UIFlowUI10511.
     // mCpuFlag is set a few frames AFTER the panel becomes active, so it must be
     // read live each poll — caching it at bind time caught a stale False.
-    private static string _lastCpuLevel;
-    private static string _cpuLevelLabel;
-    private static ManagedObject _cpuView;
-    private static string _cpuViewOwner;
+    private string _lastCpuLevel;
+    private string _cpuLevelLabel;
+    private ManagedObject _cpuView;
+    private string _cpuViewOwner;
     private const int SPIN_CONTROL = 2;
 
-    private static bool IsCpuPanel() =>
+    private bool IsCpuPanel() =>
         _activeParam != null && ReadBoolField(_activeParam, "mCpuFlag");
 
     // Cached from active param
-    private static ManagedObject _group;          // UIPartsGroup (has _FocusIndex)
-    private static ManagedObject _spinsList;      // List<UIPartsSpin> (for count)
-    private static ManagedObject _messDataArr;    // SpinText_MessageList[]
-    private static int _spinCount;
+    private ManagedObject _group;          // UIPartsGroup (has _FocusIndex)
+    private ManagedObject _spinsList;      // List<UIPartsSpin> (for count)
+    private ManagedObject _messDataArr;    // SpinText_MessageList[]
+    private int _spinCount;
 
     // Value tracking (read from Param fields, not spin Num)
-    private static int _lastFocusIndex = -1;
-    private static int _lastCostumeIdx = -1;
-    private static int _lastColorIdx = -1;
-    private static int _lastControllerType = -1;
+    private int _lastFocusIndex = -1;
+    private int _lastCostumeIdx = -1;
+    private int _lastColorIdx = -1;
+    private int _lastControllerType = -1;
 
-    private static int _lastPresetIdx = -1;
-    private static int _presetMax = -1;
-    private static readonly Dictionary<int, string> _labelCache = new();
-
-    public static bool IsInFighterSetting => _isActive;
-
-    [PluginEntryPoint]
-    public static void Initialize()
-    {
-        API.LogInfo("[SF6Access] FighterSettingHooks initialized");
-    }
-
-    [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
-    public static void OnUpdate()
-    {
-        _pollCounter++;
-
-        if (!_isActive)
-        {
-            if (_pollCounter % POLL_SEARCH_INTERVAL != 0) return;
-            TryFindParam();
-            return;
-        }
-
-        if (_pollCounter % POLL_SEARCH_INTERVAL == 0)
-        {
-            if (!RefreshActiveParam())
-            {
-                Reset();
-                return;
-            }
-            // Re-cache the CPU panel's GUI view (recreated with the screen)
-            if (IsCpuPanel()) RefreshCpuView();
-        }
-
-        if (_pollCounter % POLL_READ_INTERVAL == 0)
-        {
-            PollFocusChange();
-            PollValueChanges();
-        }
-    }
+    private int _lastPresetIdx = -1;
+    private int _presetMax = -1;
+    private readonly Dictionary<int, string> _labelCache = new();
 
     // --- Param Discovery ---
 
@@ -127,18 +97,58 @@ public class FighterSettingHooks
         _battlePresetCountField = TDB.Get().FindType("app.InputAssign")?.GetField("BattlePresetCount");
     }
 
-    private static void TryFindParam()
+    protected override bool Locate()
     {
         CacheTDB();
-        if (_handlesField == null) return;
+        if (_handlesField == null) return false;
 
-        var activeParam = FindActiveParam(out int playerIndex);
-        if (activeParam == null) return;
+        // Always re-scan _Handles: trusting the cached param's mIsActive kept
+        // this hook bound to a dead Param after leaving and re-entering arcade
+        // (second visit to the same menu announced nothing).
+        var newActive = FindActiveParam(out int playerIndex);
+        if (newActive == null)
+        {
+            return false;
+        }
 
-        ActivateWith(activeParam, playerIndex);
+        if (_activeParam == null || newActive.GetAddress() != _activeParam.GetAddress())
+            ActivateWith(newActive, playerIndex);
+
+        // Re-cache the CPU panel's GUI view (recreated with the screen)
+        if (IsCpuPanel()) RefreshCpuView();
+        return true;
     }
 
-    private static ManagedObject FindActiveParam(out int playerIndex)
+    protected override void OnDeactivate()
+    {
+        API.LogInfo("[SF6Access] FighterSetting ended");
+        _activeParam = null;
+        _group = null;
+        _spinsList = null;
+        _messDataArr = null;
+        _presetMax = -1;
+        _spinCount = 0;
+        _lastFocusIndex = -1;
+        _lastCostumeIdx = -1;
+        _lastColorIdx = -1;
+        _lastControllerType = -1;
+        _lastPresetIdx = -1;
+        _lastCpuLevel = null;
+        _cpuLevelLabel = null;
+        _cpuView = null;
+        _cpuViewOwner = null;
+        _labelCache.Clear();
+        _costumeNameCache.Clear();
+        _recordsLogged = false;
+    }
+
+    protected override void OnPoll()
+    {
+        PollFocusChange();
+        PollValueChanges();
+    }
+
+    private ManagedObject FindActiveParam(out int playerIndex)
     {
         playerIndex = -1;
         try
@@ -216,7 +226,7 @@ public class FighterSettingHooks
     /// <summary>
     /// Find UIFlowUI10511.Param matching our player and read controllerType + preset.
     /// </summary>
-    private static (int controllerType, int preset) ReadFromUI10511()
+    private (int controllerType, int preset) ReadFromUI10511()
     {
         try
         {
@@ -258,7 +268,7 @@ public class FighterSettingHooks
     /// UIFlowUI10505 spin and UIFlowUI10506.getLevel() returned a stale 0, so
     /// the on-screen text is the only reliable source.
     /// </summary>
-    private static (string label, string value) ReadCpuLevelGui()
+    private (string label, string value) ReadCpuLevelGui()
     {
         try
         {
@@ -288,7 +298,7 @@ public class FighterSettingHooks
 
     /// <summary>Cache the active CPU panel's GUI view (object_name) so the
     /// per-poll value read walks only that subtree, not the whole scene.</summary>
-    private static void RefreshCpuView()
+    private void RefreshCpuView()
     {
         _cpuView = null;
         _cpuViewOwner = null;
@@ -306,24 +316,10 @@ public class FighterSettingHooks
         catch { }
     }
 
-    private static bool RefreshActiveParam()
-    {
-        // Always re-scan _Handles: trusting the cached param's mIsActive kept
-        // this hook bound to a dead Param after leaving and re-entering arcade
-        // (second visit to the same menu announced nothing).
-        var newActive = FindActiveParam(out int playerIndex);
-        if (newActive == null) return false;
-
-        if (_activeParam == null || newActive.GetAddress() != _activeParam.GetAddress())
-            ActivateWith(newActive, playerIndex);
-        return true;
-    }
-
-    private static void ActivateWith(ManagedObject param, int playerIndex)
+    private void ActivateWith(ManagedObject param, int playerIndex)
     {
         _activeParam = param;
         _activePlayerIndex = playerIndex;
-        _isActive = true;
         _cpuLevelLabel = null;
         _cpuView = null;
         _cpuViewOwner = null;
@@ -361,7 +357,7 @@ public class FighterSettingHooks
 
     // --- Focus & Value Polling ---
 
-    private static void PollFocusChange()
+    private void PollFocusChange()
     {
         if (_group == null) return;
 
@@ -373,7 +369,7 @@ public class FighterSettingHooks
         AnnounceCurrentItem();
     }
 
-    private static void PollValueChanges()
+    private void PollValueChanges()
     {
         if (_activeParam == null) return;
 
@@ -386,7 +382,7 @@ public class FighterSettingHooks
                 WithLabel(0, ReadValueFromTextList(0, costumeIdx)),
                 GetCostumeName(costumeIdx));
             API.LogInfo($"[SF6Access] Costume changed: {text} (idx={costumeIdx})");
-            ScreenReaderService.Speak(text);
+            Speak(text);
         }
 
         // Color (spin 1) — read from Param cache field
@@ -398,7 +394,7 @@ public class FighterSettingHooks
                 WithLabel(1, ReadValueFromTextList(1, colorIdx)),
                 GetColorName(_lastCostumeIdx, colorIdx));
             API.LogInfo($"[SF6Access] Color changed: {text} (idx={colorIdx})");
-            ScreenReaderService.Speak(text);
+            Speak(text);
         }
 
         // CPU panel: the "Control Type" slot is replaced by "CPU Level", which
@@ -406,14 +402,14 @@ public class FighterSettingHooks
         // battle-setting Param (getLevel()). Poll it for changes.
         if (IsCpuPanel())
         {
-            var (_, cpuLevel) = ReadCpuLevelGui();
+            var (labelDummy, cpuLevel) = ReadCpuLevelGui();
             if (!string.IsNullOrEmpty(cpuLevel) && cpuLevel != _lastCpuLevel)
             {
                 _lastCpuLevel = cpuLevel;
                 // Left/right edit on the same row: announce only the new value,
                 // the label was already read when the row got focus
                 API.LogInfo($"[SF6Access] CPU level changed: {cpuLevel}");
-                ScreenReaderService.Speak(cpuLevel);
+                Speak(cpuLevel);
             }
             return;
         }
@@ -427,7 +423,7 @@ public class FighterSettingHooks
             _presetMax = -1; // Invalidate — different control types may have different presets
             string text = WithLabel(2, ReadValueFromTextList(2, ui10511.controllerType));
             API.LogInfo($"[SF6Access] Control type changed: {text} (type={ui10511.controllerType})");
-            ScreenReaderService.Speak(text);
+            Speak(text);
         }
 
         // Preset — read from spin, capped to BattleStyleDataList range
@@ -439,7 +435,7 @@ public class FighterSettingHooks
                 _lastPresetIdx = preset;
                 string text = ReadPresetText(preset);
                 API.LogInfo($"[SF6Access] Preset changed: {text} (idx={preset})");
-                ScreenReaderService.Speak(text);
+                Speak(text);
             }
         }
     }
@@ -448,7 +444,7 @@ public class FighterSettingHooks
     /// Prefix a value with its localized spin label ("Costume 2" instead of "2"),
     /// so bare numbers are meaningful when only the value changes.
     /// </summary>
-    private static string WithLabel(int spinIndex, string valueText)
+    private string WithLabel(int spinIndex, string valueText)
     {
         if (string.IsNullOrEmpty(valueText)) return valueText;
 
@@ -460,16 +456,16 @@ public class FighterSettingHooks
 
     // --- Costume / Color Names (TableDataManager) ---
 
-    private static readonly Dictionary<string, string> _costumeNameCache = new();
+    private readonly Dictionary<string, string> _costumeNameCache = new();
 
-    private static bool _recordsLogged;
+    private bool _recordsLogged;
 
     /// <summary>
     /// Find the costume record matching the game's cached costume ID
     /// (_cacheCostumeId, exact) or the 1-based costumeNo. No positional
     /// fallback: the table may have gaps and would yield wrong names.
     /// </summary>
-    private static ManagedObject FindCostumeRecord(int costumeIdx)
+    private ManagedObject FindCostumeRecord(int costumeIdx)
     {
         if (_getFighterCostumesMethod == null || _activeParam == null) return null;
         try
@@ -523,7 +519,7 @@ public class FighterSettingHooks
     }
 
     /// <summary>Resolve the localized costume name via its messageId GUID.</summary>
-    private static string GetCostumeName(int costumeIdx)
+    private string GetCostumeName(int costumeIdx)
     {
         string cacheKey = $"c{ReadIntField(_activeParam, "_FighterId")}_{costumeIdx}";
         if (_costumeNameCache.TryGetValue(cacheKey, out var cached)) return cached;
@@ -553,7 +549,7 @@ public class FighterSettingHooks
     }
 
     /// <summary>Resolve the color name string from the costume's color records.</summary>
-    private static string GetColorName(int costumeIdx, int colorIdx)
+    private string GetColorName(int costumeIdx, int colorIdx)
     {
         if (_getCostumeColorsMethod == null) return null;
         string cacheKey = $"k{ReadIntField(_activeParam, "_FighterId")}_{costumeIdx}_{colorIdx}";
@@ -643,7 +639,7 @@ public class FighterSettingHooks
         return $"{text}: {name}";
     }
 
-    private static void AnnounceCurrentItem()
+    private void AnnounceCurrentItem()
     {
         if (_lastFocusIndex < 0 || _lastFocusIndex >= _spinCount) return;
 
@@ -689,10 +685,10 @@ public class FighterSettingHooks
         string announcement = parts.Count > 0 ? string.Join(": ", parts) : $"Item {_lastFocusIndex}";
 
         API.LogInfo($"[SF6Access] FighterSetting [{_lastFocusIndex}]: {announcement}");
-        ScreenReaderService.Speak(announcement);
+        Speak(announcement);
     }
 
-    private static int GetCurrentValueForSpin(int spinIndex)
+    private int GetCurrentValueForSpin(int spinIndex)
     {
         return spinIndex switch
         {
@@ -705,7 +701,7 @@ public class FighterSettingHooks
 
     // --- Value Resolution from TextList ---
 
-    private static string ReadValueFromTextList(int spinIndex, int valueIndex)
+    private string ReadValueFromTextList(int spinIndex, int valueIndex)
     {
         string resolved = TryResolveValueText(spinIndex, valueIndex);
         if (!string.IsNullOrEmpty(resolved))
@@ -722,7 +718,7 @@ public class FighterSettingHooks
     /// Try to resolve localized value text from mMessData[spinIndex].TextList[valueIndex] Guid.
     /// Returns null if not available.
     /// </summary>
-    private static string TryResolveValueText(int spinIndex, int valueIndex)
+    private string TryResolveValueText(int spinIndex, int valueIndex)
     {
         if (_messDataArr == null || _msgGetMethod == null) return null;
         try
@@ -752,7 +748,7 @@ public class FighterSettingHooks
     /// Try to read the displayed text from a spin's _numText component (via.gui.Text).
     /// Reads what's actually shown on screen to sighted players.
     /// </summary>
-    private static string TryReadSpinDisplayedText(int spinIndex)
+    private string TryReadSpinDisplayedText(int spinIndex)
     {
         if (_spinsList == null) return null;
         try
@@ -791,7 +787,7 @@ public class FighterSettingHooks
 
     // --- Label Resolution ---
 
-    private static string ReadSpinLabel(int index)
+    private string ReadSpinLabel(int index)
     {
         if (_labelCache.TryGetValue(index, out string cached))
             return cached;
@@ -837,7 +833,7 @@ public class FighterSettingHooks
     /// <summary>
     /// Read spin[index] value, wrapped to [MinNum, MaxNum] range via method calls.
     /// </summary>
-    private static int ReadSpinWrapped(int spinIndex)
+    private int ReadSpinWrapped(int spinIndex)
     {
         if (_spinsList == null) return -1;
         try
@@ -879,7 +875,7 @@ public class FighterSettingHooks
     /// <summary>
     /// Read preset index via Param.getPreset() (real-time), fallback to spin capped by BattlePresetCount.
     /// </summary>
-    private static int ReadPresetIndex()
+    private int ReadPresetIndex()
     {
         // Param.getPreset() tracks real-time navigation
         if (_activeParam != null)
@@ -902,7 +898,7 @@ public class FighterSettingHooks
         return raw;
     }
 
-    private static int GetPresetCount()
+    private int GetPresetCount()
     {
         if (_presetMax > 0) return _presetMax;
 
@@ -930,7 +926,7 @@ public class FighterSettingHooks
     /// Resolve preset name: UIKeyConfig.Utility.GetBattlePresetName returns the
     /// custom/localized name; fall back to InputAssign default name.
     /// </summary>
-    private static string ReadPresetText(int presetIndex)
+    private string ReadPresetText(int presetIndex)
     {
         // 1. UIKeyConfig.Utility.GetBattlePresetName(teamId, inputType, presetIndex)
         if (_getBattlePresetNameMethod != null)
@@ -1079,29 +1075,5 @@ public class FighterSettingHooks
         }
         catch { }
         return null;
-    }
-
-    private static void Reset()
-    {
-        API.LogInfo("[SF6Access] FighterSetting ended");
-        _isActive = false;
-        _activeParam = null;
-        _group = null;
-        _spinsList = null;
-        _messDataArr = null;
-        _presetMax = -1;
-        _spinCount = 0;
-        _lastFocusIndex = -1;
-        _lastCostumeIdx = -1;
-        _lastColorIdx = -1;
-        _lastControllerType = -1;
-        _lastPresetIdx = -1;
-        _lastCpuLevel = null;
-        _cpuLevelLabel = null;
-        _cpuView = null;
-        _cpuViewOwner = null;
-        _labelCache.Clear();
-        _costumeNameCache.Clear();
-        _recordsLogged = false;
     }
 }
