@@ -148,3 +148,4 @@ avslider.ColorRoughness=Rugosité
 avslider.ColorMetallic=Métallique
 avslider.ColorEmissive=Éclat
 avslider.BlendSliderParts=Mélange
+selected=sélectionné

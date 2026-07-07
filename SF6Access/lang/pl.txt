@@ -150,3 +150,4 @@ avslider.ColorRoughness=Chropowatość
 avslider.ColorMetallic=Metaliczny
 avslider.ColorEmissive=Poświata
 avslider.BlendSliderParts=Mieszanie
+selected=wybrano

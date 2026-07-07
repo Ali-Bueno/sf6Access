@@ -154,3 +154,4 @@ avslider.ColorRoughness=粗糙度
 avslider.ColorMetallic=金屬感
 avslider.ColorEmissive=發光
 avslider.BlendSliderParts=混合
+selected=已選擇

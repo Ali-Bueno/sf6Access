@@ -158,3 +158,4 @@ avslider.ColorRoughness=الخشونة
 avslider.ColorMetallic=معدني
 avslider.ColorEmissive=توهج
 avslider.BlendSliderParts=مزج
+selected=محدد

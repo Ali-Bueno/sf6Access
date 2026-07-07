@@ -180,14 +180,34 @@ internal sealed class AvatarChildFlowReader
             if (first) return; // seed silently; announcements on navigation only
 
             string name = ReadPresetName(grid, worker);
-            string pos = max > 0
-                ? string.Format(LangFile.Get("n_of_m", "{0} of {1}"), idx + 1, max)
-                : (idx + 1).ToString();
+
+            // Cells carry an on-screen number that runs ACROSS pages ("7".."12"
+            // on page 2 — confirmed by screenshots); when the cell text is that
+            // number, speak it alone (it's what sighted users see). Text labels
+            // (body type / gender identity) keep the position appended.
+            string body;
+            if (!string.IsNullOrEmpty(name) && Regex.IsMatch(name, @"^\d+$"))
+            {
+                body = name;
+            }
+            else
+            {
+                string pos = max > 0
+                    ? string.Format(LangFile.Get("n_of_m", "{0} of {1}"), idx + 1, max)
+                    : (idx + 1).ToString();
+                body = string.IsNullOrEmpty(name) ? pos : $"{name}. {pos}";
+            }
+
+            // The applied preset carries a check mark — say so
+            int checkedIdx = FlowHelper.ReadIntField(grid, "_CheckedSelectIndex", int.MinValue);
+            int checkedPage = FlowHelper.ReadIntField(grid, "_CheckedPageIndex", int.MinValue);
+            if (checkedIdx == idx && (checkedPage == page || checkedPage == int.MinValue))
+                body += ". " + LangFile.Get("selected", "selected");
 
             // Two-grid screens (pupils/eyebrows) mark the second grid "Left"
             string side = t.Field.EndsWith("Left") ? LangFile.Get("left", "Left") + ". " : "";
 
-            string text = string.IsNullOrEmpty(name) ? $"{side}{pos}" : $"{side}{name}. {pos}";
+            string text = $"{side}{body}";
             API.LogInfo($"[SF6Access] Avatar preset {t.Field}[page {page}, {idx}]: {text}");
             ScreenReaderService.Speak(text, interrupt: true);
         }

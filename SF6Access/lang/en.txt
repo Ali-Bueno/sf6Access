@@ -193,3 +193,4 @@ avslider.ColorRoughness=Roughness
 avslider.ColorMetallic=Metallic
 avslider.ColorEmissive=Glow
 avslider.BlendSliderParts=Blend
+selected=selected

@@ -49,9 +49,10 @@ public static class ColorNamer
         h = ((h % 360f) + 360f) % 360f;
 
         // Warm hues that are dark or desaturated read as brown — covers most
-        // skin/hair tones (e.g. #4D3F3E, h≈4 s≈0.11 l≈0.27, is a dark skin
-        // tone, not "dark red"; confirmed against an in-game dump)
-        bool warmHue = h < 50f || h >= 340f;
+        // skin/hair/eye tones (in-game dumps: #4D3F3E skin h≈4 s≈0.11 l≈0.27,
+        // #2C4C52 hazel iris h≈51 s≈0.30 l≈0.25 — both are brown to a human,
+        // not "dark red"/"dark yellow")
+        bool warmHue = h < 55f || h >= 340f;
         if (warmHue && s < 0.35f && l < 0.60f)
             return LangFile.Get("color.brown", "brown");
         if (h >= 15f && h < 50f && (l < 0.55f || s < 0.5f))

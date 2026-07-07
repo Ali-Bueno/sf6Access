@@ -158,3 +158,4 @@ avslider.ColorRoughness=粗さ
 avslider.ColorMetallic=メタリック
 avslider.ColorEmissive=発光
 avslider.BlendSliderParts=ブレンド
+selected=選択中

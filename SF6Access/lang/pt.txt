@@ -153,3 +153,4 @@ avslider.ColorRoughness=Rugosidade
 avslider.ColorMetallic=Metálico
 avslider.ColorEmissive=Brilho
 avslider.BlendSliderParts=Mistura
+selected=selecionado

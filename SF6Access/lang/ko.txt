@@ -158,3 +158,4 @@ avslider.ColorRoughness=거칠기
 avslider.ColorMetallic=메탈릭
 avslider.ColorEmissive=발광
 avslider.BlendSliderParts=혼합
+selected=선택됨

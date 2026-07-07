@@ -147,3 +147,4 @@ avslider.ColorRoughness=Rauheit
 avslider.ColorMetallic=Metallisch
 avslider.ColorEmissive=Leuchten
 avslider.BlendSliderParts=Mischung
+selected=ausgewählt
