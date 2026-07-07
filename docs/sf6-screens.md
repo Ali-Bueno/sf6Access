@@ -791,7 +791,11 @@ not resolve these. Recipes:
   `CurrentSelectPresetData` (HairIndex, BrowIndex, EyeR/LIndex...).
   **CONFIRMED in-game 2026-07-07: `PresetDataMessageInfo` is DEBUG info, not a display name**
   ("CharacterCreateEditParam_Man_01 (0, 0)" = asset file + column/row) — preset cells are
-  effectively unnamed thumbnails; announce position only (the reader filters the debug string).
+  unnamed thumbnails; screenshots confirm the game itself shows only a NUMBER badge per cell
+  (`e_text_num`, running ACROSS pages: page 2 shows 7-12). The reader speaks the focused cell's
+  on-screen text: the number alone when numeric, a label + position when textual (gender
+  identity cells carry a real label — user-confirmed reading), and appends "selected" when the
+  focused cell is the applied one (`_CheckedSelectIndex`/`_CheckedPageIndex`).
 - **UI-part members on these params are auto-property backing fields** (`<X>k__BackingField`,
   confirmed by dump) — always resolve via the FlowHelper helpers (they try both forms) and
   normalize the name for labels/log tags (`avslider.*` keys use the CLEAN name).
