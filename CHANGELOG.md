@@ -27,8 +27,8 @@
     moving the hue/saturation/lightness sliders of the color picker popup, in all 13 game languages.
   - **Every preset in the creator is now described.** The game shows only numbered thumbnails for
     hairstyles, faces, eyes, noses, scars, paints and the rest — so the mod ships hand-written
-    descriptions for all ~600 of them, built from screenshots of every catalog page: "9. Bigote
-    fino solo", "13. Media melena lisa con raya al lado", "91. Runa nórdica entrelazada". Catalogs
+    descriptions for all ~600 of them, built from screenshots of every catalog page: "9. thin
+    mustache only", "13. straight bob with side parting", "91. interlaced Norse rune". Catalogs
     shared by both body types are described once; bodies, ears, expressions and premade avatars
     are described per body type. The descriptions are now available in **all 13 game languages**
     (they live in the mod's translation files, so anyone can edit or translate them without
