@@ -108,9 +108,8 @@ internal sealed class AvatarColorWatcher
     {
         if (owner == null) return FlowHelper.ReadColorField(edit, field);
 
-        var ownerObj = FlowHelper.GetObjectField(edit, owner);
-        if (ownerObj != null) return FlowHelper.ReadColorField(ownerObj, field);
-
+        // Resolve the owner via the TDB field (silent) — ManagedObject.GetField
+        // logs "Member not found" spam for struct-typed fields every poll
         try
         {
             var td = edit.GetTypeDefinition();
@@ -118,11 +117,13 @@ internal sealed class AvatarColorWatcher
             if (ownerField == null) return null;
 
             var boxed = ownerField.GetDataBoxed(typeof(object), edit.GetAddress(), false);
-            if (boxed is not REFrameworkNET.ValueType vt) return null;
-
-            return FlowHelper.ReadColorFieldIn(ownerField.Type, vt.GetAddress(), true, field);
+            if (boxed is ManagedObject mo)
+                return FlowHelper.ReadColorField(mo, field);
+            if (boxed is REFrameworkNET.ValueType vt)
+                return FlowHelper.ReadColorFieldIn(ownerField.Type, vt.GetAddress(), true, field);
         }
-        catch { return null; }
+        catch { }
+        return null;
     }
 
     /// <summary>

@@ -169,6 +169,7 @@ public class MainMenuHooks
                 MatchingFighterSettingHooks.IsInFighterSetting ||
                 DeathMatchSettingHooks.IsInDeathMatchSetting ||
                 StatusMenuHooks.IsInStatusMenu ||
+                AvatarCreateHooks.IsInAvatarCreator ||
                 // Exception: the use-item confirm popup's Yes/No buttons only
                 // ever surface through this generic reader — don't mute them
                 (WTMPauseHooks.IsInWTMPause && !WTMPauseHooks.IsItemConfirmOpen) ||
@@ -188,6 +189,7 @@ public class MainMenuHooks
                     !MatchingFighterSettingHooks.IsInFighterSetting &&
                     !DeathMatchSettingHooks.IsInDeathMatchSetting &&
                     !StatusMenuHooks.IsInStatusMenu &&
+                    !AvatarCreateHooks.IsInAvatarCreator &&
                     !WTMPauseHooks.IsInWTMPause)
                 {
                     GroupFocusHooks.QueueFocusFallback(selectedItem, rawName);

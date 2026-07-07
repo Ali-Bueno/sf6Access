@@ -85,49 +85,50 @@ internal sealed class AvatarChildFlowReader
         foreach (var f in fields)
         {
             // Auto-properties store as "<X>k__BackingField" (confirmed in-game);
-            // normalize so labels/lang keys stay clean — every read path goes
-            // through FlowHelper helpers, which try both forms.
-            string name = CleanFieldName(f.Name ?? "");
+            // the raw name is used for reads (direct hit, no "Member not
+            // found" log spam), the clean name for labels/lang keys.
+            string raw = f.Name ?? "";
+            string name = CleanFieldName(raw);
             string type = f.Type?.FullName ?? "";
 
             if (type.Contains("UIPartsAvatarCreatePresetScrollGrid"))
             {
-                _presetGrids.Add(new GridTracker { Field = name });
+                _presetGrids.Add(new GridTracker { Field = name, RawField = raw });
                 found.Add($"presetGrid:{name}");
             }
             else if (type.EndsWith("UIPartsScrollGrid"))
             {
-                _swatchGrids.Add(new SwatchTracker { Field = name });
+                _swatchGrids.Add(new SwatchTracker { Field = name, RawField = raw });
                 found.Add($"swatchGrid:{name}");
             }
             else if (type.Contains("UIPartsSlider[]"))
             {
-                _sliderArrayField = name;
+                _sliderArrayField = raw;
                 found.Add($"sliderArray:{name}");
             }
             else if (type.EndsWith("UIPartsSlider"))
             {
-                _sliders.Add(new SliderTracker { Field = name, Label = SliderLabel(name) });
+                _sliders.Add(new SliderTracker { Field = name, RawField = raw, Label = SliderLabel(name) });
                 found.Add($"slider:{name}");
             }
             else if (type.Contains("UIPartsTriangleBar"))
             {
-                _triangles.Add(new TriangleTracker { Field = name });
+                _triangles.Add(new TriangleTracker { Field = name, RawField = raw });
                 found.Add($"triangle:{name}");
             }
             else if (type.Contains("UIPartsSpin"))
             {
-                _spins.Add(new SpinTracker { Field = name });
+                _spins.Add(new SpinTracker { Field = name, RawField = raw });
                 found.Add($"spin:{name}");
             }
             else if (type.EndsWith("UIPartsGroup"))
             {
-                groupSources.Add(new GroupFocusPoller.Source(null, name));
+                groupSources.Add(new GroupFocusPoller.Source(null, raw));
                 found.Add($"group:{name}");
             }
             else if (type.Contains("UIPartsScrollList") || type.Contains("UIPartsSimpleList"))
             {
-                groupSources.Add(new GroupFocusPoller.Source(null, name, isList: true));
+                groupSources.Add(new GroupFocusPoller.Source(null, raw, isList: true));
                 found.Add($"list:{name}");
             }
             else if (type == "System.Single" && name.EndsWith("Buffer"))
@@ -152,7 +153,8 @@ internal sealed class AvatarChildFlowReader
 
     private sealed class GridTracker
     {
-        public string Field;
+        public string Field;      // clean name (labels/log)
+        public string RawField;   // actual TDB field name (reads, no lookup noise)
         public int LastIndex = int.MinValue;
         public int LastPage = int.MinValue;
         public int PageCapacity;   // cells per full page (max ItemMax seen)
@@ -167,7 +169,7 @@ internal sealed class AvatarChildFlowReader
     {
         try
         {
-            var grid = FlowHelper.GetObjectField(_param, t.Field);
+            var grid = FlowHelper.GetObjectField(_param, t.RawField);
             if (grid == null) return;
 
             var worker = FlowHelper.GetObjectField(grid, "PartsWorker")
@@ -393,6 +395,7 @@ internal sealed class AvatarChildFlowReader
     private sealed class SwatchTracker
     {
         public string Field;
+        public string RawField;
         public int LastIndex = int.MinValue;
         public ManagedObject PaletteRgb;   // matching ColorPalletPreset.ColorRGB array
         public bool PaletteResolved;
@@ -402,7 +405,7 @@ internal sealed class AvatarChildFlowReader
     {
         try
         {
-            var grid = FlowHelper.GetObjectField(_param, t.Field);
+            var grid = FlowHelper.GetObjectField(_param, t.RawField);
             if (grid == null) return;
 
             int idx = FlowHelper.CallInt(grid, "get_SelectedIndex");
@@ -477,6 +480,7 @@ internal sealed class AvatarChildFlowReader
     private sealed class SliderTracker
     {
         public string Field;
+        public string RawField;
         public string Label;
         public float LastValue = float.NaN;
     }
@@ -485,7 +489,7 @@ internal sealed class AvatarChildFlowReader
     {
         try
         {
-            var slider = FlowHelper.GetObjectField(_param, t.Field);
+            var slider = FlowHelper.GetObjectField(_param, t.RawField);
             if (slider == null) return;
 
             var valObj = FlowHelper.Call(slider, "getValue");
@@ -604,6 +608,7 @@ internal sealed class AvatarChildFlowReader
     private sealed class SpinTracker
     {
         public string Field;
+        public string RawField;
         public int LastNum = int.MinValue;
     }
 
@@ -611,7 +616,7 @@ internal sealed class AvatarChildFlowReader
     {
         try
         {
-            var spin = FlowHelper.GetObjectField(_param, t.Field);
+            var spin = FlowHelper.GetObjectField(_param, t.RawField);
             if (spin == null) return;
 
             int num = FlowHelper.CallInt(spin, "get_Num");
@@ -646,6 +651,7 @@ internal sealed class AvatarChildFlowReader
     private sealed class TriangleTracker
     {
         public string Field;
+        public string RawField;
         public float LastX = float.NaN, LastY = float.NaN;
     }
 
@@ -653,7 +659,7 @@ internal sealed class AvatarChildFlowReader
     {
         try
         {
-            var bar = FlowHelper.GetObjectField(_param, t.Field);
+            var bar = FlowHelper.GetObjectField(_param, t.RawField);
             if (bar == null) return;
 
             var pos = FlowHelper.ReadVec2Field(bar, "_CurrentPos");

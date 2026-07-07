@@ -29,6 +29,11 @@ public sealed partial class AvatarCreateHooks : ScreenAdapter
 
     private static AvatarCreateHooks _self;
 
+    /// <summary>Read by MainMenuHooks: mutes the generic focus/value readers
+    /// while the creator's own readers own the screen (FocusValueHooks was
+    /// double-speaking stale pool-cell numbers on page flips).</summary>
+    public static bool IsInAvatarCreator => _self?.Active == true;
+
     public AvatarCreateHooks()
     {
         SearchInterval = 60;
