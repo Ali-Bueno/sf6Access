@@ -749,3 +749,82 @@ not resolve these. Recipes:
   (grid; cells only carry counts), `PartsItemDetail`; selected item name/description in GUI
   `ui50201` (`e_text_name`/`e_text_detail`, same shape as the WTM pause Item tab — shared
   `ItemGridReader`/`ItemConfirmWatcher` in `Services/Ui/ItemUiReaders.cs`).
+
+## World Tour — Avatar creation (character creator)
+
+> Full offline sweep of the decompiled UI61xxx family 2026-07-07 (5 parallel code sweeps);
+> implemented in `Hooks/AvatarCreate/` (AvatarCreateHooks + AvatarChildFlowReader +
+> AvatarColorWatcher) + `Services/ColorNamer.cs`. **Derived from decompiled code only — every
+> member below still needs a runtime-dump pass (F11) before being treated as confirmed.**
+
+### Flow structure
+- Main param: `app.worldtour.UIFlowUI61000.Param` (matched by fragment, namespace varies).
+  Child flows stack on top of it in `_Handles` (index 0 = newest/topmost); every sub-menu is
+  its own `app.worldtour.UIFlowUI61xxx.Param`, and the HLS color picker is
+  `app.worldtour.UIFlowWTAvatarCreateColorPopUp.Param`. Skip `IsEnd` handles or a closed
+  sub-menu keeps being read.
+- Main categories (`MainCategoryType`): TYPE, PRESET, BODY, FACE, BODY_PAINT, FACE_PAINT,
+  COLOR, VOICE, RECIPE. **Localized names**: `Param.MainCategoryNameMessageId` (Guid array,
+  index = category) → resolve via message system. `CurrentMainCategory` /
+  `CurrentMiddleCategory` are plain fields. Middle-category row text is read from
+  `PartsScrollListMiddleItem` (paint tabs use `PartsScrollList[Body|Face]PaintMiddleItem`
+  + `PartsSimpleList[Body|Face]PaintMiddleItem`); each middle flow also carries
+  `UIGroupBase.CategoryMessageId` + `ItemMessageTbl` (Guid array) if the row text fails.
+- Child flow map: 61100 body type (MAN/WOMAN), 61101 gender identity, 61200 face preset,
+  61201 random (3 buttons), 61202 face blend (two source presets `CurrentPage00/Index00` +
+  `01`, ratio `BlendSliderParts`), 61203 body preset + figure TriangleBar; 61300 height
+  (`HeightBuffer`/`SittingHeightBuffer`... floats), 61301 randomize, 61303/61304 upper/lower
+  proportions (+TriangleBar), 61305 build TriangleBar, 61306 skin color, 61307 body hair
+  (per-position `BodyHairPartsList`), 61308 body-hair color; 61400 face shape, 61401 hair,
+  61402 eyes, 61403 pupils (two grids R/L), 61404 eyelashes (+up/down `UIPartsSpin` +
+  `*TextList`), 61405 eyebrows (two grids), 61406 nose, 61407 mouth, 61408 ears (+color grid),
+  61409 beard, 61410 skin age, 61411 expression, 61412 skin definition; 61500-61508 paints
+  (grid + scale sliders + `UIPartsPositionGrid` + `LocationNumber`); 61700 voice
+  (`PartsScrollListVoice`, ids only); 61801 recipe save/load, 61802 download, 61803 detail,
+  61805 upload (player-named strings).
+
+### Reading items (names exist!)
+- Preset grids are `app.UIPartsAvatarCreatePresetScrollGrid`: focused cell =
+  `PartsWorker` (UIPartsScrollGrid) → `get_SelectedIndex`/`get_ItemMax`; page `CurrentPageNum`;
+  committed cell `_CheckedSelectIndex`/`_CheckedPageIndex`; **focused item name =
+  `get_CurrentSelectPresetData` → `get_PresetDataMessageInfo` (localized string)**; also
+  `GetFileName()` and per-part indices (HairIndex, BrowIndex, EyeR/LIndex...).
+- Color swatch grids (`PartsScrollGridColorPreset`, plain `UIPartsScrollGrid`) are
+  **index-only thumbnails** — no name/color on the cell. Palettes live in
+  `AvatarCreateData.ColorPresetBody/Default32/BodyAdd00/01` (`ColorPalletPreset`:
+  `ColorRGB[]` + `ColorHLS[]`) if per-swatch color is ever needed.
+- Sliders: `PartsSliderAry` (values via `getValue()`); 61300 mirrors values into `*Buffer`
+  floats (slider names). Individual sliders are their field names (ColorRoughness etc.).
+  TriangleBar cursor = `_CurrentPos` (vec2 struct read).
+
+### Colors — the real model (`AvatarColorWatcher`)
+- **All applied colors live in `Param.MyEditPresetParam` (`AvatarCreateEditParamData`,
+  computed getter) → `.EditParam` (`app.CharaEdit.charaEditParam`, plain field) as raw
+  `via.Color` RGBA structs** (uint `rgba`, r = low byte; read via ValueType + Marshal —
+  `FlowHelper.ReadColorField`). Fields: `FaceColor` (skin), `PaintColor`, `HairColor`/`2/3/4`,
+  `Chest/Back/Arm/LegHairColor`; nested `eye_r/eye_l` (`iris_col`, `sclera_col`),
+  `brows` (`colL/colR`), `lash` (`colorup/colordown`). The model applies grid/slider edits
+  live, so watching these fields gives real color feedback with no scale guessing.
+- The color popup (`UIFlowWTAvatarCreateColorPopUp.Param`) has sliders `ColorHueSlide`,
+  `ColorSaturationSlide`, `ColorLightnessSlide`, `ColorRoughness/Metallic/Emissive/Blend/
+  TransparencySlide`, a swatch grid `ColorGridParts`, current color `InitColorData`
+  (`app.LightEditData.HLSColor`: ushort `ColorHue`, byte `ColorSaturation`/`ColorLightness`),
+  and slot identity `HairColorType` (`AvatarCreateColorSetType`, 30 slots: Hair_00.., Beard,
+  BodyHair_00-04, Pupil/EyeBall_00-02, EyeLash_00/01, EyeBrows_00-02, BodyPaint_00-03,
+  FacePaint_00-06). Per-slot HLS store: `AvatarCreateEditParamData.UIColorData[]`.
+- **The game has NO color-name table** — `Services/ColorNamer.cs` maps RGB→HSL→a small
+  localized vocabulary (`color.*` LangFile keys, "rojo oscuro"/"dark red"), documented
+  hardcoding (last resort).
+- Other useful data: `charaEditParam.gender`/`genderIdentity`/`voiceId`, `BodyHeight`,
+  `Facial_*` floats, `SkinAge*`; edit limits per category via
+  `AvatarCreateConfigDataBank.GetConfigData(main, middle)` → `AvatarCreateEditParamLimit
+  .GetMaxParam/GetMinParam(index)`. Height slider→cm stays a community lookup table
+  (on-screen cm is a texture).
+
+### Implementation notes
+- `AvatarChildFlowReader` discovers the child param's parts by field TYPE at bind
+  (preset grids / swatch grids / sliders+arrays / spins / triangle bars) and hands
+  `UIPartsGroup`/scroll/simple lists to a dynamically-built `GroupFocusPoller`. Every bind
+  logs the discovered parts (`Avatar child <type>: ...`) — diagnose silent screens from the log.
+- F11 = avatar dump (works outside the screen too): worldtour handles, main param key fields,
+  charaEditParam colors (hex + spoken name), full child-flow field dump.

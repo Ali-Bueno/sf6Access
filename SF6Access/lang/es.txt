@@ -104,3 +104,56 @@ input.UICancel=cancelar
 input.MouseL=clic izquierdo
 input.MouseR=clic derecho
 icon.hd=mantener pulsado
+
+# --- Creación de avatar (World Tour) ---
+n_of_m={0} de {1}
+item=Elemento
+left=Izquierda
+color_swatch=Color
+figure_pos=Figura {0}, {1}
+
+color.black=negro
+color.white=blanco
+color.gray=gris
+color.red=rojo
+color.orange=naranja
+color.yellow=amarillo
+color.green=verde
+color.cyan=cian
+color.blue=azul
+color.purple=morado
+color.pink=rosa
+color.brown=marrón
+color.fmt.dark={0} oscuro
+color.fmt.light={0} claro
+color.fmt.pale={0} pálido
+
+avpart.skin=Piel
+avpart.paint=Pintura
+avpart.hair=Pelo
+avpart.hair2=Pelo secundario
+avpart.chest_hair=Vello del pecho
+avpart.back_hair=Vello de la espalda
+avpart.arm_hair=Vello de los brazos
+avpart.leg_hair=Vello de las piernas
+avpart.eye_r=Ojo derecho
+avpart.eye_l=Ojo izquierdo
+avpart.sclera_r=Esclerótica derecha
+avpart.sclera_l=Esclerótica izquierda
+avpart.brow_l=Ceja izquierda
+avpart.brow_r=Ceja derecha
+avpart.lash_up=Pestañas superiores
+avpart.lash_down=Pestañas inferiores
+
+avslider.ColorHueSlide=Matiz
+avslider.ColorSaturationSlide=Saturación
+avslider.ColorLightnessSlide=Luminosidad
+avslider.ColorRoughnessSlide=Rugosidad
+avslider.ColorMetallicSlide=Metálico
+avslider.ColorEmissiveSlide=Brillo
+avslider.ColorBlendSlide=Mezcla
+avslider.ColorTransparencySlide=Transparencia
+avslider.ColorRoughness=Rugosidad
+avslider.ColorMetallic=Metálico
+avslider.ColorEmissive=Brillo
+avslider.BlendSliderParts=Mezcla

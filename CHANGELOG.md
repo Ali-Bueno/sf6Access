@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### World Tour — character creator rebuilt (colors, traits, presets)
+- The avatar creator (also used for Battle Hub avatars) got a full rework based on a complete
+  sweep of the game's creator code. New in this version:
+  - **Colors are now spoken.** The game stores avatar colors as raw numbers with no names, so the
+    mod converts the ACTUAL color applied to your character into words — "dark red", "light blue",
+    "pale brown" — announced with the part it belongs to (skin, hair, chest hair, right eye, left
+    eyebrow, upper eyelashes…). This works both when picking swatches from a color grid and while
+    moving the hue/saturation/lightness sliders of the color picker popup, in all 13 game languages.
+  - **Preset grids announce the item's real name** (hair styles, eyes, noses, mouths, ears, beards,
+    expressions, body/face presets, body type and gender identity) plus its position ("3 of 24"),
+    read from the game's own data instead of just a bare number.
+  - Category and sub-category names now come from the game's localized text (previously hardcoded
+    English).
+  - Sliders, the eyelash type spinners, the physique triangle, paint slots, the voice list and the
+    recipe (save/load/share) screens are all wired for reading as well.
+- All of this was built from the game's decompiled code and **needs an in-game pass**: enter the
+  creator, walk every category, and report what reads wrong or stays silent
+  (`re2_framework_log.txt` tells the rest).
+
 ## v0.5.0 — 07/07/2026
 
 > The avatar screens below were tested in the **Avatar Arcade**. The same menus are likely shared

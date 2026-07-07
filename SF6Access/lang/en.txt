@@ -137,3 +137,59 @@ input.UICancel=cancel
 input.MouseL=left click
 input.MouseR=right click
 icon.hd=hold
+
+# --- Avatar creation (World Tour character creator) ---
+n_of_m={0} of {1}
+item=Item
+left=Left
+color_swatch=Color
+figure_pos=Figure {0}, {1}
+
+# Color names (the game stores colors as raw numbers with no name table)
+color.black=black
+color.white=white
+color.gray=gray
+color.red=red
+color.orange=orange
+color.yellow=yellow
+color.green=green
+color.cyan=cyan
+color.blue=blue
+color.purple=purple
+color.pink=pink
+color.brown=brown
+color.fmt.dark=dark {0}
+color.fmt.light=light {0}
+color.fmt.pale=pale {0}
+
+# Avatar part labels for color announcements
+avpart.skin=Skin
+avpart.paint=Paint
+avpart.hair=Hair
+avpart.hair2=Hair secondary
+avpart.chest_hair=Chest hair
+avpart.back_hair=Back hair
+avpart.arm_hair=Arm hair
+avpart.leg_hair=Leg hair
+avpart.eye_r=Right eye
+avpart.eye_l=Left eye
+avpart.sclera_r=Right sclera
+avpart.sclera_l=Left sclera
+avpart.brow_l=Left eyebrow
+avpart.brow_r=Right eyebrow
+avpart.lash_up=Upper eyelashes
+avpart.lash_down=Lower eyelashes
+
+# Color-picker popup / in-flow slider names (fallback: field name)
+avslider.ColorHueSlide=Hue
+avslider.ColorSaturationSlide=Saturation
+avslider.ColorLightnessSlide=Lightness
+avslider.ColorRoughnessSlide=Roughness
+avslider.ColorMetallicSlide=Metallic
+avslider.ColorEmissiveSlide=Glow
+avslider.ColorBlendSlide=Blend
+avslider.ColorTransparencySlide=Transparency
+avslider.ColorRoughness=Roughness
+avslider.ColorMetallic=Metallic
+avslider.ColorEmissive=Glow
+avslider.BlendSliderParts=Blend

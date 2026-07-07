@@ -63,6 +63,10 @@ other files in `docs/`. For per-screen type/field reference see [`sf6-screens.md
 - `InputNameResolver.cs` — pad/keyboard button names.
 - `ComboTracker.cs` — authoritative combo detection via `cTeam.mComboCount`.
 - `AvatarStatsReader.cs` — World Tour avatar stats.
+- `ColorNamer.cs` — RGB/HSL → localized spoken color name ("dark red"/"rojo oscuro"); the game
+  stores avatar colors as raw values with no name table (used by `Hooks/AvatarCreate/`).
+- `FlowHelperStructs.cs` (partial FlowHelper) — struct-field reads: `ReadColorField`
+  (via.Color → packed rgba uint) and `ReadVec2Field`, via ValueType address + Marshal.
 - `ObjectDumper.cs` / `ScreenshotService.cs` — research tools (see Dump tools).
 
 ## Screen adapter architecture (menu hooks) — `Services/Ui/`
