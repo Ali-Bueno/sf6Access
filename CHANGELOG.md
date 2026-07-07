@@ -10,9 +10,13 @@
     "pale brown" — announced with the part it belongs to (skin, hair, chest hair, right eye, left
     eyebrow, upper eyelashes…). This works both when picking swatches from a color grid and while
     moving the hue/saturation/lightness sliders of the color picker popup, in all 13 game languages.
-  - **Preset grids announce the item's real name** (hair styles, eyes, noses, mouths, ears, beards,
-    expressions, body/face presets, body type and gender identity) plus its position ("3 of 24"),
-    read from the game's own data instead of just a bare number.
+  - **Every preset in the creator is now described.** The game shows only numbered thumbnails for
+    hairstyles, faces, eyes, noses, scars, paints and the rest — so the mod ships hand-written
+    descriptions for all ~600 of them, built from screenshots of every catalog page: "9. Bigote
+    fino solo", "13. Media melena lisa con raya al lado", "91. Runa nórdica entrelazada". Catalogs
+    shared by both body types are described once; bodies, ears, expressions and premade avatars
+    are described per body type. (Descriptions are in Spanish and English for now; they live in
+    the mod's translation files, so anyone can edit or translate them without recompiling.)
   - Category and sub-category names now come from the game's localized text (previously hardcoded
     English).
   - Sliders, the eyelash type spinners, the physique triangle, paint slots, the voice list and the
