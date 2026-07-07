@@ -65,10 +65,7 @@ internal sealed class AvatarColorWatcher
         for (int i = 0; i < Entries.Length; i++)
         {
             var e = Entries[i];
-            var owner = e.Owner == null ? edit : FlowHelper.GetObjectField(edit, e.Owner);
-            if (owner == null) continue;
-
-            uint? rgba = FlowHelper.ReadColorField(owner, e.Field);
+            uint? rgba = ReadEntryColor(edit, e.Owner, e.Field);
             if (rgba == null) continue;
 
             if (!_seeded || _lastRgba[i] == null)
@@ -98,6 +95,34 @@ internal sealed class AvatarColorWatcher
         _lastAnnounceMs = now;
 
         ScreenReaderService.Speak(string.Join(". ", announcements), interrupt: true);
+    }
+
+    /// <summary>
+    /// Color of one entry. Nested owners (eye_r/eye_l/brows/lash) are INLINE
+    /// STRUCTS on charaEditParam (boxed as ValueType, not ManagedObject —
+    /// confirmed by the 2026-07-07 dump), so their colors are read via the
+    /// container-aware path; plain-object owners still work if the game ever
+    /// changes them to classes.
+    /// </summary>
+    internal static uint? ReadEntryColor(ManagedObject edit, string owner, string field)
+    {
+        if (owner == null) return FlowHelper.ReadColorField(edit, field);
+
+        var ownerObj = FlowHelper.GetObjectField(edit, owner);
+        if (ownerObj != null) return FlowHelper.ReadColorField(ownerObj, field);
+
+        try
+        {
+            var td = edit.GetTypeDefinition();
+            var ownerField = td?.GetField(owner) ?? td?.GetField($"<{owner}>k__BackingField");
+            if (ownerField == null) return null;
+
+            var boxed = ownerField.GetDataBoxed(typeof(object), edit.GetAddress(), false);
+            if (boxed is not REFrameworkNET.ValueType vt) return null;
+
+            return FlowHelper.ReadColorFieldIn(ownerField.Type, vt.GetAddress(), true, field);
+        }
+        catch { return null; }
     }
 
     /// <summary>

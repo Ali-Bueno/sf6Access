@@ -780,15 +780,21 @@ not resolve these. Recipes:
   `*TextList`), 61405 eyebrows (two grids), 61406 nose, 61407 mouth, 61408 ears (+color grid),
   61409 beard, 61410 skin age, 61411 expression, 61412 skin definition; 61500-61508 paints
   (grid + scale sliders + `UIPartsPositionGrid` + `LocationNumber`); 61700 voice
-  (`PartsScrollListVoice`, ids only); 61801 recipe save/load, 61802 download, 61803 detail,
+  (`PartsScrollListVoice`, ids only — reads perfectly, user-confirmed 2026-07-07); 61801
+  recipe save/load, 61802 download, 61803 detail,
   61805 upload (player-named strings).
 
-### Reading items (names exist!)
+### Reading items
 - Preset grids are `app.UIPartsAvatarCreatePresetScrollGrid`: focused cell =
   `PartsWorker` (UIPartsScrollGrid) → `get_SelectedIndex`/`get_ItemMax`; page `CurrentPageNum`;
-  committed cell `_CheckedSelectIndex`/`_CheckedPageIndex`; **focused item name =
-  `get_CurrentSelectPresetData` → `get_PresetDataMessageInfo` (localized string)**; also
-  `GetFileName()` and per-part indices (HairIndex, BrowIndex, EyeR/LIndex...).
+  committed cell `_CheckedSelectIndex`/`_CheckedPageIndex`; per-part indices on
+  `CurrentSelectPresetData` (HairIndex, BrowIndex, EyeR/LIndex...).
+  **CONFIRMED in-game 2026-07-07: `PresetDataMessageInfo` is DEBUG info, not a display name**
+  ("CharacterCreateEditParam_Man_01 (0, 0)" = asset file + column/row) — preset cells are
+  effectively unnamed thumbnails; announce position only (the reader filters the debug string).
+- **UI-part members on these params are auto-property backing fields** (`<X>k__BackingField`,
+  confirmed by dump) — always resolve via the FlowHelper helpers (they try both forms) and
+  normalize the name for labels/log tags (`avslider.*` keys use the CLEAN name).
 - Color swatch grids (`PartsScrollGridColorPreset`, plain `UIPartsScrollGrid`) are
   **index-only thumbnails** — no name/color on the cell. Palettes live in
   `AvatarCreateData.ColorPresetBody/Default32/BodyAdd00/01` (`ColorPalletPreset`:
@@ -801,10 +807,14 @@ not resolve these. Recipes:
 - **All applied colors live in `Param.MyEditPresetParam` (`AvatarCreateEditParamData`,
   computed getter) → `.EditParam` (`app.CharaEdit.charaEditParam`, plain field) as raw
   `via.Color` RGBA structs** (uint `rgba`, r = low byte; read via ValueType + Marshal —
-  `FlowHelper.ReadColorField`). Fields: `FaceColor` (skin), `PaintColor`, `HairColor`/`2/3/4`,
-  `Chest/Back/Arm/LegHairColor`; nested `eye_r/eye_l` (`iris_col`, `sclera_col`),
-  `brows` (`colL/colR`), `lash` (`colorup/colordown`). The model applies grid/slider edits
-  live, so watching these fields gives real color feedback with no scale guessing.
+  `FlowHelper.ReadColorField`). **CONFIRMED in-game 2026-07-07** for the direct fields:
+  `FaceColor` (skin — e.g. #FF3E3F4D = a dark skin tone), `PaintColor`, `HairColor`/`2/3/4`,
+  `Chest/Back/Arm/LegHairColor`. The nested owners `eye_r/eye_l` (`iris_col`, `sclera_col`),
+  `brows` (`colL/colR`), `lash` (`colorup/colordown`) are **INLINE STRUCTS** (they box to
+  ValueType, not ManagedObject) — read via `FlowHelper.ReadColorFieldIn(ownerField.Type,
+  vt.GetAddress(), isContainerValueType:true, colorField)` (`AvatarColorWatcher.ReadEntryColor`;
+  fix UNTESTED). The model applies grid/slider edits live, so watching these fields gives real
+  color feedback with no scale guessing.
 - The color popup (`UIFlowWTAvatarCreateColorPopUp.Param`) has sliders `ColorHueSlide`,
   `ColorSaturationSlide`, `ColorLightnessSlide`, `ColorRoughness/Metallic/Emissive/Blend/
   TransparencySlide`, a swatch grid `ColorGridParts`, current color `InitColorData`

@@ -179,8 +179,7 @@ public sealed partial class AvatarCreateHooks
                 ("lash", "colorup"), ("lash", "colordown"),
             })
             {
-                var ownerObj = FlowHelper.GetObjectField(edit, owner);
-                uint? rgba = FlowHelper.ReadColorField(ownerObj, field);
+                uint? rgba = AvatarColorWatcher.ReadEntryColor(edit, owner, field);
                 sb.AppendLine(rgba != null
                     ? $"    {owner}.{field} = #{rgba.Value:X8} ({ColorNamer.NameRgba(rgba.Value)})"
                     : $"    {owner}.{field} = unreadable");

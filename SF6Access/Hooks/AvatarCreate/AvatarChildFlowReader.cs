@@ -83,7 +83,10 @@ internal sealed class AvatarChildFlowReader
 
         foreach (var f in fields)
         {
-            string name = f.Name ?? "";
+            // Auto-properties store as "<X>k__BackingField" (confirmed in-game);
+            // normalize so labels/lang keys stay clean — every read path goes
+            // through FlowHelper helpers, which try both forms.
+            string name = CleanFieldName(f.Name ?? "");
             string type = f.Type?.FullName ?? "";
 
             if (type.Contains("UIPartsAvatarCreatePresetScrollGrid"))
@@ -198,10 +201,22 @@ internal sealed class AvatarChildFlowReader
             var data = FlowHelper.Call(grid, "get_CurrentSelectPresetData") as ManagedObject;
             if (data == null) return null;
             string raw = FlowHelper.Call(data, "get_PresetDataMessageInfo") as string;
-            return string.IsNullOrWhiteSpace(raw) ? null : FlowHelper.CleanTags(raw);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            string clean = FlowHelper.CleanTags(raw);
+            return IsInternalPresetInfo(clean) ? null : clean;
         }
         catch { return null; }
     }
+
+    /// <summary>
+    /// PresetDataMessageInfo is often DEBUG info, not a display name — e.g.
+    /// "CharacterCreateEditParam_Man_01 (0, 0)" (asset file + column/row,
+    /// confirmed in-game 2026-07-07). Filter those out and let the position
+    /// ("N of M") speak alone.
+    /// </summary>
+    private static bool IsInternalPresetInfo(string text) =>
+        text.Contains("EditParam") ||
+        Regex.IsMatch(text, @"^[\w.]+\s*\(\d+,\s*\d+\)$");
 
     #endregion
 
@@ -327,6 +342,11 @@ internal sealed class AvatarChildFlowReader
 
     private static string SplitCamel(string name) =>
         Regex.Replace(name, @"(?<=[a-z])(?=[A-Z])", " ");
+
+    private static string CleanFieldName(string name) =>
+        name.StartsWith("<") && name.EndsWith(">k__BackingField")
+            ? name.Substring(1, name.Length - 1 - ">k__BackingField".Length)
+            : name;
 
     /// <summary>
     /// Height sliders speak the real height in cm (community-measured table —

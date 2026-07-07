@@ -30,18 +30,42 @@ public static partial class FlowHelper
         return (BitConverter.ToSingle(bytes, 0), BitConverter.ToSingle(bytes, 4));
     }
 
+    /// <summary>
+    /// Read a via.Color field from an explicit container (type + address),
+    /// which may itself be a boxed struct (isContainerValueType=true) — needed
+    /// for colors nested in inline structs like charaEditParam.eye_r.
+    /// </summary>
+    public static uint? ReadColorFieldIn(TypeDefinition containerType, ulong containerAddr,
+        bool isContainerValueType, string fieldName)
+    {
+        var bytes = ReadStructFieldIn(containerType, containerAddr, isContainerValueType, fieldName, 4);
+        if (bytes == null) return null;
+        return BitConverter.ToUInt32(bytes, 0);
+    }
+
     private static byte[] ReadStructField(ManagedObject obj, string fieldName, int size)
     {
         if (obj == null) return null;
         try
         {
-            var field = obj.GetTypeDefinition()?.GetField(fieldName);
-            if (field == null) return null;
-
             ulong addr = obj.GetAddress();
             if (addr == 0) return null;
+            return ReadStructFieldIn(obj.GetTypeDefinition(), addr, false, fieldName, size);
+        }
+        catch { return null; }
+    }
 
-            var boxed = field.GetDataBoxed(typeof(object), addr, false);
+    private static byte[] ReadStructFieldIn(TypeDefinition containerType, ulong containerAddr,
+        bool isContainerValueType, string fieldName, int size)
+    {
+        if (containerType == null || containerAddr == 0) return null;
+        try
+        {
+            var field = containerType.GetField(fieldName)
+                        ?? containerType.GetField($"<{fieldName}>k__BackingField");
+            if (field == null) return null;
+
+            var boxed = field.GetDataBoxed(typeof(object), containerAddr, isContainerValueType);
             if (boxed is not REFrameworkNET.ValueType vt) return null;
 
             ulong vtAddr = vt.GetAddress();
