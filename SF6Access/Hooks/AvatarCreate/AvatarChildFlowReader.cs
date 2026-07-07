@@ -156,6 +156,8 @@ internal sealed class AvatarChildFlowReader
         public int LastIndex = int.MinValue;
         public int LastPage = int.MinValue;
         public int PageCapacity;   // cells per full page (max ItemMax seen)
+        public int Rows;           // grid rows, for column-major → visual mapping
+        public bool LayoutResolved;
     }
 
     private void PollPresetGrid(GridTracker t)
@@ -184,8 +186,11 @@ internal sealed class AvatarChildFlowReader
             // Cells show a number that runs ACROSS pages (page 2 = "7".."12",
             // confirmed by screenshots). COMPUTE it — reading the cell's text
             // gave stale numbers from recycled pool cells ("6" on cell 9).
+            // SelectedIndex runs DOWN columns while the numbers run across
+            // rows (user-verified: the top row announced 1,3,5) — remap.
             if (max > t.PageCapacity) t.PageCapacity = max;
-            int number = (page > 0 && t.PageCapacity > 0 ? page * t.PageCapacity : 0) + idx + 1;
+            int visual = ToVisualIndex(t, grid, idx, max, page);
+            int number = (page > 0 && t.PageCapacity > 0 ? page * t.PageCapacity : 0) + visual + 1;
 
             // Cell text is used only when it's a real label (has letters —
             // body type / gender identity); numeric cell text is untrustworthy
@@ -220,6 +225,43 @@ internal sealed class AvatarChildFlowReader
             ScreenReaderService.Speak(text, interrupt: true);
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Column-major SelectedIndex → row-major visual position. Row count comes
+    /// from the preset bank's page info; the observed creator layout (2 rows ×
+    /// 3 columns for 6-cell pages) is the documented fallback.
+    /// </summary>
+    private int ToVisualIndex(GridTracker t, ManagedObject grid, int idx, int max, int page)
+    {
+        if (!t.LayoutResolved && max > 0)
+        {
+            t.LayoutResolved = true;
+            int r = -1, c = -1;
+            try
+            {
+                var bank = FlowHelper.GetObjectField(grid, "PresetBank");
+                var pageInfo = FlowHelper.Call(bank, "GetPageInfo", page) as ManagedObject
+                               ?? FlowHelper.Call(bank, "GetPageInfo", (uint)page) as ManagedObject;
+                r = FlowHelper.CallInt(pageInfo, "GetMaxRow");
+                c = FlowHelper.CallInt(pageInfo, "GetMaxColumn");
+                if (r > 0 && c > 0)
+                {
+                    if (r * c == max) t.Rows = r;                       // counts
+                    else if ((r + 1) * (c + 1) == max) t.Rows = r + 1;  // max indices
+                }
+            }
+            catch { }
+            if (t.Rows <= 0 && max == 6) t.Rows = 2; // observed 2×3 layout
+            API.LogInfo($"[SF6Access] Avatar grid {t.Field}: layout rows={t.Rows} (bank r={r}, c={c}, ItemMax={max})");
+        }
+
+        if (t.Rows > 1 && max % t.Rows == 0)
+        {
+            int cols = max / t.Rows;
+            return (idx % t.Rows) * cols + (idx / t.Rows);
+        }
+        return idx;
     }
 
     private static string ReadPresetName(ManagedObject grid, ManagedObject worker)
@@ -280,7 +322,10 @@ internal sealed class AvatarChildFlowReader
         if (t.Contains("UIFlowUI61408")) return "ear";
         if (t.Contains("UIFlowUI61409")) return "beard";
         if (t.Contains("UIFlowUI61411")) return "facial";
-        return null;
+        // Paint/scar/mole flows keep their flow number as the key until each
+        // screen↔flow pairing is confirmed from the log (e.g. avdesc.61503.*)
+        var m = Regex.Match(t, @"UIFlowUI(\d+)");
+        return m.Success ? m.Groups[1].Value : null;
     }
 
     private string _genderKey;
