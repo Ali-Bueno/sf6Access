@@ -105,6 +105,7 @@ public class ScreenRegistry
         UiDispatcher.Register(new ShopHooks());
         UiDispatcher.Register(new OnlineShopHooks());
         UiDispatcher.Register(new ComboTrialListHooks());
+        UiDispatcher.Register(new SpTalkNovelHooks());
 
         API.LogInfo("[SF6Access] ScreenRegistry: adapters registered");
     }

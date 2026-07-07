@@ -43,6 +43,7 @@ public sealed class ArcadeHooks : ScreenAdapter
     private static ManagedObject _winMessageParam;
 
     private static string _lastDialog;
+    private static string _lastDialogGuid;
     private static string _lastWinMessage;
 
     // Set by the SetMessage hook; the next frame reads the freshly-stored
@@ -82,7 +83,7 @@ public sealed class ArcadeHooks : ScreenAdapter
         _setMessagePending = false;
         if (_subtitleParam == null)
             FlowHelper.FindFlowParams(WatchedTypes).TryGetValue(SUBTITLE_PARAM, out _subtitleParam);
-        AnnounceFromStoredGuids();
+        AnnounceSubtitles();
     }
 
     protected override bool Locate()
@@ -97,6 +98,7 @@ public sealed class ArcadeHooks : ScreenAdapter
     protected override void OnActivate()
     {
         _lastDialog = null;
+        _lastDialogGuid = null;
         _lastWinMessage = null;
         API.LogInfo($"[SF6Access] Arcade text active (subtitles={_subtitleParam != null}, " +
             $"comic={_comicSubtitleParam != null}, winMessage={_winMessageParam != null})");
@@ -112,29 +114,30 @@ public sealed class ArcadeHooks : ScreenAdapter
 
     protected override void OnPoll()
     {
-        if (_subtitleParam != null) PollSubtitles();
+        if (_subtitleParam != null) AnnounceSubtitles();
         if (_comicSubtitleParam != null) PollComicSubtitles();
         if (_winMessageParam != null) PollWinMessage();
     }
 
-    private static void AnnounceFromStoredGuids()
+    /// <summary>
+    /// Announce the current cutscene line. Both the poll and the per-frame
+    /// SetMessage callback route here. The line's identity is its dialogue Guid
+    /// (OldDialog): the game keeps re-setting the same line every frame and the
+    /// rendered text differs between the GUI (full) and the resolved Guid
+    /// (occasionally missing a word), so deduping on TEXT made the two variants
+    /// ping-pong forever — dedup on the Guid instead so a line speaks once.
+    /// Prefer the on-screen GUI text; fall back to resolving the Guid only when
+    /// the Text widget hasn't refreshed (the final Battle-Hub-intro line).
+    /// </summary>
+    private static void AnnounceSubtitles()
     {
         if (_subtitleParam == null) return;
-        try
-        {
-            AnnounceDialog(FlowHelper.ResolveGuidField(_subtitleParam, "OldDialog"),
-                FlowHelper.ResolveGuidField(_subtitleParam, "OldName"));
-        }
-        catch { }
-    }
-
-    private static void PollSubtitles()
-    {
+        string guidKey = FlowHelper.ReadGuidKey(_subtitleParam, "OldDialog");
         string dialog = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_subtitleParam, "_TextDialog"))
             ?? FlowHelper.ResolveGuidField(_subtitleParam, "OldDialog");
-        AnnounceDialog(dialog,
-            FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_subtitleParam, "_TextName"))
-            ?? FlowHelper.ResolveGuidField(_subtitleParam, "OldName"));
+        string name = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_subtitleParam, "_TextName"))
+            ?? FlowHelper.ResolveGuidField(_subtitleParam, "OldName");
+        AnnounceDialog(dialog, name, guidKey);
     }
 
     private static void PollComicSubtitles()
@@ -144,14 +147,26 @@ public sealed class ArcadeHooks : ScreenAdapter
             FlowHelper.ReadGuiText(FlowHelper.GetObjectField(_comicSubtitleParam, "NameText")));
     }
 
-    private static void AnnounceDialog(string dialog, string name)
+    private static void AnnounceDialog(string dialog, string name, string guidKey = null)
     {
-        if (string.IsNullOrEmpty(dialog) || dialog == _lastDialog) return;
+        if (string.IsNullOrEmpty(dialog)) return;
+
+        // Dedup on the stable Guid identity when we have one (the rendered text
+        // varies between paths/frames); otherwise fall back to text dedup.
+        if (guidKey != null)
+        {
+            if (guidKey == _lastDialogGuid) return;
+            _lastDialogGuid = guidKey;
+        }
+        else if (dialog == _lastDialog)
+        {
+            return;
+        }
         _lastDialog = dialog;
 
         // Cutscene subtitles follow the in-game Subtitles option: when the player
         // has them off, don't read them (the dialogue is voiced). Tracked even when
-        // suppressed (lastDialog set above) so toggling back on doesn't re-read old lines.
+        // suppressed (keys set above) so toggling back on doesn't re-read old lines.
         if (!FlowHelper.AreSubtitlesEnabled()) return;
 
         // Read every line including the first — cutscene dialogue must not

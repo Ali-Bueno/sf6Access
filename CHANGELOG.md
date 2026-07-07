@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## v0.5.5 — 07/07/2026
+
+### World Tour — in-gameplay dialogue now reads
+- The visual-novel dialogue boxes shown while exploring World Tour and talking to NPCs (the ones with
+  a speaker name and a "Transcript" prompt) are now read out — speaker plus line — as each line
+  appears. When a conversation gives you a **branch choice**, the options are listed when they show up
+  and the focused option is read as you move the cursor. Previously all of this was completely silent.
+- Fixed story/cutscene subtitles that could get stuck **repeating the same line over and over**
+  (sometimes in a slightly garbled form, missing a word). Each line now speaks exactly once.
+
+### Avatar — Special Moves / Super Arts equipping
+- The equip screen now tells you your **slot usage**: it announces how many moves you have equipped out
+  of the maximum ("3 of 5 slots") when you open the screen and again after each change, and says
+  "Slots full" when there is no room left. There is **no point/cost system** for equipping — it is
+  limited by these per-category slots (Ground / Air / Super Arts), whose number grows with your
+  avatar's stats; a move shown as "locked" simply has not been learned/unlocked yet.
 
 ### World Tour — character creator rebuilt (colors, traits, presets)
 - The avatar creator (also used for Battle Hub avatars) got a full rework based on a complete
@@ -15,8 +30,9 @@
     descriptions for all ~600 of them, built from screenshots of every catalog page: "9. Bigote
     fino solo", "13. Media melena lisa con raya al lado", "91. Runa nórdica entrelazada". Catalogs
     shared by both body types are described once; bodies, ears, expressions and premade avatars
-    are described per body type. (Descriptions are in Spanish and English for now; they live in
-    the mod's translation files, so anyone can edit or translate them without recompiling.)
+    are described per body type. The descriptions are now available in **all 13 game languages**
+    (they live in the mod's translation files, so anyone can edit or translate them without
+    recompiling).
   - Category and sub-category names now come from the game's localized text (previously hardcoded
     English).
   - Sliders, the eyelash type spinners, the physique triangle, paint slots, the voice list and the

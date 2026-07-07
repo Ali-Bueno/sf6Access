@@ -350,6 +350,13 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `UIFlowDemoSubtibles.Param.SetMessage(Guid,Guid)` (post; new guids stored in `OldName`/`OldDialog`).
   WT intro: `app.worldtour.DemoSubtitles.UIFlowDemoSubtibles.Param`. Commentary subtitle types:
   `UIComicDemoSubtitle` (cutscene), `UICommentatorSubTitle`.
+- **Dedup a WT/demo line by its `OldDialog` Guid, not the rendered text** (`FlowHelper.ReadGuidKey`).
+  The game re-calls `SetMessage` every frame while a line holds, and the two announce paths read
+  different text for the SAME line — the poll reads the GUI `_TextDialog` (full) while the SetMessage
+  callback resolved the `OldDialog` Guid (occasionally missing a word). Sharing a text-based `_lastDialog`
+  made the two variants ping-pong and repeat forever. `AnnounceSubtitles` now keys both paths on the
+  Guid (one announce per line) and prefers the GUI text, falling back to the resolved Guid only when
+  `_TextDialog` hasn't refreshed (the final BH-intro line).
 - **Subtitles option gate:** `app.Option.ValueType.SubTitleDisplay = 450`, read via
   `app.Option.GetOptionValueOnOff(ValueType)`. `FlowHelper.AreSubtitlesEnabled()` (fails OPEN). Gates
   cutscene dialogue; win quotes are NOT gated.
@@ -357,6 +364,18 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `mTextDialogueGuid`). Advance hook `app.worldtour.SpTalkCtrl.SubtitlesProgress.ChangePage(
   SpTalkSubtitlesData)` (AddPre, args[1]=line; resolve on next LateUpdate). SpTalkCtrl/SpTalkSystem are
   Components, not singletons. BH ambient greetings are voice-only random barks (not routed through SpTalk).
+- **WT novel dialogue (`SpTalkNovelHooks`, SingleParamScreenAdapter):** the visual-novel text box shown
+  during World Tour gameplay = `app.worldtour.UIFlowSpTalkNovelMain.Param`. NOT covered by SpTalkHooks
+  or ArcadeHooks — was silent. IMPORTANT: `Param.setMessage(string)` / `setChoice(...)` **never fire**
+  for this path (hooking them is a dead end — confirmed via log). The line lives in the on-screen
+  **`MessageWindow`** GUI as `e_text_conversation` (dialogue, FULL string even mid-typewriter) +
+  `e_text_name` (speaker); read it with `GuiTextReader.ReadTextsByOwner("MessageWindow")` and dedup on
+  the conversation text. This is the primary dialogue UI (always shown), so it is **NOT** gated by the
+  cutscene Subtitles option. Branch choices: the active novel item (`UIPartsNovelItem` where
+  `canSelect()` is true) exposes `getChoiceIndex()` (focused option) and `ChoiceItems`
+  (`UIPartsNovelChoiceItem.Text` labels) — read the list on appearance and the focused option as the
+  cursor moves. Speaker-name / choice-label element live in `MessageWindow` (`TextItems[].Text` are the
+  novel bubbles; the conversation element is what the reader keys on).
 - **Final-boss mid-fight dialogue CANNOT be read** — voice-only, no subtitle widget
   (`app.ArcadeBossBattleVoice`). Pre-fight cutscene dialogue IS read.
 

@@ -724,6 +724,35 @@ public static partial class FlowHelper
     }
 
     /// <summary>
+    /// The raw 16-byte Guid in a field as a stable hex identity key (NOT the
+    /// localized message it points to), or null when the field is absent or the
+    /// Guid is all-zero. Use this to dedup on the line/message identity when the
+    /// resolved text can vary frame-to-frame (e.g. subtitle typewriter reveal).
+    /// </summary>
+    public static string ReadGuidKey(ManagedObject obj, string fieldName)
+    {
+        if (obj == null) return null;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField($"<{fieldName}>k__BackingField") ?? td?.GetField(fieldName);
+            if (field == null) return null;
+
+            var raw = field.GetDataBoxed(typeof(Guid), obj.GetAddress(), false);
+            if (raw is REFrameworkNET.ValueType vt)
+            {
+                ulong addr = vt.GetAddress();
+                if (addr == 0) return null;
+                var bytes = new byte[16];
+                Marshal.Copy((IntPtr)(long)addr, bytes, 0, 16);
+                return Array.TrueForAll(bytes, b => b == 0) ? null : BitConverter.ToString(bytes);
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
     /// Return only the segments of newText not present in oldText
     /// ("Search range. Worldwide" → "Search range. Limited" yields "Limited").
     /// Falls back to the full new text when nothing differs segment-wise.
