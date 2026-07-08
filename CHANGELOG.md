@@ -17,6 +17,12 @@
   limited by these per-category slots (Ground / Air / Super Arts), whose number grows with your
   avatar's stats; a move shown as "locked" simply has not been learned/unlocked yet.
 
+### Localization — remaining English text fixed
+- Several menus and labels that were still spoken in English regardless of your game language are now
+  fully localized: screen titles, profile labels, the status-menu tabs and equip slots, and the reward
+  claim status ("claimed" / "not claimed"). With this, the mod's own spoken text should follow your
+  game language everywhere.
+
 ### World Tour — character creator rebuilt (colors, traits, presets)
 - The avatar creator (also used for Battle Hub avatars) got a full rework based on a complete
   sweep of the game's creator code. New in this version:
