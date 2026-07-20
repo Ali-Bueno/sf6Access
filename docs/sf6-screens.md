@@ -614,6 +614,69 @@ not resolve these. Recipes:
 
 ---
 
+## World Tour — field awareness (interactable radar + avatar positions)
+
+Runtime-confirmed in the WT opening tutorial (2026-07-19/20). Code:
+`Hooks/WorldTour/FieldAwarenessHooks.cs` + `Services/WorldTour/WorldTourStateService.cs`.
+
+### The two-level model (why one list is not enough)
+- **`AvatarManager.CurrentAccessInfoList` is ARM'S-LENGTH ONLY.** Confirmed live: it stays `count=0`
+  for an entire walk across the tutorial and only reaches `count=1` while the player is practically
+  touching the target (logged `dist=1.54`). It answers "what can I interact with *right now*" — it
+  can NEVER guide a player toward a distant NPC.
+- **Distant guidance must come from world positions**: `AvatarManager.AvatarList` holds every avatar in
+  the field, so `|otherPos − playerPos|` gives a real metric distance for hot/cold navigation.
+  Confirmed live: the tutorial list is `count=3` — `[0]` `AvatarPlayer` (the player), `[1]`/`[2]`
+  `AvatarNpc`.
+
+### Reading the lists
+- `CurrentAccessInfoList` entry chain (verified): `AccessInfo.TargetInfo` →
+  `AccessTargetInfo { Target, Type, ShapeIndex, vec3 NearPos, float Distance, float Angle,
+  BasePriority }`. `Target.GetDispName()` and `Target.GetContactUIType()` both dispatch correctly per
+  concrete subtype — don't cache the Method across instances.
+- `CurrentFailedMostNearInfoList` **does not exist at runtime** ("Method not found") — it appears only
+  in the decompiled source. `CurrentDefaultAccessInfoList` exists but read `0` throughout.
+- `AvatarList` is an `AvatarManager.SafeList<AvatarBase>` wrapper whose `get_Count` is not the standard
+  accessor: it reports `0`. Read its inner `System.Collections.Generic.List<AvatarBase>` field instead
+  (`FindInnerList` scans the wrapper's fields for a `System...List` type).
+- **The WT managers are recreated on scene load.** `GetManagedSingleton` works for them, but a pointer
+  cached during the WT loading screen goes dead once the field spawns and every later read silently
+  returns null/0. `WorldTourStateService.Singleton()` therefore re-fetches on every call and re-binds
+  when `GetAddress()` changes — the stale-param rule applies to singletons too, not just flow params.
+
+### Avatar world position
+- `AvatarBase` has **no `DrawObj`** (in the decompiled source that name only exists inside the nested
+  per-body-part `WTBodyDisp` struct). Use the avatar's own `Component.get_GameObject()` →
+  `get_Transform()` → `get_Position()`.
+- Read the components with `FlowHelper.ReadVecComponent` — see the `GetDataBoxed`
+  `isContainerValueType` gotcha in `docs/sf6-architecture.md`; getting that flag wrong returns x/y = 0
+  and z = adjacent garbage for every avatar, which silently collapses all distances to zero.
+- Sanity-guard the result: require every component finite, and treat an EXACT `(0,0,0)` as a failed
+  read (nothing stands at the world origin) rather than announcing a bogus "0 metres".
+- Per-instance fallbacks if the GameObject ever proves to be shared across avatars:
+  `AvatarBase.GetPreFrameTransform(ref vec3)` and `AvatarBase.GetAccessCheckPos(out vec3 pos, out vec3
+  dir)` — the latter is the very position the game's own contact system uses to compute
+  `AccessTargetInfo.Distance`/`Angle`.
+
+### Naming NPCs
+`GetDispName` lives on `AvatarAccessTargetBase` (a sibling component reached through the access list),
+**not** on `AvatarBase`/`AvatarNpc`. A runtime member dump of `AvatarNpc` confirms it exposes no
+name/id/CharaId member at all. So avatars walked via `AvatarList` cannot be named — they can only be
+announced by kind and distance until they enter access range. For "which NPC is the current
+objective", use `AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessTargetInfo`, including
+`NearPos`) or `__GetCurrentActionTargetObject()`.
+
+### Kind words
+`HudDef.ContactUIType`: `None = -1`, `NPC = 0`, `Legendary = 1` (a Master), `OM = 2` (object/gimmick),
+`OtherPlayer = 3`. Note Luke reads as `Legendary` in the opening tutorial, so he is announced as
+"master", not "person".
+
+### Diagnostics
+Log floats with `CultureInfo.InvariantCulture`: under a Spanish locale the decimal comma collides with
+the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,0)`).
+
+---
+
 ## World Tour / Avatar — other
 
 ### Avatar training options (`UIWorldTourTrainingMenu`)

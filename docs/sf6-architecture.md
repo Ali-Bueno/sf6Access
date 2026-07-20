@@ -130,8 +130,23 @@ keeps the adapter active).
 - `UIFlowManager._Handles` is a **field**, not a property; iterate it, **newest first** (pick first match).
 - `IObject.Call` with a full signature string (`"getChildren(System.Type)"`) does **not** resolve —
   use `TypeDefinition.GetMethod(sig).InvokeBoxed`.
+- **`FlowHelper.Call(obj, name, params object[] args)` — the 3rd+ params are METHOD ARGUMENTS, not a
+  flag.** For a NO-ARG getter call `Call(obj, "get_X")` with nothing extra; passing `Call(obj, "get_X", false)`
+  invokes `get_X(false)`, finds no such overload and returns null (silently). This bit the whole World
+  Tour field reader — `GetDispName`/`get_Transform`/`get_Position`/`GetContactUIType`/`IsActivated` all
+  returned null, so the radar never spoke a name and positions read (0,0,0). Match `GuiTextReader`, which
+  calls `Call(transformObj, "get_Position")` with no trailing arg.
 - `Field.GetDataBoxed()` returns `REFrameworkNET.ValueType` for structs (not System types). Pass that
   ValueType DIRECTLY to `InvokeBoxed` — converting to `System.Guid` causes an access violation.
+- **`GetDataBoxed(addr, isContainerValueType)`: the flag describes the CONTAINER, not the field.** When
+  reading a component out of a `via.vec2/vec3/vec4` (or any struct) the container IS a value type, so it
+  must be `true`; `false` makes the read skip a managed-object header that isn't there and the
+  components land at the wrong offsets — x/y come back 0 and z reads adjacent garbage (this silently
+  broke every World Tour avatar world position). Use `FlowHelper.ReadVecComponent`, the single shared
+  reader (getter first, then the value-type field path); don't hand-roll a second copy.
+- **`AvatarBase` has no `DrawObj`** — in the decompiled source `DrawObj` only exists inside the nested
+  per-body-part `WTBodyDisp` struct. Reach an avatar's transform through its own
+  `Component.get_GameObject()` → `get_Transform()` → `get_Position()`.
 - `via.gui` `get_Position` returns nothing on Text/Control — don't trust it for ordering.
 - C# discard `out _` does **not** compile here (namespace `_` exists) — use a named dummy.
 - **Callback timing:** use `LateUpdateBehavior.Post` (data is fresh); `UpdateBehavior.Pre` sees stale data.
@@ -205,6 +220,16 @@ verifying the text is image/texture-based and truly unreadable, and document WHY
   `FlowHelper.UiLang` covers all of them; lang file names = the enum member lowercased ("zhhant.txt").
   Currency/brand proper nouns (Zenny, Fighter Coins, Drive Tickets, World Tour, Battle Hub…) stay in
   English, matching the game's own localizations.
+- Platform/variant + reference tags via `FlowHelper.ResolvePlatformTags` (call it BEFORE `CleanTags`,
+  which would silently erase them). Used by Tips/help windows and tutorial operation prompts, where the
+  body renders as `<PAD ref="Name"><KBM ref="Name">` device variants (e.g. the World Tour "how to walk"
+  tip). The pipeline (runtime-confirmed 2026-07-07 via probe): `app.MessageManager.ExchangeGamePadTag` /
+  `ExchangeKeyboardMouseTag` take the tag's INNER arg (`ref="Name"`) and, on the ACTIVE input device,
+  emit `<REF Name>` (empty on the other device); then `<REF Name>` is a message-BY-NAME reference,
+  resolved by `FlowHelper.ResolveMessageName` = `via.gui.message.getGuidByName(Name)` → `ResolveGuid`.
+  `<PLATMSG>` (Steam-store dialog whole-message) uses `ExchangePlatformMessage`. NOTE: if a Tips body
+  reads only its heading, the `UIFlowDialog.TipsParam.ArrPage[i].Message` Guid was empty — fall back to
+  the `Tips_Media` GUI raw text and run it through this resolver.
 - Input tags kept as speech by `SpeakableIcons`: `<INPT id="BTL_X" type="dc">` (type="g"=stick),
   `<CMD _236>` (numpad motion), `<ICON …>`, `<TYPEICON c>`. The English vocabulary (directions,
   motions, attack icons, input glyphs) lives in **`Services/FlowHelperVocab.cs`** (partial

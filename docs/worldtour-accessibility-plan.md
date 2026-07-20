@@ -316,17 +316,52 @@ todo tipo/campo de este doc debe **verificarse con un dump F8/F9** antes de cons
 texto siempre del juego (Guids → message table); anunciar CAMBIOS, no estados.
 
 ### Phase WT-1 — Field awareness core (foundation, highest value)
-1. **`WorldTourStateService`** (new service): cache `WTCityManager` (`IsActivated()` gate for every
-   WT hook), expose city/section/time/weather. Announce area changes via `UICityHud_SectionNotice`
-   (hook its request) or by polling `CitySectionManager.CurrentSectionId` →
-   `CitySectionDataUserDataRecord.SectionNameID.GUID`.
-2. **Interactable radar** (new hook): poll `AvatarManager.CurrentAccessInfoList`; announce the
-   CURRENT access target when it changes (`Target.GetDispName()` + prompt `UiGuideId`); on-demand
-   key lists nearby targets sorted by `Distance` with clock direction (camera yaw from
-   `WTPlayerCameraController.getCurrentRotation()`, or `WTPlayerManager.GetPlayerToAngle`).
+1. **`WorldTourStateService`** (new service) — **BUILT (untested), `Services/WorldTour/`**: caches
+   `WTCityManager`/`CitySectionManager`/`AvatarManager`; `IsInWorldTour()` = the `IsActivated()` gate
+   for every WT hook; exposes `CityId`/`SituationId`/`TimeType`/`WeatherType`/`CurrentSectionId` (raw
+   fields). STILL TODO: area-change *announcement* — the section→name resolution
+   (`CitySectionDataUserDataRecord.SectionNameID.GUID`) / the `UICityHud_SectionNotice` banner is the
+   riskiest part; deferred to a dump-backed follow-up. Camera (`WTPlayerCameraController`) intentionally
+   NOT wired yet (it's a Behavior, not a singleton; only needed for #3b/#13).
+2. **Interactable radar** (new hook) — **WORKING IN-GAME (confirmed 2026-07-20),
+   `Hooks/WorldTour/FieldAwarenessHooks.cs`**: always-on `[Callback]`. Announces the nearest access
+   target's name+kind on change (confirmed: names Luke at ~1.5 m), and the on-demand key (provisional
+   **N** / pad Start) lists what's around. Because the access list is arm's-length only, that key falls
+   back to `AvatarList` world positions and speaks real metres ("2 cerca: persona a 14 metros, persona
+   a 5 metros") — hot/cold navigation toward a distant NPC. **The gate is AvatarManager resolving, not
+   `IsInWorldTour()`**: the opening tutorial is a real avatar field but NOT an activated city, and that
+   is exactly where a blind player most needs to find Luke.
+   → All confirmed runtime details (the two-level list model, SafeList unwrapping, position reads,
+   why NPCs from `AvatarList` can't be named) are documented in
+   **`docs/sf6-screens.md` § World Tour — field awareness**. Read that before touching this hook.
+   Remaining in this item: clock direction ("Luke a las 2"), the Talk/Examine verb from
+   `AccessCheckShape.UiGuideId`, and a final non-conflicting key binding.
+   **CONFIRMED (offline, decompiled 2026-07-07):** `AvatarManager`, `WTCityManager` and
+   `WTPlayerManager` are all `Behavior, Component` — but `GetManagedSingleton` works for them anyway
+   (RE Engine registers these WT managers in the singleton table; proven by `CurrencyReader` reaching
+   `WTPlayerManager` — the money readout is confirmed working). So the singleton access in the service
+   is **fine**; no component-find needed. The `AccessInfo` struct chain is verified against the
+   decompiled interfaces: `AvatarManager.CurrentAccessInfoList : IList<AccessInfo>` → `AccessInfo.TargetInfo`
+   → `IAccessTargetSearcher.AccessTargetInfo { AvatarAccessTargetBase Target; AccessType Type; int ShapeIndex;`
+   `vec3 NearPos; float Distance; float Angle; float BasePriority }`. There is also
+   `IAccessTargetSearcher.GetCurrentTarget()` / `AccessInfo.CurrentTargetInfo` — a direct "current
+   interaction target" accessor, likely better than "nearest by Distance" for the change announcement.
+   **DONE since:** (a) the `TargetInfo`/`Distance` reads are confirmed live; (b) metric distance is
+   confirmed live from world positions. **NEXT: the CLOCK direction.** Reference frame is DECIDED
+   (user, 2026-07-20): use the **CAMERA yaw**, not the avatar's rotation — in World Tour the player
+   steers relative to what the camera shows, so "a las 2" must mean 2 o'clock on screen. Source:
+   `WTPlayerCameraController` (a Behavior, not a singleton — it is NOT wired into
+   `WorldTourStateService` yet; reach it via component find, and verify against a dump). Build the
+   "target pos vs player pos + camera yaw → clock + distance" helper ONCE and share it with #3 and
+   #3b. No magic numbers: every input is game data.
 3. **Contact panel reader**: `UIPartsContactPanelNPC` (name, level + `LEVEL_LABEL_STATE` danger,
    talk vs can't-battle icon, drop rewards via `UIPartsContactDetailItem`). Hook
    `UpdateAccessTarget(AvatarAccessTargetBase)` for the change signal.
+3b. **Objective direction on demand** (moved here from WT-2 #6 — shares the clock-direction/distance
+    math with #2 and #3, so build the "target pos vs player pos + camera yaw → clock + distance"
+    helper ONCE and reuse it for interactables, contact panel, and mission objective):
+    `UICityHud_MissionGuide.ProgressMisionInfo.TargetObject` position vs player position + camera
+    yaw → "objetivo a las 2, 30 metros"; repeatable key.
 
 ### Phase WT-2 — Quests
 4. **Quest tracker reader**: `UICityHud_MissionProgress.ProgressInfo` (MissionName + PhaseData
@@ -335,8 +370,9 @@ texto siempre del juego (Guids → message table); anunciar CAMBIOS, no estados.
 5. **Progression notices**: one adapter covering the `UICityHud_*Notice` family (mission accepted/
    cleared, chapter, level-up, item get, style-up, mile, bond) — hook their `Request*` methods or
    poll their texts; `HudDef.NoticeType {Start, Clear, Update}` picks the phrasing.
-6. **Objective direction on demand**: `UICityHud_MissionGuide.ProgressMisionInfo.TargetObject`
-   position vs player position + camera yaw → "objetivo a las 2, 30 metros"; repeatable key.
+6. **Objective direction on demand** — **MOVED to WT-1 (#3b)**: it reuses the same clock-direction/
+   distance helper as the interactable radar and contact panel, so it is cheaper to build alongside
+   them in Phase WT-1 than to stand it up separately here.
 7. **Quest log app** (`UIFlowUI50600`): try generic reader first (it has ScrollLists); dedicated
    adapter only if rows are texture-rendered.
 

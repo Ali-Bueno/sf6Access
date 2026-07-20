@@ -1,5 +1,12 @@
 # SF6Access — Street Fighter 6 Accessibility Mod
 
+> **Shared accessibility playbook:** this mod follows the shared playbook at `D:\code\modding projects`
+> (`PRINCIPLES.md` engineering ground rules + `reference/` library — incl. `reference/engines/reframework/`
+> and `reference/screen-reader-integration/`). The file below holds the game-specific rules for Street Fighter 6.
+> Progress and next steps live in this repo's `STATUS.md` — open it first.
+> Note: this mod currently uses **Tolk**; the shared playbook's default is **PRISM** — migrating is a
+> separate code decision, not required by this note.
+
 REFramework.NET **C#** plugin that makes Street Fighter 6 usable with a screen reader (Tolk). Built on
 Capcom's RE Engine via REFramework. This repository began as a generic RE Engine modding skeleton (the
 `docs/lua-*` and `docs/csharp-*` reference files remain for that); it is now the SF6Access plugin.
