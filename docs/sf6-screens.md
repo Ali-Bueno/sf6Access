@@ -658,13 +658,21 @@ Runtime-confirmed in the WT opening tutorial (2026-07-19/20). Code:
   dir)` — the latter is the very position the game's own contact system uses to compute
   `AccessTargetInfo.Distance`/`Angle`.
 
-### Naming NPCs
-`GetDispName` lives on `AvatarAccessTargetBase` (a sibling component reached through the access list),
-**not** on `AvatarBase`/`AvatarNpc`. A runtime member dump of `AvatarNpc` confirms it exposes no
-name/id/CharaId member at all. So avatars walked via `AvatarList` cannot be named — they can only be
-announced by kind and distance until they enter access range. For "which NPC is the current
-objective", use `AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessTargetInfo`, including
-`NearPos`) or `__GetCurrentActionTargetObject()`.
+### Naming NPCs (incl. distant ones)
+`GetDispName` lives on `AvatarAccessTargetBase`, **not** on `AvatarBase`/`AvatarNpc` (a runtime member
+dump of `AvatarNpc` confirms it exposes no name/id/CharaId member at all). But the access-target
+component (`WTNpcAccessTarget`, `WTNpcAccessTargetSimple`, `WTOmAccessTarget*`, ...) is a Behavior
+**attached to the avatar's own GameObject** — so a DISTANT avatar from `AvatarList` IS nameable: walk
+`avatar.get_GameObject().get_Components()` (a native array — `FlowHelper.GetListCount/GetListItem`
+handle arrays via `get_Length`/`Get`) and call `GetDispName`/`GetContactUIType` on the component whose
+type name contains `AccessTarget` (searcher components also match the substring but return no name —
+skip empty results). Fallback name source on the same GameObject: `WTNpcContext` (`NpcName` property,
+`NpcID`, `AvatarNpc` back-reference; `RandomNameUpdate` populates crowd names). Global registries also
+exist if ever needed: `app.GUIAccessDataManager.AccessTargetList`
+(`IDictionary<ContactUIType, IList<AvatarAccessTargetBase>>` + `GetAccessTargetData(type)`) and
+`AvatarManager.AccessTargetList` (untyped). For "which NPC is the current objective", use
+`AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessTargetInfo`, including `NearPos`) or
+`__GetCurrentActionTargetObject()`.
 
 ### Kind words
 `HudDef.ContactUIType`: `None = -1`, `NPC = 0`, `Legendary = 1` (a Master), `OM = 2` (object/gimmick),
@@ -689,9 +697,11 @@ objective", use `AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessT
 - Hour math: `ahead = d·fwd`, `rightward = dx*fz − dz*fx` (up × forward in Y-up), hour =
   `round(atan2(rightward, ahead)/30°)` mapped 1–12; hour 0 is returned when the frame is unreadable
   (fall back to the plain distance phrase).
-- **PENDING in-game calibration:** left/right handedness (a mirrored 3↔9 reading = negate `rightward`;
-  a 6-for-12 = forward source inverted). The per-press `clock-diag` log line records the offset under
-  BOTH frames, so one walk toward a target settles frame + handedness at once.
+- **Calibration (2026-07-20 run):** forward CONFIRMED — target dead ahead read `camHour=12` in game
+  (`d=(0.01,5.17)`, `camFwd=(0.06,1.00)`), and camera/avatar frames agreed. Left/right handedness
+  (1↔11 mirror) still unverified — needs one lateral ground-truth: with the target at 12, rotate the
+  camera RIGHT; the hour should DROP toward 11 (if it rises toward 1, negate `rightward` in
+  `ClockHour`). The per-press `clock-diag` log line records the offset under both frames.
 
 ### Diagnostics
 Log floats with `CultureInfo.InvariantCulture`: under a Spanish locale the decimal comma collides with

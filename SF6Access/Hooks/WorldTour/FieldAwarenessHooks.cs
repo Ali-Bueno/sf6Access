@@ -296,26 +296,27 @@ public class FieldAwarenessHooks
         var camFwd = FieldDirectionService.GetCameraForward();
         var avFwd = FieldDirectionService.GetAvatarForward(playerAvatar);
 
-        var others = new List<(float dist, float dx, float dz)>();
+        var others = new List<(float dist, float dx, float dz, ManagedObject av)>();
         foreach (var (av, type) in entries)
         {
             if (type.Contains("AvatarPlayer")) continue;
             var (x, y, z, ok) = ReadAvatarWorldPos(av);
             if (!ok || (x == 0f && y == 0f && z == 0f)) continue;
             float dx = x - player.x, dy = y - player.y, dz = z - player.z;
-            others.Add(((float)System.Math.Sqrt(dx * dx + dy * dy + dz * dz), dx, dz));
+            others.Add(((float)System.Math.Sqrt(dx * dx + dy * dy + dz * dz), dx, dz, av));
         }
         if (others.Count == 0) return false;
 
         others.Sort((a, b) => a.dist.CompareTo(b.dist));
         var parts = new List<string>(others.Count);
-        foreach (var (dist, dx, dz) in others)
+        foreach (var (dist, dx, dz, av) in others)
         {
             int meters = (int)System.Math.Round(dist);
             int hour = FieldDirectionService.ClockHour(camFwd, dx, dz);
+            string what = DescribeDistantAvatar(av) ?? LocalizedText.ContactPerson();
             parts.Add(hour > 0
-                ? LocalizedText.AtClockMeters(LocalizedText.ContactPerson(), hour, meters)
-                : LocalizedText.AtMeters(LocalizedText.ContactPerson(), meters));
+                ? LocalizedText.AtClockMeters(what, hour, meters)
+                : LocalizedText.AtMeters(what, meters));
 
             // DIAGNOSTIC (clock calibration): the same offset under both frames.
             // In-game check: walk toward the target (camera settles behind the
@@ -332,6 +333,50 @@ public class FieldAwarenessHooks
         ScreenReaderService.Speak(
             $"{LocalizedText.NearbyCount(parts.Count)}: {string.Join(", ", parts)}", interrupt: true);
         return true;
+    }
+
+    /// <summary>Name + kind of a DISTANT avatar, or null. <c>GetDispName</c> is
+    /// not on <c>AvatarBase</c>, but the access-target component that carries it
+    /// (<c>WTNpcAccessTarget</c> etc. — the very component the in-range list
+    /// hands us) is a SIBLING component on the avatar's own GameObject, so walk
+    /// the GameObject's component array. <c>WTNpcContext.NpcName</c> is the
+    /// fallback name source (crowd NPCs may have no access target).</summary>
+    private static string DescribeDistantAvatar(ManagedObject avatar)
+    {
+        try
+        {
+            var go = FlowHelper.Call(avatar, "get_GameObject") as ManagedObject;
+            var comps = FlowHelper.Call(go, "get_Components") as ManagedObject;
+            int n = FlowHelper.GetListCount(comps);
+            ManagedObject npcContext = null;
+            for (int i = 0; i < n; i++)
+            {
+                var c = FlowHelper.GetListItem(comps, i);
+                string t = c?.GetTypeDefinition()?.GetFullName() ?? "";
+                if (t.Contains("AccessTarget"))
+                {
+                    // Searcher components also match the substring but have no
+                    // GetDispName — the empty-name check skips them naturally.
+                    string name = FlowHelper.CleanTags(FlowHelper.Call(c, "GetDispName") as string)?.Trim();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        string kind = KindWord(ReadContactType(c));
+                        return string.IsNullOrEmpty(kind) ? name : $"{name}, {kind}";
+                    }
+                }
+                else if (t.EndsWith("WTNpcContext"))
+                {
+                    npcContext = c;
+                }
+            }
+            if (npcContext != null)
+            {
+                string name = FlowHelper.CleanTags(FlowHelper.Call(npcContext, "get_NpcName") as string)?.Trim();
+                if (!string.IsNullOrEmpty(name)) return name;
+            }
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>An inner <c>System...List`1</c> field of a wrapper object (e.g.

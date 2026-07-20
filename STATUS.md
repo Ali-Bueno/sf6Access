@@ -44,14 +44,14 @@
 | Shared services | `FlowHelper`, `GuiTextReader`, `GroupFocusPoller`, stale-param re-entry handling | `docs/sf6-architecture.md`, `SF6Access/Services/` |
 
 ## Next step
-World Tour clock direction is BUILT (2026-07-20, camera-relative via `app.CameraManager`
-LookAt−Position — no quaternions needed; `Services/WorldTour/FieldDirectionService.cs`): calibrate it
-in game — walk toward the target and press the nearby key; camera-frame hour should say 12 (a 6 = the
-forward source is inverted, 3↔9 = mirrored handedness; the `clock-diag` log line records the offset
-under BOTH the camera and the avatar-facing frames so one walk settles the reference-frame question).
-Also still open: the final key binding (N/Start is provisional). Then: verify the shared avatar/status
-menus inside World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked
-character creator.
+World Tour clock direction: forward axis CONFIRMED in game 2026-07-20 ("a las 12" with Luke dead
+ahead; camera and avatar frames agreed in the `clock-diag` log). Distant avatars are now NAMED via the
+sibling access-target component on their GameObject (see `docs/sf6-screens.md` § Naming NPCs) — verify
+in game that N now says "Luke, maestro a las 12, a 14 metros". Remaining calibration: the left/right
+mirror (with the target at 12, rotate the camera right → hour should drop toward 11; if it rises
+toward 1, negate `rightward` in `FieldDirectionService.ClockHour`). Also still open: the final key
+binding (N/Start is provisional). Then: verify the shared avatar/status menus inside World Tour (not
+just Avatar Arcade) and complete the in-game pass on the reworked character creator.
 
 ## Known issues / open questions
 - Uses **Tolk**, not PRISM (the playbook default is PRISM).
