@@ -11,14 +11,14 @@ namespace SF6Access.Services.WorldTour;
 /// "push the stick up", not "where the avatar model happens to face". The camera
 /// forward comes from <c>app.CameraManager</c> (<c>LookAtPosition −
 /// CameraPosition</c>, two positions, so no quaternion decomposition and no sign
-/// ambiguity; <c>CameraVec</c> is the fallback). The avatar's own facing
-/// (<c>via.Transform.AxisZ</c>, RE Engine's forward-axis convention) is exposed
-/// only for the calibration diagnostics that compare both frames in one test.</para>
+/// ambiguity; <c>CameraVec</c> is the fallback). If an avatar-facing frame is
+/// ever needed instead, it is GameObject → Transform → <c>get_AxisZ</c> (RE
+/// Engine's forward-axis convention) — see the repo docs.</para>
 ///
-/// <para><b>Calibration status:</b> the left/right sense of the hour (whether a
-/// target to the player's right reads 3 or 9) depends on RE Engine's XZ
-/// handedness and is NOT yet runtime-confirmed — if the in-game test reads
-/// mirrored, flip the sign of <c>rightward</c> in <see cref="ClockHour"/>.</para>
+/// <para><b>Calibration status (2026-07-20, in game):</b> forward axis confirmed
+/// (target dead ahead reads 12) and left/right handedness confirmed (rotating
+/// the camera right drops the hour toward 11) — see the <c>rightward</c> comment
+/// in <see cref="ClockHour"/> for the confirmed sign convention.</para>
 /// </summary>
 public static class FieldDirectionService
 {
@@ -58,36 +58,18 @@ public static class FieldDirectionService
         return vec.ok ? Flatten(vec.x, vec.z) : default;
     }
 
-    /// <summary>The avatar's own ground-plane facing —
-    /// GameObject → Transform → <c>AxisZ</c> (RE Engine's forward axis).
-    /// Diagnostic-only until the frame question is settled in game.</summary>
-    public static FlatDir GetAvatarForward(ManagedObject avatar)
-    {
-        try
-        {
-            var go = FlowHelper.Call(avatar, "get_GameObject") as ManagedObject;
-            var tr = FlowHelper.Call(go, "get_Transform") as ManagedObject;
-            var axisZ = FlowHelper.Call(tr, "get_AxisZ");
-            if (axisZ == null) return default;
-            float x = FlowHelper.ReadVecComponent(axisZ, "x");
-            float z = FlowHelper.ReadVecComponent(axisZ, "z");
-            if (!float.IsFinite(x) || !float.IsFinite(z)) return default;
-            return Flatten(x, z);
-        }
-        catch { return default; }
-    }
-
     /// <summary>The clock hour (1–12) of the offset <c>(dx, dz)</c> relative to
-    /// <c>forward</c>: 12 = straight ahead, 3 = right, 6 = behind, 9 = left
-    /// (pending the handedness calibration noted in the class doc). Returns 0
-    /// when the forward frame is unusable.</summary>
+    /// <c>forward</c>: 12 = straight ahead, 3 = right, 6 = behind, 9 = left.
+    /// Returns 0 when the forward frame is unusable.</summary>
     public static int ClockHour(FlatDir forward, float dx, float dz)
     {
         if (!forward.Ok) return 0;
         float ahead = dx * forward.X + dz * forward.Z;
-        // Rightward basis = up × forward in a Y-up world: (fz, -fx) on the XZ
-        // plane. If the in-game test reads mirrored (3↔9), negate this dot.
-        float rightward = dx * forward.Z - dz * forward.X;
+        // Rightward basis = forward × up = (-fz, fx) on the XZ plane: RE
+        // Engine's world is right-handed Y-up, CONFIRMED in game 2026-07-20 —
+        // with the target at 12, rotating the camera right must drop the hour
+        // toward 11 (the opposite sign read 1, i.e. mirrored).
+        float rightward = dz * forward.X - dx * forward.Z;
         if (ahead == 0f && rightward == 0f) return 0;
 
         double deg = System.Math.Atan2(rightward, ahead) * 180.0 / System.Math.PI;

@@ -21,14 +21,10 @@ namespace SF6Access.Hooks.WorldTour;
 /// the target plus the game's already-computed <c>Distance</c>/<c>Angle</c> — so
 /// nothing positional is recomputed here.
 ///
-/// <para>NOTE (clock calibration): the distant-avatar readout speaks a
-/// camera-relative clock hour ("Luke, master at 12 o'clock, 5 meters") via
-/// <see cref="FieldDirectionService"/>. Confirmed in game 2026-07-20: forward
-/// axis (12 dead ahead), live update while the camera rotates, and the camera
-/// frame as the right reference. Only the left/right mirror (1↔11) is still
-/// unconfirmed — the <c>clock-diag</c> log stays until that is settled (a
-/// mirrored reading means negating <c>rightward</c> in
-/// <see cref="FieldDirectionService.ClockHour"/>).</para>
+/// <para>The distant-avatar readout speaks a camera-relative clock hour
+/// ("Luke, master at 12 o'clock, 5 meters") via
+/// <see cref="FieldDirectionService"/> — fully calibrated in game 2026-07-20
+/// (forward axis, left/right handedness, live update under camera rotation).</para>
 /// </summary>
 public class FieldAwarenessHooks
 {
@@ -228,20 +224,17 @@ public class FieldAwarenessHooks
         // origin), so treat it as unreadable rather than announce garbage.
         (float x, float y, float z) player = default;
         bool playerOk = false;
-        ManagedObject playerAvatar = null;
         foreach (var (av, type) in entries)
         {
             if (!type.Contains("AvatarPlayer")) continue;
             var (x, y, z, ok) = ReadAvatarWorldPos(av);
-            if (ok && (x != 0f || y != 0f || z != 0f)) { player = (x, y, z); playerOk = true; playerAvatar = av; }
+            if (ok && (x != 0f || y != 0f || z != 0f)) { player = (x, y, z); playerOk = true; }
             break;
         }
         if (!playerOk) return false;
 
-        // Clock frame: camera forward (stick-relative "12"); the avatar's own
-        // facing is read only for the calibration diagnostic below.
+        // Clock frame: camera forward (stick-relative "12").
         var camFwd = FieldDirectionService.GetCameraForward();
-        var avFwd = FieldDirectionService.GetAvatarForward(playerAvatar);
 
         var others = new List<(float dist, float dx, float dz, ManagedObject av)>();
         foreach (var (av, type) in entries)
@@ -264,17 +257,6 @@ public class FieldAwarenessHooks
             parts.Add(hour > 0
                 ? LocalizedText.AtClockMeters(what, hour, meters)
                 : LocalizedText.AtMeters(what, meters));
-
-            // DIAGNOSTIC (clock calibration): the same offset under both frames.
-            // In-game check: walk toward the target (camera settles behind the
-            // player) and press the key — camera-frame should say 12; a 6 means
-            // the forward source is inverted, a 3/9 swap means mirrored
-            // handedness. Remove once the frame + handedness are confirmed.
-            int avHour = FieldDirectionService.ClockHour(avFwd, dx, dz);
-            var inv = System.Globalization.CultureInfo.InvariantCulture;
-            API.LogInfo($"[SF6Access] clock-diag: d=({dx.ToString("0.00", inv)},{dz.ToString("0.00", inv)}) " +
-                        $"dist={dist.ToString("0.0", inv)} camFwd=({camFwd.X.ToString("0.00", inv)},{camFwd.Z.ToString("0.00", inv)},ok={camFwd.Ok}) " +
-                        $"camHour={hour} avFwd=({avFwd.X.ToString("0.00", inv)},{avFwd.Z.ToString("0.00", inv)},ok={avFwd.Ok}) avHour={avHour}");
         }
 
         ScreenReaderService.Speak(

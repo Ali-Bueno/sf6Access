@@ -28,7 +28,7 @@
 | Online / social (rooms, hub, chat, shop) | done | `CustomRoomHooks`, `BattleHubResultHooks`, `SocialChatHooks`, `ChatMenuHooks`, `OnlineShopHooks`/`OnlineShopBuyHooks` |
 | Dialogs / flow / tickers / news | done | `DialogHooks`, `DialogFlowHooks`, `FlowTrackerHooks`, `TickerHooks`, `NewsHooks` |
 | World Tour — exploration dialogue | wip | v0.5.5: NPC VN dialogue + branch choices now read; subtitle de-dup fixed (`WorldTour/`, `SpTalkNovelHooks`) |
-| World Tour — field awareness (radar) | wip | Confirmed in-game 2026-07-20: names the target in access range + on-demand key speaks real distances to nearby avatars. Clock direction BUILT (camera-relative, `FieldDirectionService`) — needs the in-game handedness calibration. See `docs/sf6-screens.md` § World Tour — field awareness |
+| World Tour — field awareness (radar) | done | Confirmed in-game 2026-07-20: N key names every nearby avatar with camera-relative clock direction + metric distance ("Luke, maestro a las 12, a 5 metros"); fully calibrated (forward + handedness). Key binding N/Start still provisional. See `docs/sf6-screens.md` § World Tour — field awareness |
 | Avatar creator (colors, presets, traits) | wip | v0.5.5 rework; ~600 preset descriptions, colors named in 13 langs; needs in-game pass (`AvatarCreate/`, `AvatarStatsReader`) |
 | Avatar — Special Moves / Super Arts equip | wip | Slot-usage announced (per-category slots, no cost system); verified in Avatar Arcade |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
@@ -44,14 +44,12 @@
 | Shared services | `FlowHelper`, `GuiTextReader`, `GroupFocusPoller`, stale-param re-entry handling | `docs/sf6-architecture.md`, `SF6Access/Services/` |
 
 ## Next step
-World Tour clock direction: forward axis CONFIRMED in game 2026-07-20 ("a las 12" with Luke dead
-ahead; camera and avatar frames agreed in the `clock-diag` log). Distant avatars are now NAMED via the
-sibling access-target component on their GameObject (see `docs/sf6-screens.md` § Naming NPCs) — verify
-in game that N now says "Luke, maestro a las 12, a 14 metros". Remaining calibration: the left/right
-mirror (with the target at 12, rotate the camera right → hour should drop toward 11; if it rises
-toward 1, negate `rightward` in `FieldDirectionService.ClockHour`). Also still open: the final key
-binding (N/Start is provisional). Then: verify the shared avatar/status menus inside World Tour (not
-just Avatar Arcade) and complete the in-game pass on the reworked character creator.
+World Tour field awareness (WT-1) is COMPLETE and fully calibrated in game 2026-07-20: N speaks
+"Luke, maestro a las 12, a 5 metros, Bosch, persona a las 11, a 14 metros" — names at any range
+(sibling access-target component), camera-relative clock (right-handed world confirmed), metric
+distances. Open decisions: the final key binding (N/Start is provisional) and adding the missing
+`wt.*` lang keys to the 11 languages beyond en/es. Then: verify the shared avatar/status menus inside
+World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked character creator.
 
 ## Known issues / open questions
 - Uses **Tolk**, not PRISM (the playbook default is PRISM).

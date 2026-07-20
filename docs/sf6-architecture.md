@@ -147,6 +147,11 @@ keeps the adapter active).
 - **`AvatarBase` has no `DrawObj`** — in the decompiled source `DrawObj` only exists inside the nested
   per-body-part `WTBodyDisp` struct. Reach an avatar's transform through its own
   `Component.get_GameObject()` → `get_Transform()` → `get_Position()`.
+- **World coordinates are right-handed, Y-up** (confirmed in game 2026-07-20 via the WT clock-direction
+  calibration): facing along `forward` on the XZ plane, the RIGHT side is `forward × up = (−fz, fx)`.
+  `via.Transform.get_AxisZ` is the engine's forward-axis idiom (there is no `get_Forward`); a camera
+  forward is best derived from two positions (`app.CameraManager` `LookAtPosition − CameraPosition`) —
+  no quaternion math, no sign ambiguity. Details in `docs/sf6-screens.md` § Clock direction.
 - `via.gui` `get_Position` returns nothing on Text/Control — don't trust it for ordering.
 - C# discard `out _` does **not** compile here (namespace `_` exists) — use a named dummy.
 - **Callback timing:** use `LateUpdateBehavior.Post` (data is fresh); `UpdateBehavior.Pre` sees stale data.

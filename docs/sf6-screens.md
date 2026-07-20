@@ -694,14 +694,15 @@ exist if ever needed: `app.GUIAccessDataManager.AccessTargetList`
   — `AxisZ` is RE Engine's standard forward-axis idiom (used across the game's own code); there is no
   `get_Forward`. `AvatarBase` itself has no facing accessor (`GetAccessCheckPos(out pos, out dir)`'s
   `dir` is the access-check direction, unverified as facing).
-- Hour math: `ahead = d·fwd`, `rightward = dx*fz − dz*fx` (up × forward in Y-up), hour =
+- Hour math: `ahead = d·fwd`, `rightward = dz*fx − dx*fz` (= d·(forward × up)), hour =
   `round(atan2(rightward, ahead)/30°)` mapped 1–12; hour 0 is returned when the frame is unreadable
   (fall back to the plain distance phrase).
-- **Calibration (2026-07-20 run):** forward CONFIRMED — target dead ahead read `camHour=12` in game
-  (`d=(0.01,5.17)`, `camFwd=(0.06,1.00)`), and camera/avatar frames agreed. Left/right handedness
-  (1↔11 mirror) still unverified — needs one lateral ground-truth: with the target at 12, rotate the
-  camera RIGHT; the hour should DROP toward 11 (if it rises toward 1, negate `rightward` in
-  `ClockHour`). The per-press `clock-diag` log line records the offset under both frames.
+- **Calibration CONFIRMED in game (2026-07-20):** forward — target dead ahead reads 12
+  (`d=(0.01,5.17)`, `camFwd=(0.06,1.00)`); handedness — **RE Engine's world is right-handed Y-up**,
+  i.e. on the XZ plane the rightward basis is `forward × up = (−fz, fx)`. Ground truth: with the
+  target at 12, the player rotated the camera RIGHT and the announced hour ROSE (1, 2, ...) under the
+  opposite sign (`up × forward`), which is mirrored — rotating right must DROP the hour toward 11.
+  The hour also updates live as the camera rotates (each key press recomputes).
 
 ### Diagnostics
 Log floats with `CultureInfo.InvariantCulture`: under a Spanish locale the decimal comma collides with
