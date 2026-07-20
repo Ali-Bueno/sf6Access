@@ -125,11 +125,20 @@ public sealed class DialogFlowHooks : ScreenAdapter
 
         // Tips/help windows keep their text in via.gui.Text components instead
         if (string.IsNullOrEmpty(title))
-            title = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "TitleText"));
+            title = ResolveMessageText(FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "TitleText")));
         if (string.IsNullOrEmpty(message))
-            message = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "Text"));
+            message = ResolveMessageText(FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "Text")));
 
-        // Help windows render in a dedicated "Tips_Media" GUI (verified via F9 dump)
+        // The authoritative tip body: each page's PageData carries the body +
+        // title as message Guids (ArrPage[current].Message / .TitleMessage). This
+        // avoids scraping the GUI, whose body renders as unresolved
+        // <PAD ref>/<KBM ref> platform-variant tags (the tip sounded half-read:
+        // only the heading survived tag stripping).
+        if (string.IsNullOrEmpty(message))
+            message = ReadTipPageBody(param, ref title);
+
+        // Last resort: the dedicated "Tips_Media" GUI. Read the RAW text (the
+        // cleaned form drops the <PAD ref>/<KBM ref> body) and resolve it.
         if (string.IsNullOrEmpty(message))
         {
             var tipTexts = GuiTextReader.ReadTextsByOwner("Tips");
@@ -138,9 +147,17 @@ public sealed class DialogFlowHooks : ScreenAdapter
                 var sb = new System.Text.StringBuilder();
                 foreach (var t in tipTexts)
                 {
-                    if (string.IsNullOrWhiteSpace(t.Text)) continue;
+                    string resolved = ResolveMessageText(
+                        !string.IsNullOrWhiteSpace(t.Raw) ? t.Raw : t.Text);
+                    if (string.IsNullOrWhiteSpace(resolved)) continue;
+                    resolved = resolved.Replace('\n', ' ').Trim();
+                    // Skip the heading element here — it's already the title, so
+                    // including it would speak the heading twice.
+                    if (!string.IsNullOrEmpty(title) &&
+                        string.Equals(resolved, title.Trim(), System.StringComparison.OrdinalIgnoreCase))
+                        continue;
                     if (sb.Length > 0) sb.Append(". ");
-                    sb.Append(t.Text.Trim());
+                    sb.Append(resolved);
                 }
                 message = sb.ToString();
             }
@@ -209,6 +226,47 @@ public sealed class DialogFlowHooks : ScreenAdapter
 
         API.LogInfo($"[SF6Access] Dialog [{foundType}]: {announcement}");
         Speak(announcement, interrupt: isMessageBox);
+    }
+
+    /// <summary>Resolve a raw message string to speakable text: platform-variant
+    /// tags (&lt;PLATMSG&gt;/&lt;PAD&gt;/&lt;KBM&gt;) via the game's exchange
+    /// functions, then input icons to words, then strip any residual tags.</summary>
+    private static string ResolveMessageText(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return raw;
+        return FlowHelper.CleanTags(FlowHelper.SpeakableIcons(
+            FlowHelper.ResolvePlatformTags(raw)));
+    }
+
+    /// <summary>The current tip page's body from PageData message Guids
+    /// (ArrPage[current].Message), plus its title into <paramref name="title"/>
+    /// when the param carried none. Null when unavailable.</summary>
+    private string ReadTipPageBody(ManagedObject param, ref string title)
+    {
+        try
+        {
+            var arrPage = FlowHelper.GetObjectField(param, "ArrPage");
+            int total = FlowHelper.GetListCount(arrPage);
+            if (total == 0) return null;
+
+            // Current page from the on-screen pager ("1" of "3" → index 0);
+            // default to the first page when it can't be read.
+            int idx = 0;
+            if (int.TryParse(FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "Page")), out int oneBased))
+                idx = System.Math.Clamp(oneBased - 1, 0, total - 1);
+
+            var page = FlowHelper.GetListItem(arrPage, idx);
+            if (page == null) return null;
+
+            if (string.IsNullOrEmpty(title))
+                title = ResolveMessageText(FlowHelper.ResolveGuidField(page, "TitleMessage"));
+
+            string rawBody = FlowHelper.ResolveGuidField(page, "Message");
+            string body = ResolveMessageText(rawBody);
+            API.LogInfo($"[SF6Access] Tip page {idx + 1}/{total} raw=[{rawBody}] resolved=[{body}]");
+            return body;
+        }
+        catch { return null; }
     }
 
     /// <summary>Cleaned text of one named element in a dialog's own GUI view

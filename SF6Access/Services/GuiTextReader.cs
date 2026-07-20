@@ -314,36 +314,10 @@ public static class GuiTextReader
         {
             var pos = FlowHelper.Call(transformObj, "get_Position");
             if (pos != null)
-                return (ReadVecComponent(pos, "x"), ReadVecComponent(pos, "y"));
+                return (FlowHelper.ReadVecComponent(pos, "x"), FlowHelper.ReadVecComponent(pos, "y"));
         }
         catch { }
         return (0f, 0f);
-    }
-
-    private static float ReadVecComponent(object pos, string name)
-    {
-        try
-        {
-            if (pos is IObject po)
-            {
-                var v = po.Call("get_" + name);
-                if (v != null) return Convert.ToSingle(v);
-            }
-        }
-        catch { }
-        try
-        {
-            // Vector structs come back as REFrameworkNET.ValueType — read the
-            // component as a direct field when no getter is exposed
-            if (pos is REFrameworkNET.ValueType vt)
-            {
-                var field = vt.GetTypeDefinition()?.GetField(name);
-                if (field != null)
-                    return Convert.ToSingle(field.GetDataBoxed(typeof(float), vt.GetAddress(), false));
-            }
-        }
-        catch { }
-        return 0f;
     }
 
     /// <summary>Collect visible texts under a cached GUI view control.</summary>

@@ -11,6 +11,10 @@ namespace SF6Access.Hooks;
 /// - "InputGuide" GUI, element "e_text": the focused item's tooltip
 ///   ("A mode where you fight masters to obtain Special Moves...")
 /// - "GameGuideWidget" GUI: rotating hint banner
+/// - "TutorialHud_GuideSet"/"TutorialHud_TitleIn": the World Tour field-tutorial
+///   OBJECTIVE ("Get close to Luke", "Jump over Luke 3 times") — the instruction
+///   telling the player what to do, distinct from the NPC flavour dialogue that
+///   SpTalkNovelHooks already reads from MessageWindow.
 /// GUI views are cached and only their subtrees are re-read each poll;
 /// the cache is refreshed periodically because menus recreate these widgets.
 /// </summary>
@@ -21,6 +25,7 @@ public class GuideTextHooks
         public string Owner;
         public ManagedObject View;
         public string NameFilter;  // only announce text elements with this name (null = all)
+        public bool AnnounceFirst; // speak the first text of a newly-found instance
         public string LastText;
         public string PendingText; // detected change waiting for its announce slot
         public long PendingSince;
@@ -31,12 +36,18 @@ public class GuideTextHooks
     // queue immediately; otherwise wait briefly for the element to arrive.
     private const long PENDING_DELAY_MS = 150;
 
-    // ownerContains -> element name filter
-    private static readonly (string owner, string nameFilter)[] Watched =
+    // ownerContains -> element name filter -> announce the first text on discovery.
+    // announceFirst stays false for the menu tooltips/banners (a freshly-found
+    // instance is usually a stale tooltip lingering under a battle), but true for
+    // the World Tour tutorial-objective HUDs: a newly-appeared TutorialHud is
+    // always a real, current objective the player must hear — including the first.
+    private static readonly (string owner, string nameFilter, bool announceFirst)[] Watched =
     {
-        ("InputGuide", "e_text"),
-        ("GameGuideWidget", null),
-        ("Gallery", "c_text_detail"),  // focused cutscene/comic/illustration title
+        ("InputGuide", "e_text", false),
+        ("GameGuideWidget", null, false),
+        ("Gallery", "c_text_detail", false),      // focused cutscene/comic/illustration title
+        ("TutorialHud_GuideSet", "e_text_mission", true),  // WT tutorial current objective
+        ("TutorialHud_TitleIn", "e_text", true),           // WT tutorial new-objective banner
     };
 
     private static int _pollCounter;
@@ -74,10 +85,12 @@ public class GuideTextHooks
                 if (!string.IsNullOrEmpty(text) && text != gui.LastText)
                 {
                     // Newly discovered instance: baseline silently — announcing
-                    // here replayed stale screen tooltips lingering under battles
+                    // here replayed stale screen tooltips lingering under battles.
+                    // Exception: tutorial-objective HUDs (AnnounceFirst) must speak
+                    // their first objective too.
                     bool first = gui.LastText == null;
                     gui.LastText = text;
-                    if (first) continue;
+                    if (first && !gui.AnnounceFirst) continue;
 
                     gui.PendingText = text;
                     gui.PendingSince = now;
@@ -140,7 +153,7 @@ public class GuideTextHooks
         }
 
         _guis.Clear();
-        foreach (var (owner, nameFilter) in Watched)
+        foreach (var (owner, nameFilter, announceFirst) in Watched)
         {
             foreach (var (foundOwner, view) in GuiTextReader.FindGuiViews(owner))
             {
@@ -157,6 +170,7 @@ public class GuideTextHooks
                     Owner = foundOwner,
                     View = view,
                     NameFilter = nameFilter,
+                    AnnounceFirst = announceFirst,
                     LastText = last
                 });
             }

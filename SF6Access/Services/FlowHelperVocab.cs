@@ -52,6 +52,9 @@ public static partial class FlowHelper
             { "BTL_U", "up" }, { "BTL_D", "down" }, { "BTL_L", "left" }, { "BTL_R", "right" },
             { "UIDecide", "confirm" }, { "UICancel", "cancel" },
             { "MouseL", "left click" }, { "MouseR", "right click" },
+            // World Tour field input actions (device-neutral words; the game
+            // renders the bound key/button, which we can't yet resolve per-device).
+            { "Move", "move" },
         },
     };
 

@@ -74,8 +74,12 @@ public sealed class SpTalkNovelHooks : SingleParamScreenAdapter
         string conversation = null, name = null;
         foreach (var t in GuiTextReader.ReadTextsByOwner(MESSAGE_WINDOW))
         {
-            if (t.Name == CONV_ELEMENT && !string.IsNullOrWhiteSpace(t.Text)) conversation = t.Text.Trim();
-            else if (t.Name == NAME_ELEMENT && !string.IsNullOrWhiteSpace(t.Text)) name = t.Text.Trim();
+            // Novel lines wrap across visual rows with embedded newlines; the
+            // screen reader stops speaking at a '\n', so a multi-row line was
+            // read only up to its first break. Flatten newlines to spaces (as
+            // GuideTextHooks/TutorialHooks already do) to speak the whole line.
+            if (t.Name == CONV_ELEMENT && !string.IsNullOrWhiteSpace(t.Text)) conversation = Flatten(t.Text);
+            else if (t.Name == NAME_ELEMENT && !string.IsNullOrWhiteSpace(t.Text)) name = Flatten(t.Text);
         }
         if (string.IsNullOrEmpty(conversation) || conversation == _lastLine) return;
         _lastLine = conversation;
@@ -141,8 +145,14 @@ public sealed class SpTalkNovelHooks : SingleParamScreenAdapter
         {
             var ci = FlowHelper.Call(choiceList, "get_Item", i) as ManagedObject;
             string text = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(ci, "Text"));
-            if (!string.IsNullOrWhiteSpace(text)) labels.Add(FlowHelper.CleanTags(text).Trim());
+            if (!string.IsNullOrWhiteSpace(text)) labels.Add(Flatten(FlowHelper.CleanTags(text)));
         }
         return labels.Count > 0 ? labels : null;
     }
+
+    /// <summary>Collapse the embedded newlines of a wrapped line into single
+    /// spaces so the screen reader speaks the whole line, not just the first row.</summary>
+    private static string Flatten(string text)
+        => string.IsNullOrEmpty(text) ? text
+           : System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
 }

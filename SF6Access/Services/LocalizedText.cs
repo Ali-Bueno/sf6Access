@@ -127,4 +127,32 @@ public static class LocalizedText
         3 => LangFile.Get("settype.3", "Super Arts"),
         _ => null,
     };
+
+    // --- World Tour field awareness (WT-1) ---
+
+    /// <summary>Spoken when the on-demand nearby-interactables key finds nothing.</summary>
+    public static string NothingNearby() => LangFile.Get("wt.nothing_nearby", "Nothing nearby");
+
+    /// <summary>Header for the nearby-interactables list, e.g. "3 nearby". The
+    /// count comes from the game; only the word is localized.</summary>
+    public static string NearbyCount(int count)
+        => string.Format(LangFile.Get("wt.nearby_count", "{0} nearby"), count);
+
+    /// <summary>Kind word for a HudDef.ContactUIType interactable — a talkable
+    /// NPC (ContactUIType.NPC).</summary>
+    public static string ContactPerson() => LangFile.Get("wt.contact_person", "person");
+
+    /// <summary>Kind word for a Master (ContactUIType.Legendary).</summary>
+    public static string ContactMaster() => LangFile.Get("wt.contact_master", "master");
+
+    /// <summary>"person, 12 meters away" — a distant avatar with its real
+    /// distance (|otherPos − playerPos|; RE Engine world units are meters).</summary>
+    public static string AtMeters(string what, int meters)
+        => string.Format(LangFile.Get("wt.at_meters", "{0}, {1} meters away"), what, meters);
+
+    /// <summary>Kind word for an object / gimmick (ContactUIType.OM).</summary>
+    public static string ContactObject() => LangFile.Get("wt.contact_object", "object");
+
+    /// <summary>Kind word for another player (ContactUIType.OtherPlayer).</summary>
+    public static string ContactPlayer() => LangFile.Get("wt.contact_player", "player");
 }

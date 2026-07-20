@@ -469,6 +469,41 @@ public static partial class FlowHelper
         return Call(list, IsArray(list) ? "Get" : "get_Item", index) as ManagedObject;
     }
 
+    /// <summary>One float component ("x"/"y"/"z") of a via vector value: getter
+    /// first, then the component as a direct FIELD of the boxed
+    /// REFrameworkNET.ValueType — engine vector structs expose fields without
+    /// get_ accessors, so the field path is the one that fires for world
+    /// positions (a getter-only read silently returns 0 for every component).
+    ///
+    /// <para>The <c>GetDataBoxed</c> flag is <c>isContainerValueType</c> and
+    /// refers to the CONTAINING object — a via.vecN IS a value type, so it must
+    /// be <c>true</c> here. Passing <c>false</c> makes the read skip a managed
+    /// object header that isn't there, so the components land at the wrong
+    /// offsets (x/y read 0 and z reads adjacent garbage).</para></summary>
+    public static float ReadVecComponent(object vec, string name)
+    {
+        try
+        {
+            if (vec is IObject po)
+            {
+                var v = po.Call("get_" + name);
+                if (v != null) return Convert.ToSingle(v);
+            }
+        }
+        catch { }
+        try
+        {
+            if (vec is REFrameworkNET.ValueType vt)
+            {
+                var field = vt.GetTypeDefinition()?.GetField(name);
+                if (field != null)
+                    return Convert.ToSingle(field.GetDataBoxed(typeof(float), vt.GetAddress(), true));
+            }
+        }
+        catch { }
+        return 0f;
+    }
+
     /// <summary>
     /// Read the on-screen text of the row a UIParts list/grid actually has
     /// selected, via get_SelectedItem. Index-based child reads proved
@@ -608,8 +643,11 @@ public static partial class FlowHelper
         return null;
     }
 
-    /// <summary>Resolve a localized message Guid with a timeout (via.gui.message.get crashes for some Guids).</summary>
-    public static string ResolveGuid(REFrameworkNET.ValueType guidVt)
+    /// <summary>Resolve a localized message Guid with a timeout (via.gui.message.get
+    /// crashes for some Guids). <paramref name="cleanTags"/> false keeps the raw tags
+    /// (e.g. input-icon <c>&lt;ICON&gt;</c>/<c>&lt;INPT&gt;</c>) so a later
+    /// <see cref="SpeakableIcons"/> pass can voice them instead of them being stripped.</summary>
+    public static string ResolveGuid(REFrameworkNET.ValueType guidVt, bool cleanTags = true)
     {
         CacheTDB();
         if (_msgGetMethod == null || guidVt == null) return null;
@@ -634,11 +672,42 @@ public static partial class FlowHelper
             });
 
             if (task.Wait(TimeSpan.FromMilliseconds(200)))
-                return CleanTags(task.Result);
+                return cleanTags ? CleanTags(task.Result) : task.Result;
         }
         catch { }
         return null;
     }
+
+    private static Method _getGuidByNameMethod;
+    private static bool _msgNameCached;
+
+    /// <summary>Resolve a message referenced by NAME (a <c>&lt;REF Name&gt;</c>
+    /// tag's target, e.g. "TipsMediaDialogMessage371") to its localized text:
+    /// via.gui.message.getGuidByName(name) → the Guid, then <see cref="ResolveGuid"/>.
+    /// Null when the name is unknown.</summary>
+    public static string ResolveMessageName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        try
+        {
+            if (!_msgNameCached)
+            {
+                _msgNameCached = true;
+                _getGuidByNameMethod = TDB.Get().FindType("via.gui.message")
+                    ?.GetMethod("getGuidByName(System.String)");
+            }
+            if (_getGuidByNameMethod == null) return null;
+            var guid = _getGuidByNameMethod.InvokeBoxed(typeof(Guid), null, new object[] { name });
+            // Keep tags: the message may embed input-icon glyphs (<ICON>/<INPT>)
+            // that SpeakableIcons must voice; CleanTags would drop the command.
+            string raw = guid is REFrameworkNET.ValueType vt ? ResolveGuid(vt, cleanTags: false) : null;
+            if (!string.IsNullOrEmpty(raw) && raw.Contains('<') && _loggedMsgNameRaw.Add(name) && _loggedMsgNameRaw.Count <= 40)
+                API.LogInfo($"[SF6Access] MsgName raw [{name}] = [{raw}]");
+            return raw;
+        }
+        catch { return null; }
+    }
+    private static readonly System.Collections.Generic.HashSet<string> _loggedMsgNameRaw = new();
 
     private static readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<int, string>> _enumNameCache = new();
 
@@ -1015,38 +1084,83 @@ public static partial class FlowHelper
     }
 
     private static Method _platformMsgMethod;
+    private static Method _gamePadTagMethod;
+    private static Method _kbmTagMethod;
     private static bool _platformMsgCached;
 
     /// <summary>
-    /// Resolve platform message tags before tag stripping: the Steam-store
-    /// confirmation dialog's whole message is "&lt;PLATMSG Arg0 = "65"&gt;",
-    /// which CleanTags would silently erase.
+    /// Resolve platform-conditional message tags before tag stripping, using the
+    /// game's own MessageManager exchange functions (no hardcoded text):
+    /// <list type="bullet">
+    /// <item><c>&lt;PLATMSG ...&gt;</c> — the Steam-store dialog's whole message,
+    ///   which CleanTags would silently erase (ExchangePlatformMessage).</item>
+    /// <item><c>&lt;PAD ref="..."&gt;</c> / <c>&lt;KBM ref="..."&gt;</c> — the
+    ///   pad-vs-keyboard message variants used by Tips/help windows and tutorial
+    ///   operation prompts. Each exchange function returns the referenced message
+    ///   on its own platform and empty on the other, so only the active
+    ///   platform's text survives (ExchangeGamePadTag / ExchangeKeyboardMouseTag).</item>
+    /// </list>
+    /// Input-icon tags (<c>&lt;ICON&gt;</c>, <c>&lt;INPT&gt;</c>, <c>&lt;CMD&gt;</c>)
+    /// are intentionally left for <see cref="SpeakableIcons"/>, which speaks them
+    /// as words rather than the game's glyph substitution.
     /// </summary>
     public static string ResolvePlatformTags(string text)
     {
-        if (string.IsNullOrEmpty(text) || !text.Contains("<PLATMSG")) return text;
+        if (string.IsNullOrEmpty(text)) return text;
+        bool hasPlatMsg = text.Contains("<PLATMSG");
+        bool hasPad = text.Contains("<PAD");
+        bool hasKbm = text.Contains("<KBM");
+        if (!hasPlatMsg && !hasPad && !hasKbm) return text;
         try
         {
             if (!_platformMsgCached)
             {
                 _platformMsgCached = true;
-                _platformMsgMethod = TDB.Get().FindType("app.MessageManager")
-                    ?.GetMethod("ExchangePlatformMessage(System.String)");
+                var mm = TDB.Get().FindType("app.MessageManager");
+                _platformMsgMethod = mm?.GetMethod("ExchangePlatformMessage(System.String)");
+                _gamePadTagMethod = mm?.GetMethod("ExchangeGamePadTag(System.String)");
+                _kbmTagMethod = mm?.GetMethod("ExchangeKeyboardMouseTag(System.String)");
             }
-            if (_platformMsgMethod == null) return text;
 
-            return Regex.Replace(text, @"<PLATMSG\s*([^>]*)>", match =>
-            {
-                try
-                {
-                    var resolved = _platformMsgMethod.InvokeBoxed(typeof(string), null,
-                        new object[] { match.Groups[1].Value }) as string;
-                    return resolved ?? "";
-                }
-                catch { return ""; }
-            });
+            if (hasPlatMsg) text = ExchangeTag(text, "PLATMSG", _platformMsgMethod);
+            // ExchangeGamePadTag/ExchangeKeyboardMouseTag take the tag's inner arg
+            // (`ref="Name"`) and, on the ACTIVE input device, emit `<REF Name>`
+            // (empty on the other device) — confirmed by a live probe. That <REF>
+            // is a message reference by NAME, resolved below to its actual text;
+            // without that step the tip body (e.g. how to walk) stayed unread.
+            if (hasPad) text = ExchangeTag(text, "PAD", _gamePadTagMethod);
+            if (hasKbm) text = ExchangeTag(text, "KBM", _kbmTagMethod);
+            if (text.Contains("<REF")) text = ResolveRefTags(text);
+            return text;
         }
         catch { return text; }
+    }
+
+    /// <summary>Replace each <c>&lt;REF Name&gt;</c> message-reference tag with the
+    /// localized text of the message named <c>Name</c>
+    /// (via.gui.message.getGuidByName → get). Unresolvable refs drop to empty.</summary>
+    private static string ResolveRefTags(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains("<REF")) return text;
+        return Regex.Replace(text, @"<REF\s+([^>]+?)\s*>", m =>
+            ResolveMessageName(m.Groups[1].Value.Trim()) ?? "");
+    }
+
+    /// <summary>Replace every <c>&lt;tagName ...&gt;</c> with the result of the
+    /// game's exchange method applied to the tag's inner content (empty when the
+    /// method is missing or throws).</summary>
+    private static string ExchangeTag(string text, string tagName, Method exchange)
+    {
+        if (exchange == null) return text;
+        return Regex.Replace(text, "<" + tagName + @"\s*([^>]*)>", match =>
+        {
+            try
+            {
+                return exchange.InvokeBoxed(typeof(string), null,
+                    new object[] { match.Groups[1].Value }) as string ?? "";
+            }
+            catch { return ""; }
+        });
     }
 
 
@@ -1165,6 +1279,8 @@ public static partial class FlowHelper
         catch { return token; }
     }
 
+    private static readonly System.Collections.Generic.HashSet<string> _loggedUnknownTokens = new();
+
     private static string SpeakToken(string token, CommandWords words)
     {
         if (words.Inputs.TryGetValue(token, out var inputName))
@@ -1195,7 +1311,12 @@ public static partial class FlowHelper
                 return token.Substring(prefix.Length);
         }
 
-        return token.Replace("BTL_", "").Replace('_', ' ');
+        // DIAGNOSTIC: log unmapped input tokens once each, so the World Tour field
+        // action ids (e.g. "ACT_LSB") can be added to the vocab from real usage.
+        if (_loggedUnknownTokens.Add(token) && _loggedUnknownTokens.Count <= 60)
+            API.LogInfo($"[SF6Access] Unmapped input token: [{token}]");
+
+        return token.Replace("BTL_", "").Replace("ACT_", "").Replace('_', ' ');
     }
 
     public static string CleanTags(string text)
