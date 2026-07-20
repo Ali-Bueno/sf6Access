@@ -157,6 +157,18 @@ public static class LocalizedText
     public static string AtClockMeters(string what, int hour, int meters)
         => string.Format(LangFile.Get("wt.at_clock_meters", "{0} at {1} o'clock, {2} meters away"), what, hour, meters);
 
+    /// <summary>"at 2 o'clock, 14 meters" — terse tracking update while walking
+    /// toward the SAME target (the name was already said when it became the
+    /// target; repeating it every update drowns the useful numbers).</summary>
+    public static string ClockShort(int hour, int meters)
+        => string.Format(LangFile.Get("wt.clock_short", "at {0} o'clock, {1} meters"), hour, meters);
+
+    /// <summary>Continuous field tracking toggled on.</summary>
+    public static string TrackingOn() => LangFile.Get("wt.tracking_on", "Tracking on");
+
+    /// <summary>Continuous field tracking toggled off.</summary>
+    public static string TrackingOff() => LangFile.Get("wt.tracking_off", "Tracking off");
+
     /// <summary>Kind word for an object / gimmick (ContactUIType.OM).</summary>
     public static string ContactObject() => LangFile.Get("wt.contact_object", "object");
 

@@ -843,4 +843,7 @@ wt.contact_object=objeto
 wt.contact_player=jugador
 wt.at_meters={0} a {1} metros
 wt.at_clock_meters={0} a las {1}, a {2} metros
+wt.clock_short=a las {0}, a {1} metros
+wt.tracking_on=seguimiento activado
+wt.tracking_off=seguimiento desactivado
 input.Move=movimiento

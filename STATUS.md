@@ -44,12 +44,15 @@
 | Shared services | `FlowHelper`, `GuiTextReader`, `GroupFocusPoller`, stale-param re-entry handling | `docs/sf6-architecture.md`, `SF6Access/Services/` |
 
 ## Next step
-World Tour field awareness (WT-1) is COMPLETE and fully calibrated in game 2026-07-20: N speaks
-"Luke, maestro a las 12, a 5 metros, Bosch, persona a las 11, a 14 metros" — names at any range
-(sibling access-target component), camera-relative clock (right-handed world confirmed), metric
-distances. Open decisions: the final key binding (N/Start is provisional) and adding the missing
-`wt.*` lang keys to the 11 languages beyond en/es. Then: verify the shared avatar/status menus inside
-World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked character creator.
+World Tour field awareness (WT-1) is COMPLETE and fully calibrated in game 2026-07-20 (radar on N:
+names at any range + camera-relative clock + metric distances). NEW, needs in-game test: continuous
+tracking on M (`FieldTrackingHooks`) — periodic "a las 12, a 4 metros" toward the nearest avatar,
+silent while dialogues/arrival readers speak. Possible follow-up the user floated: real audio beacons
+on NPCs (3D sound) — needs either RE of the game's own sound system (via.sound) or an audio library
+decision (new DLL = ask first). Open decisions: final key bindings (N/M/Start provisional) and the
+missing `wt.*` lang keys in the 11 languages beyond en/es. Then: verify the shared avatar/status menus
+inside World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked character
+creator.
 
 ## Known issues / open questions
 - Uses **Tolk**, not PRISM (the playbook default is PRISM).

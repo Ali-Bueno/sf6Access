@@ -882,3 +882,6 @@ wt.contact_object=object
 wt.contact_player=player
 wt.at_meters={0}, {1} meters away
 wt.at_clock_meters={0} at {1} o'clock, {2} meters away
+wt.clock_short=at {0} o'clock, {1} meters
+wt.tracking_on=Tracking on
+wt.tracking_off=Tracking off

@@ -38,6 +38,10 @@ public sealed class SpTalkNovelHooks : SingleParamScreenAdapter
         ReadInterval = 5;
     }
 
+    /// <summary>True while a World Tour dialogue box is on screen — read by the
+    /// field tracker so periodic guidance never talks over dialogue lines.</summary>
+    public static bool DialogueActive { get; private set; }
+
     private string _lastLine;
     private string _lastChoiceSig;
     private int _lastChoiceIndex = -1;
@@ -45,12 +49,14 @@ public sealed class SpTalkNovelHooks : SingleParamScreenAdapter
     protected override void OnBind()
     {
         ResetState();
+        DialogueActive = true;
         API.LogInfo("[SF6Access] WT novel dialogue active");
         Poll();
     }
 
     protected override void OnExit()
     {
+        DialogueActive = false;
         API.LogInfo("[SF6Access] WT novel dialogue ended");
         ResetState();
     }

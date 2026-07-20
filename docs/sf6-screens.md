@@ -704,6 +704,17 @@ exist if ever needed: `app.GUIAccessDataManager.AccessTargetList`
   opposite sign (`up × forward`), which is mirrored — rotating right must DROP the hour toward 11.
   The hour also updates live as the camera rotates (each key press recomputes).
 
+### Continuous tracking (hands-free guidance)
+`Hooks/WorldTour/FieldTrackingHooks.cs` (shared readers extracted to
+`Services/WorldTour/AvatarFieldReader.cs`). Toggle key (provisional: keyboard M, no pad button — Start
+is taken by the radar) starts periodic guidance toward the NEAREST avatar: full sentence when the
+target changes ("Luke, maestro a las 12, a 5 metros"), terse `wt.clock_short` updates while closing in
+("a las 12, a 4 metros"), ~2 s cadence (`ANNOUNCE_TICKS`, same 60 fps LateUpdate tick convention as
+the radar poll). Silence rules: identical phrase → silent (standing still); holds while
+`SpTalkNovelHooks.DialogueActive` (static flag set in its OnBind/OnExit) or while
+`CurrentAccessInfoList` is non-empty (arrival is the target-change reader's moment); auto-off when the
+field unloads.
+
 ### Diagnostics
 Log floats with `CultureInfo.InvariantCulture`: under a Spanish locale the decimal comma collides with
 the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,0)`).
