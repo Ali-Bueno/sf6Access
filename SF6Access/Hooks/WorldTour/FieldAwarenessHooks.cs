@@ -21,13 +21,14 @@ namespace SF6Access.Hooks.WorldTour;
 /// the target plus the game's already-computed <c>Distance</c>/<c>Angle</c> — so
 /// nothing positional is recomputed here.
 ///
-/// <para>NOTE (clock calibration): the distant-avatar readout now speaks a
-/// camera-relative clock hour ("person at 2 o'clock, 14 meters") via
-/// <see cref="FieldDirectionService"/>. Two things are pending the in-game test:
-/// the left/right handedness (a mirrored reading means flipping one sign — see
-/// that class doc) and whether the camera frame beats the avatar frame in
-/// practice (the per-press diagnostic logs the hour under BOTH frames so one
-/// walk answers it).</para>
+/// <para>NOTE (clock calibration): the distant-avatar readout speaks a
+/// camera-relative clock hour ("Luke, master at 12 o'clock, 5 meters") via
+/// <see cref="FieldDirectionService"/>. Confirmed in game 2026-07-20: forward
+/// axis (12 dead ahead), live update while the camera rotates, and the camera
+/// frame as the right reference. Only the left/right mirror (1↔11) is still
+/// unconfirmed — the <c>clock-diag</c> log stays until that is settled (a
+/// mirrored reading means negating <c>rightward</c> in
+/// <see cref="FieldDirectionService.ClockHour"/>).</para>
 /// </summary>
 public class FieldAwarenessHooks
 {
@@ -101,7 +102,7 @@ public class FieldAwarenessHooks
             return;
         }
 
-        if (wantsNearby) { AnnounceNearby(); LogAvatarPositionsDiag(mgr); }
+        if (wantsNearby) AnnounceNearby();
 
         if (++_pollCounter < POLL_INTERVAL) return;
         _pollCounter = 0;
@@ -160,20 +161,11 @@ public class FieldAwarenessHooks
     {
         var result = new List<Interactable>();
         var mgr = WorldTourStateService.GetAvatarManager();
-
-        // DIAGNOSTIC (WT-1 bring-up): report AvatarManager reachability + the
-        // counts of ALL THREE access lists, only when they change, so one field
-        // walk tells us which list actually populates near an interactable
-        // (walk-through zones vs press-to-interact targets may live in
-        // different lists). Remove once the radar list is confirmed.
-        if (GameStateTracker.HasChanged("wt_diag_avatarmgr", mgr == null ? "null" : "ok"))
-            API.LogInfo($"[SF6Access] WT radar: AvatarManager = {(mgr == null ? "NULL (GetManagedSingleton failed)" : "resolved")}");
         if (mgr == null) return result;
 
         var list = FlowHelper.GetObjectField(mgr, "CurrentAccessInfoList")
                    ?? FlowHelper.Call(mgr, "get_CurrentAccessInfoList") as ManagedObject;
         int count = FlowHelper.GetListCount(list);
-        LogListCounts(mgr, count);
         for (int i = 0; i < count; i++)
         {
             var access = FlowHelper.GetListItem(list, i);          // AvatarManager.AccessInfo
@@ -188,69 +180,24 @@ public class FieldAwarenessHooks
             int contactType = target != null ? ReadContactType(target) : -1;
             float distance = FlowHelper.ReadFloatField(info, "Distance", 0f);
 
-            // DIAGNOSTIC (WT-1 bring-up): a target in range (cur:1) that never
-            // announced means one of these reads returned empty — log the raw
-            // per-entry reads so the next in-range tick pinpoints which. Only
-            // fires when the list is non-empty (i.e. standing at an interactable),
-            // so no spam. Remove once the announce is confirmed.
-            API.LogInfo($"[SF6Access] radar entry[{i}]: access={(access!=null)} info={(info!=null)} target={(target!=null)} name=[{name}] type={contactType} dist={distance}");
-
             if (string.IsNullOrEmpty(name)) continue;
             result.Add(new Interactable(name, contactType, distance));
         }
         return result;
     }
 
-    /// <summary>DIAGNOSTIC (WT-1 "walk to Luke" bring-up): on the on-demand key,
-    /// log every avatar in <c>AvatarManager.AvatarList</c> with its concrete type,
-    /// name and WORLD position (DrawObj → Transform → Position). One field walk
-    /// then reveals which entry is the player vs Luke and their coordinates — the
-    /// inputs for the future clock+distance guidance to a DISTANT objective (the
-    /// access list only covers targets already in range). Remove once built.</summary>
-    private static void LogAvatarPositionsDiag(ManagedObject mgr)
-    {
-        var avatars = GetAvatarList(mgr);
-        int n = FlowHelper.GetListCount(avatars);
-        API.LogInfo($"[SF6Access] pos-diag: avatar list type=[{avatars?.GetTypeDefinition()?.GetFullName() ?? "null"}] count={n}");
-
-        for (int i = 0; i < n && i < 24; i++)
-        {
-            try
-            {
-                var av = FlowHelper.GetListItem(avatars, i);
-                if (av == null) { API.LogInfo($"[SF6Access] pos-diag[{i}] = null"); continue; }
-                string type = av.GetTypeDefinition()?.GetFullName() ?? "?";
-                // One-shot member dump of the NPC avatar type: GetDispName is NOT
-                // on AvatarBase, so this reveals where the NPC's name/id actually
-                // lives for the future named readout.
-                if (type.Contains("AvatarNpc")) DumpMembersOnce(av);
-                string name = FlowHelper.CleanTags(FlowHelper.Call(av, "GetDispName") as string);
-                var (x, y, z, ok) = ReadAvatarWorldPos(av);
-                // Invariant formatting: under a Spanish locale the decimal comma
-                // collided with the separators and made the log unreadable.
-                var inv = System.Globalization.CultureInfo.InvariantCulture;
-                API.LogInfo($"[SF6Access] pos-diag[{i}] type=[{type}] name=[{name}] " +
-                            $"pos=(x={x.ToString("0.00", inv)} y={y.ToString("0.00", inv)} z={z.ToString("0.00", inv)}) posOk={ok}");
-            }
-            catch (System.Exception ex) { API.LogInfo($"[SF6Access] pos-diag[{i}] threw {ex.Message}"); }
-        }
-    }
-
     /// <summary>The field's avatar list, unwrapped: <c>AvatarList</c> is a
     /// <c>SafeList&lt;T&gt;</c> wrapper whose <c>get_Count</c> isn't the standard
-    /// accessor, so fall back to its inner <c>System...List</c> field. On an
-    /// unreachable list the owner's members are dumped once so the log names the
-    /// real accessor (stale pointer vs runtime-renamed member).</summary>
+    /// accessor, so fall back to its inner <c>System...List</c> field.</summary>
     private static ManagedObject GetAvatarList(ManagedObject mgr)
     {
         var avatars = FlowHelper.GetObjectField(mgr, "AvatarList")
                       ?? FlowHelper.Call(mgr, "get_AvatarList") as ManagedObject;
-        if (avatars == null) { DumpMembersOnce(mgr); return null; }
+        if (avatars == null) return null;
         if (FlowHelper.GetListCount(avatars) == 0)
         {
             var inner = FindInnerList(avatars);
             if (inner != null) return inner;
-            DumpMembersOnce(avatars);
         }
         return avatars;
     }
@@ -401,47 +348,6 @@ public class FieldAwarenessHooks
         return null;
     }
 
-    /// <summary>One-shot PER TYPE: log an object's fields and interesting methods
-    /// so the correct accessor / name source can be identified from a single run.</summary>
-    private static readonly HashSet<string> _dumpedTypes = new();
-    private static void DumpMembersOnce(ManagedObject obj)
-    {
-        try
-        {
-            var td = obj?.GetTypeDefinition();
-            string typeName = td?.GetFullName() ?? "?";
-            if (!_dumpedTypes.Add(typeName)) return;
-            API.LogInfo($"[SF6Access] members of [{typeName}]");
-            var fields = td?.GetFields();
-            if (fields != null)
-                foreach (var f in fields)
-                    try { API.LogInfo($"[SF6Access]   field [{f.Type?.GetFullName()}] {f.Name}"); } catch { }
-            var methods = td?.GetMethods();
-            if (methods != null)
-            {
-                int c = 0;
-                foreach (var m in methods)
-                {
-                    try
-                    {
-                        string mn = m.Name;
-                        if (mn != null && (mn.Contains("Count") || mn.Contains("Item") ||
-                            mn.Contains("List") || mn.Contains("Enumerat") || mn == "get_Length" ||
-                            mn.Contains("Avatar") || mn.Contains("Access") ||
-                            mn.Contains("Name") || mn.Contains("Npc") || mn.Contains("Disp") ||
-                            mn.Contains("Id")))
-                        {
-                            API.LogInfo($"[SF6Access]   method {mn}");
-                            if (++c > 30) break;
-                        }
-                    }
-                    catch { }
-                }
-            }
-        }
-        catch (System.Exception ex) { API.LogInfo($"[SF6Access] member dump threw {ex.Message}"); }
-    }
-
     /// <summary>World position of an avatar via its GameObject's Transform.
     /// <c>DrawObj</c> is NOT a member of AvatarBase (in the decompiled source it
     /// only exists inside the nested per-body-part <c>WTBodyDisp</c> struct), so
@@ -454,12 +360,6 @@ public class FieldAwarenessHooks
             var tr = FlowHelper.Call(go, "get_Transform") as ManagedObject;
             var pos = FlowHelper.Call(tr, "get_Position");
             if (pos == null) return (0f, 0f, 0f, false);
-
-            // DIAGNOSTIC (one-shot per vec type): if components still read wrong,
-            // this names the returned struct type and its real field layout, so
-            // the next log says whether the read strategy or the source is at
-            // fault. Remove once positions are confirmed sane.
-            if (pos is ManagedObject vecObj) DumpMembersOnce(vecObj);
 
             float px = FlowHelper.ReadVecComponent(pos, "x");
             float py = FlowHelper.ReadVecComponent(pos, "y");
@@ -500,27 +400,6 @@ public class FieldAwarenessHooks
     {
         var boxed = FlowHelper.Call(target, "GetContactUIType");
         return boxed != null ? System.Convert.ToInt32(boxed) : -1;
-    }
-
-    /// <summary>DIAGNOSTIC (WT-1 bring-up): log the counts of the three
-    /// AvatarManager access lists whenever they change, so a single field walk
-    /// reveals which list populates near an interactable. Remove once confirmed.</summary>
-    private static void LogListCounts(ManagedObject mgr, int currentCount)
-    {
-        // NOTE: CurrentFailedMostNearInfoList was dropped — the runtime type has
-        // no such member ("Method not found" in the 2026-07-19 log); it existed
-        // only in the decompiled source.
-        int def = ListCount(mgr, "CurrentDefaultAccessInfoList");
-        string sig = $"cur:{currentCount} def:{def}";
-        if (GameStateTracker.HasChanged("wt_diag_lists", sig))
-            API.LogInfo($"[SF6Access] WT radar lists → {sig}");
-    }
-
-    private static int ListCount(ManagedObject mgr, string field)
-    {
-        var list = FlowHelper.GetObjectField(mgr, field)
-                   ?? FlowHelper.Call(mgr, "get_" + field) as ManagedObject;
-        return FlowHelper.GetListCount(list);
     }
 
     /// <summary>Read a getter-only property: field (incl. backing field) first,
