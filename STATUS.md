@@ -43,6 +43,27 @@
 | Runtime type caveat | Runtime uses CONCRETE types, decompiled shows interfaces — always verify a name with a dump (`ObjectDumper`) | `docs/sf6-screens.md`, `docs/sf6-architecture.md` |
 | Shared services | `FlowHelper`, `GuiTextReader`, `GroupFocusPoller`, stale-param re-entry handling | `docs/sf6-architecture.md`, `SF6Access/Services/` |
 
+## Open bugs / pending in-game verification
+(Single durable list — machine-local session memory is NOT used; this file and `docs/` are the only
+records that survive a machine change.)
+
+**Open bugs**
+- WLTAG word type 1005 (perk numeric values) resolves to garbage in the WTM pause perk tooltip —
+  see `docs/sf6-screens.md` § WLTAG resolution.
+- Training reversal: SPECIAL moves without an `e_txt_0` strength element (L/M/H/OD) announce
+  nothing on left/right (sound plays); root cause not found.
+- Shop Enhance/Dye side panes still unread.
+
+**Built but not yet verified in game**
+- WT continuous tracking (M key, `FieldTrackingHooks`) — new 2026-07-20.
+- Avatar creator full in-game pass after the 2026-07-07 rebuild (spoken colors, preset grids,
+  localized categories; known gaps listed in `docs/sf6-screens.md` § Post-rebuild findings).
+- VS-screen LP/MR readout online; combo-trial clear status; combo-gate removal.
+- Non-Spanish languages of the localized readouts (es is the tested one; en spot-checked).
+
+**Small refactor TODO**
+- Route `MainMenuHooks`' `IsInX` OR-chain suppression through `UiDispatcher.AnyAdapterActive`.
+
 ## Next step
 World Tour field awareness (WT-1) is COMPLETE and fully calibrated in game 2026-07-20 (radar on N:
 names at any range + camera-relative clock + metric distances). NEW, needs in-game test: continuous

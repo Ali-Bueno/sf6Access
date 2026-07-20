@@ -31,6 +31,11 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
 > SF6's UI. **When you discover something new about a screen, add it here** — don't leave it only in
 > notes/memory. Prefer updating the relevant section over duplicating.
 
+> **NO machine-local session memory (user rule, 2026-07-20):** do NOT write to Claude's per-machine
+> memory directory — it does not survive a machine change. EVERYTHING durable goes in the repo:
+> technical findings → `docs/`, progress / open bugs / pending tests → `STATUS.md`, working rules →
+> this file. If session memory exists from before, treat the repo as the only source of truth.
+
 **Generic RE Engine / REFramework reference (kept from the skeleton):**
 - `docs/setup.md`, `docs/lua-api-core.md`, `docs/lua-api-imgui.md`, `docs/lua-api-types.md`,
   `docs/lua-hooks-and-patterns.md` — Lua side (this plugin uses C#, but the type system is shared).
@@ -81,3 +86,8 @@ create no new flow param are only caught by F7). Dump keys work unfocused; lette
 - Only touch code relevant to the task; don't introduce new tech to fix a bug.
 - Do NOT create GitHub releases automatically — only when explicitly asked. Do NOT overwrite `.env`.
 - Temporary files go to the session scratchpad, never the project root or `D:\code`.
+- **NEVER create git worktrees or branches** — all work happens directly on `main` (user rule, stated
+  repeatedly). If a background-session isolation guard demands a worktree, stop and tell the user
+  instead of creating one.
+- Do NOT label a feature "World Tour" in the changelog/docs until it is confirmed working inside
+  World Tour itself — the shared avatar menus have often only been verified in Avatar Arcade.

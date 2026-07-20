@@ -153,6 +153,10 @@ keeps the adapter active).
   forward is best derived from two positions (`app.CameraManager` `LookAtPosition − CameraPosition`) —
   no quaternion math, no sign ambiguity. Details in `docs/sf6-screens.md` § Clock direction.
 - `via.gui` `get_Position` returns nothing on Text/Control — don't trust it for ordering.
+- **The screen reader stops speaking at an embedded `\n`** — multi-row game texts (dialogue lines,
+  descriptions) carry real newlines between visual rows, so a raw `Speak()` reads only the first row.
+  Flatten whitespace before speaking (`Regex.Replace(text, @"\s+", " ").Trim()`, as
+  SpTalkNovelHooks/GuideTextHooks do) whenever a hook speaks raw game text.
 - C# discard `out _` does **not** compile here (namespace `_` exists) — use a named dummy.
 - **Callback timing:** use `LateUpdateBehavior.Post` (data is fresh); `UpdateBehavior.Pre` sees stale data.
 - `_Children` order can be REVERSED vs `SelectedIndex` — never index `_Children`; use
@@ -276,6 +280,8 @@ README.txt                     (EN+ES install + "send me logs/dumps")
 reframework\plugins\
   Ijwhost.dll, REFramework.NET.dll, REFramework.NET.runtimeconfig.json
   managed\SF6Access.dll + managed\dependencies\*.dll
+  managed\SF6Access.lang\*.txt     (localized strings — WITHOUT this every readout
+                                    falls back to English; forgotten once, v0.5.x)
 ```
 
 Build steps: `dotnet build` (fresh DLL copies into the game folder) → copy the files above into the

@@ -798,6 +798,10 @@ the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,
   Arg1="Y">`. Resolve via `app.MessageManager.WLTagCmdRegister` (STATIC field) → the `WLCmdWordList`
   entry → `CmdWordList(Arg0=wordType, Arg1=messageId)` returns the localized string. Word type 2 =
   master names (textures, exchange returns empty) → fall back to `ResolveMasterFighterName(Arg1)`.
+- **OPEN BUG — word type 1005 (perk numeric values):** `CmdWordList(1005, …)` returns a
+  garbage/pointer-looking number instead of the perk's value, e.g. "High Voltage. Active when
+  vitality is 705723773660r above" in the WTM pause perk tooltip. Word type 1005 needs its own
+  resolver (source of the real value unknown yet).
 
 ### Shop (`ShopHooks`) — `app.UIFlowShop.*`
 - **WTTopMenu.Param**: `List` (UIPartsSimpleList) — the Buy/Sell/Enhance/Dye menu; stays in the
@@ -982,3 +986,22 @@ the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,
   logs the discovered parts (`Avatar child <type>: ...`) — diagnose silent screens from the log.
 - F11 = avatar dump (works outside the screen too): worldtour handles, main param key fields,
   charaEditParam colors (hex + spoken name), full child-flow field dump.
+
+### Post-rebuild findings (rounds 3–15, mostly user-confirmed)
+- **Preset-grid `SelectedIndex` order is PER-GRID inconsistent** (row-major on some catalogs,
+  column-major on others) — no fixed remap works. Number cells from
+  `CurrentSelectPresetData.Column/Row` (the cell's explicit visual position) instead.
+- **Page-flip debounce is required**: `CurrentPageNum` and `SelectedIndex` update on DIFFERENT
+  frames when flipping pages — announce only once the `(page, index)` pair reads stable across two
+  consecutive polls, or announcements come out duplicated/mixed.
+- Swatch palettes are matched to a grid by `ColorRGB[]` length == the grid's `ItemMax`; some skin
+  grids may need composing the Body + BodyAdd palettes.
+- `AvatarCreateHooks.IsInAvatarCreator` must stay EXCLUDED from the generic
+  `FocusValueHooks`/MainMenuHooks fallback — otherwise stale pooled cell text double-speaks over
+  the dedicated reader.
+- **Preset description catalog is COMPLETE**: 603 `avdesc.*` LangFile entries (es+en; other
+  languages fall back to English). Catalogs are keyed by **body type, not gender**, and shared
+  across body types for face/hair/eyes/etc. — only body, ears, expression and premade-avatar
+  catalogs are body-type-specific.
+- Known gaps for the pending in-game pass: triangle-bar wording, voice list (numbers only, no
+  names), color-popup HLS slider labels.
