@@ -23,6 +23,9 @@ public static class WorldTourStateService
     private const string CITY_MANAGER = "app.worldtour.WTCityManager";
     private const string SECTION_MANAGER = "app.worldtour.CitySectionManager";
     private const string AVATAR_MANAGER = "app.worldtour.avatar.AvatarManager";
+    // Global (not WT-specific) camera singleton; consumed here by the WT field
+    // radar for camera-relative clock directions.
+    private const string CAMERA_MANAGER = "app.CameraManager";
 
     // WTCityManager.EState: the "we are in a World Tour city" state.
     private const int E_STATE_ACTIVATED = 1;   // EState { Deactivated = 0, Activated = 1 }
@@ -86,9 +89,14 @@ public static class WorldTourStateService
     /// <summary>The CitySectionManager singleton, cached.</summary>
     public static ManagedObject GetSectionManager() => Singleton(SECTION_MANAGER, ref _sectionManager);
 
+    /// <summary>The global <c>app.CameraManager</c> singleton (camera position /
+    /// look-at / rotation), for camera-relative direction announcements.</summary>
+    public static ManagedObject GetCameraManager() => Singleton(CAMERA_MANAGER, ref _cameraManager);
+
     private static ManagedObject _cityManager;
     private static ManagedObject _sectionManager;
     private static ManagedObject _avatarManager;
+    private static ManagedObject _cameraManager;
 
     private static uint ReadUIntFromCityManager(string field)
     {

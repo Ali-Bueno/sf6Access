@@ -842,4 +842,5 @@ wt.contact_master=maestro
 wt.contact_object=objeto
 wt.contact_player=jugador
 wt.at_meters={0} a {1} metros
+wt.at_clock_meters={0} a las {1}, a {2} metros
 input.Move=movimiento

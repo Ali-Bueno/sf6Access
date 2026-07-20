@@ -28,7 +28,7 @@
 | Online / social (rooms, hub, chat, shop) | done | `CustomRoomHooks`, `BattleHubResultHooks`, `SocialChatHooks`, `ChatMenuHooks`, `OnlineShopHooks`/`OnlineShopBuyHooks` |
 | Dialogs / flow / tickers / news | done | `DialogHooks`, `DialogFlowHooks`, `FlowTrackerHooks`, `TickerHooks`, `NewsHooks` |
 | World Tour — exploration dialogue | wip | v0.5.5: NPC VN dialogue + branch choices now read; subtitle de-dup fixed (`WorldTour/`, `SpTalkNovelHooks`) |
-| World Tour — field awareness (radar) | wip | Confirmed in-game 2026-07-20: names the target in access range + on-demand key speaks real distances to nearby avatars. Next: clock direction. See `docs/sf6-screens.md` § World Tour — field awareness |
+| World Tour — field awareness (radar) | wip | Confirmed in-game 2026-07-20: names the target in access range + on-demand key speaks real distances to nearby avatars. Clock direction BUILT (camera-relative, `FieldDirectionService`) — needs the in-game handedness calibration. See `docs/sf6-screens.md` § World Tour — field awareness |
 | Avatar creator (colors, presets, traits) | wip | v0.5.5 rework; ~600 preset descriptions, colors named in 13 langs; needs in-game pass (`AvatarCreate/`, `AvatarStatsReader`) |
 | Avatar — Special Moves / Super Arts equip | wip | Slot-usage announced (per-category slots, no cost system); verified in Avatar Arcade |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
@@ -44,12 +44,15 @@
 | Shared services | `FlowHelper`, `GuiTextReader`, `GroupFocusPoller`, stale-param re-entry handling | `docs/sf6-architecture.md`, `SF6Access/Services/` |
 
 ## Next step
-World Tour field awareness: add the clock direction ("Luke a las 2, a 14 metros") on top of the working
-distance readout, using the **camera yaw** as the reference frame (decided 2026-07-20 — the player
-steers relative to the camera, so the clock must match the screen). Camera is `WTPlayerCameraController`,
-a Behavior (not a singleton) and not yet wired into `WorldTourStateService`; verify against a dump.
-Then: verify the shared avatar/status menus inside World Tour (not just Avatar Arcade) and complete the
-in-game pass on the reworked character creator.
+World Tour clock direction is BUILT (2026-07-20, camera-relative via `app.CameraManager`
+LookAt−Position — no quaternions needed; `Services/WorldTour/FieldDirectionService.cs`): calibrate it
+in game — walk toward the target and press the nearby key; camera-frame hour should say 12 (a 6 = the
+forward source is inverted, 3↔9 = mirrored handedness; the `clock-diag` log line records the offset
+under BOTH the camera and the avatar-facing frames so one walk settles the reference-frame question).
+Also still open: the final key binding (N/Start is provisional) and whether Luke announcing as
+"master" (ContactUIType Legendary) is right for the tutorial. Then: verify the shared avatar/status
+menus inside World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked
+character creator.
 
 ## Known issues / open questions
 - Uses **Tolk**, not PRISM (the playbook default is PRISM).

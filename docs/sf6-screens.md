@@ -671,6 +671,28 @@ objective", use `AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessT
 `OtherPlayer = 3`. Note Luke reads as `Legendary` in the opening tutorial, so he is announced as
 "master", not "person".
 
+### Clock direction (camera-relative)
+`Services/WorldTour/FieldDirectionService.cs`. The announced hour ("person at 2 o'clock, 14 meters",
+`wt.at_clock_meters`) is **camera-relative** — the stick steers relative to the camera, so 12 must mean
+"push up", not "where the avatar model faces".
+- **Camera source: `app.CameraManager`** (global managed singleton, resolved with the same
+  stale-rebind `Singleton()` pattern as the WT managers). Forward = `LookAtPosition − CameraPosition`
+  projected to XZ — two positions, so no quaternion decomposition and no sign ambiguity; `CameraVec`
+  is the fallback. It also exposes `CameraRotation` (Quaternion) but that's unneeded. The WT-specific
+  `app.worldtour.WTCameraManager` (`StableRotation`/`CurrentActualRotation`, `IsDuringTransition`) and
+  `PlayerCameraManager`/`WTPlayerCameraController` exist but are Behaviors with rotation-only state —
+  the position-pair on `app.CameraManager` is simpler and mode-agnostic.
+- **Avatar facing** (diagnostic only, to compare frames): avatar GameObject → Transform → `get_AxisZ`
+  — `AxisZ` is RE Engine's standard forward-axis idiom (used across the game's own code); there is no
+  `get_Forward`. `AvatarBase` itself has no facing accessor (`GetAccessCheckPos(out pos, out dir)`'s
+  `dir` is the access-check direction, unverified as facing).
+- Hour math: `ahead = d·fwd`, `rightward = dx*fz − dz*fx` (up × forward in Y-up), hour =
+  `round(atan2(rightward, ahead)/30°)` mapped 1–12; hour 0 is returned when the frame is unreadable
+  (fall back to the plain distance phrase).
+- **PENDING in-game calibration:** left/right handedness (a mirrored 3↔9 reading = negate `rightward`;
+  a 6-for-12 = forward source inverted). The per-press `clock-diag` log line records the offset under
+  BOTH frames, so one walk toward a target settles frame + handedness at once.
+
 ### Diagnostics
 Log floats with `CultureInfo.InvariantCulture`: under a Spanish locale the decimal comma collides with
 the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,0)`).

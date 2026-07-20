@@ -150,6 +150,13 @@ public static class LocalizedText
     public static string AtMeters(string what, int meters)
         => string.Format(LangFile.Get("wt.at_meters", "{0}, {1} meters away"), what, meters);
 
+    /// <summary>"person at 2 o'clock, 14 meters away" — distance plus the
+    /// camera-relative clock direction (12 = straight ahead of the camera,
+    /// i.e. stick up). Used when a direction frame could be read; plain
+    /// <see cref="AtMeters"/> is the fallback.</summary>
+    public static string AtClockMeters(string what, int hour, int meters)
+        => string.Format(LangFile.Get("wt.at_clock_meters", "{0} at {1} o'clock, {2} meters away"), what, hour, meters);
+
     /// <summary>Kind word for an object / gimmick (ContactUIType.OM).</summary>
     public static string ContactObject() => LangFile.Get("wt.contact_object", "object");
 

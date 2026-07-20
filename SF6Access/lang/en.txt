@@ -881,3 +881,4 @@ wt.contact_master=master
 wt.contact_object=object
 wt.contact_player=player
 wt.at_meters={0}, {1} meters away
+wt.at_clock_meters={0} at {1} o'clock, {2} meters away

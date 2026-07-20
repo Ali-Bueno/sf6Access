@@ -21,11 +21,13 @@ namespace SF6Access.Hooks.WorldTour;
 /// the target plus the game's already-computed <c>Distance</c>/<c>Angle</c> — so
 /// nothing positional is recomputed here.
 ///
-/// <para>NOTE (first-live calibration): the nearby list is ordered by the game's
-/// <c>Distance</c> (ordering is reliable regardless of unit) but does not yet
-/// speak a metric distance or clock direction — those need the units/reference
-/// frame of <c>Distance</c>/<c>Angle</c> confirmed against an F8/F9 dump before
-/// they can be phrased without guessing. That is the immediate WT-1 follow-up.</para>
+/// <para>NOTE (clock calibration): the distant-avatar readout now speaks a
+/// camera-relative clock hour ("person at 2 o'clock, 14 meters") via
+/// <see cref="FieldDirectionService"/>. Two things are pending the in-game test:
+/// the left/right handedness (a mirrored reading means flipping one sign — see
+/// that class doc) and whether the camera frame beats the avatar frame in
+/// practice (the per-press diagnostic logs the hour under BOTH frames so one
+/// walk answers it).</para>
 /// </summary>
 public class FieldAwarenessHooks
 {
@@ -279,30 +281,53 @@ public class FieldAwarenessHooks
         // origin), so treat it as unreadable rather than announce garbage.
         (float x, float y, float z) player = default;
         bool playerOk = false;
+        ManagedObject playerAvatar = null;
         foreach (var (av, type) in entries)
         {
             if (!type.Contains("AvatarPlayer")) continue;
             var (x, y, z, ok) = ReadAvatarWorldPos(av);
-            if (ok && (x != 0f || y != 0f || z != 0f)) { player = (x, y, z); playerOk = true; }
+            if (ok && (x != 0f || y != 0f || z != 0f)) { player = (x, y, z); playerOk = true; playerAvatar = av; }
             break;
         }
         if (!playerOk) return false;
 
-        var others = new List<float>();
+        // Clock frame: camera forward (stick-relative "12"); the avatar's own
+        // facing is read only for the calibration diagnostic below.
+        var camFwd = FieldDirectionService.GetCameraForward();
+        var avFwd = FieldDirectionService.GetAvatarForward(playerAvatar);
+
+        var others = new List<(float dist, float dx, float dz)>();
         foreach (var (av, type) in entries)
         {
             if (type.Contains("AvatarPlayer")) continue;
             var (x, y, z, ok) = ReadAvatarWorldPos(av);
             if (!ok || (x == 0f && y == 0f && z == 0f)) continue;
             float dx = x - player.x, dy = y - player.y, dz = z - player.z;
-            others.Add((float)System.Math.Sqrt(dx * dx + dy * dy + dz * dz));
+            others.Add(((float)System.Math.Sqrt(dx * dx + dy * dy + dz * dz), dx, dz));
         }
         if (others.Count == 0) return false;
 
-        others.Sort();
+        others.Sort((a, b) => a.dist.CompareTo(b.dist));
         var parts = new List<string>(others.Count);
-        foreach (float dist in others)
-            parts.Add(LocalizedText.AtMeters(LocalizedText.ContactPerson(), (int)System.Math.Round(dist)));
+        foreach (var (dist, dx, dz) in others)
+        {
+            int meters = (int)System.Math.Round(dist);
+            int hour = FieldDirectionService.ClockHour(camFwd, dx, dz);
+            parts.Add(hour > 0
+                ? LocalizedText.AtClockMeters(LocalizedText.ContactPerson(), hour, meters)
+                : LocalizedText.AtMeters(LocalizedText.ContactPerson(), meters));
+
+            // DIAGNOSTIC (clock calibration): the same offset under both frames.
+            // In-game check: walk toward the target (camera settles behind the
+            // player) and press the key — camera-frame should say 12; a 6 means
+            // the forward source is inverted, a 3/9 swap means mirrored
+            // handedness. Remove once the frame + handedness are confirmed.
+            int avHour = FieldDirectionService.ClockHour(avFwd, dx, dz);
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            API.LogInfo($"[SF6Access] clock-diag: d=({dx.ToString("0.00", inv)},{dz.ToString("0.00", inv)}) " +
+                        $"dist={dist.ToString("0.0", inv)} camFwd=({camFwd.X.ToString("0.00", inv)},{camFwd.Z.ToString("0.00", inv)},ok={camFwd.Ok}) " +
+                        $"camHour={hour} avFwd=({avFwd.X.ToString("0.00", inv)},{avFwd.Z.ToString("0.00", inv)},ok={avFwd.Ok}) avHour={avHour}");
+        }
 
         ScreenReaderService.Speak(
             $"{LocalizedText.NearbyCount(parts.Count)}: {string.Join(", ", parts)}", interrupt: true);
