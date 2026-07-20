@@ -49,8 +49,7 @@ LookAt−Position — no quaternions needed; `Services/WorldTour/FieldDirectionS
 in game — walk toward the target and press the nearby key; camera-frame hour should say 12 (a 6 = the
 forward source is inverted, 3↔9 = mirrored handedness; the `clock-diag` log line records the offset
 under BOTH the camera and the avatar-facing frames so one walk settles the reference-frame question).
-Also still open: the final key binding (N/Start is provisional) and whether Luke announcing as
-"master" (ContactUIType Legendary) is right for the tutorial. Then: verify the shared avatar/status
+Also still open: the final key binding (N/Start is provisional). Then: verify the shared avatar/status
 menus inside World Tour (not just Avatar Arcade) and complete the in-game pass on the reworked
 character creator.
 
