@@ -68,16 +68,11 @@ public static class AvatarFieldReader
             if (av != null) entries.Add((av, av.GetTypeDefinition()?.GetFullName() ?? ""));
         }
 
-        (float x, float y, float z) player = default;
-        bool playerOk = false;
-        foreach (var (av, type) in entries)
-        {
-            if (!type.Contains("AvatarPlayer")) continue;
-            var (x, y, z, ok) = ReadWorldPos(av);
-            if (ok && (x != 0f || y != 0f || z != 0f)) { player = (x, y, z); playerOk = true; }
-            break;
-        }
-        if (!playerOk) return result;
+        // Shared origin, so every field distance in the mod is measured from the
+        // same place — and from the LOCAL player rather than whichever
+        // human-controlled avatar happens to come first in the list.
+        var player = ReadPlayerPos(mgr);
+        if (!player.ok) return result;
 
         foreach (var (av, type) in entries)
         {
@@ -94,6 +89,74 @@ public static class AvatarFieldReader
     // Sanity cap on how many avatar entries to walk per read (crowded hubs);
     // avatars beyond it are simply not announced this press/tick.
     private const int MAX_AVATARS = 24;
+
+    /// <summary>The player avatar's own world position — the origin every field
+    /// distance is measured from. Exposed because targets other than avatars
+    /// (field gimmicks, for one) need the same origin, and re-deriving it
+    /// elsewhere would be the same read written twice. An EXACT (0,0,0) means the
+    /// component read failed, so it reports not-ok rather than a false origin.</summary>
+    public static (float x, float y, float z, bool ok) ReadPlayerPos(ManagedObject mgr)
+    {
+        // THE LOCAL PLAYER, explicitly. The avatar-list scan below matches the
+        // first type containing "AvatarPlayer", and every human-controlled avatar
+        // is one — so with other online players around it could return SOMEBODY
+        // ELSE. That is not theoretical: it made panel distances jump between
+        // 0.8 m and 17 m on a stationary target, and panels that had been walked
+        // over were never marked as such.
+        var local = LocalPlayerPos();
+        if (local.ok) return local;
+
+        if (mgr == null) return (0f, 0f, 0f, false);
+        var avatars = GetAvatarList(mgr);
+        int n = FlowHelper.GetListCount(avatars);
+        for (int i = 0; i < n && i < MAX_AVATARS; i++)
+        {
+            var av = FlowHelper.GetListItem(avatars, i);
+            if (av?.GetTypeDefinition()?.GetFullName()?.Contains("AvatarPlayer") != true) continue;
+            var p = ReadWorldPos(av);
+            if (p.ok && (p.x != 0f || p.y != 0f || p.z != 0f)) return p;
+            break;
+        }
+        return (0f, 0f, 0f, false);
+    }
+
+    // The game's own handle on "which avatar is ME": a GameObject property on the
+    // World Tour player manager. Unambiguous where a type-name match is not.
+    private const string PLAYER_MANAGER = "app.worldtour.WTPlayerManager";
+    private static bool _localPathLogged;
+
+    /// <summary>The local player's position from <c>WTPlayerManager
+    /// .LocalPlayerObject</c>, or ok=false when that route is unavailable.</summary>
+    private static (float x, float y, float z, bool ok) LocalPlayerPos()
+    {
+        try
+        {
+            var pm = API.GetManagedSingleton(PLAYER_MANAGER) as ManagedObject;
+            if (pm == null) return (0f, 0f, 0f, false);
+            // Getter FIRST: LocalPlayerObject is a property with no backing field,
+            // so asking for the field logs a "Member not found" line on every
+            // read — and this runs several times a second.
+            var go = FlowHelper.Call(pm, "get_LocalPlayerObject") as ManagedObject
+                     ?? FlowHelper.GetObjectField(pm, "LocalPlayerObject");
+            var tr = FlowHelper.Call(go, "get_Transform") as ManagedObject;
+            var p = FlowHelper.Call(tr, "get_Position");
+            if (p == null) return (0f, 0f, 0f, false);
+
+            float x = FlowHelper.ReadVecComponent(p, "x");
+            float y = FlowHelper.ReadVecComponent(p, "y");
+            float z = FlowHelper.ReadVecComponent(p, "z");
+            // An exact origin means the read failed, not a player at (0,0,0).
+            bool ok = float.IsFinite(x) && float.IsFinite(y) && float.IsFinite(z)
+                      && (x != 0f || y != 0f || z != 0f);
+            if (ok && !_localPathLogged)
+            {
+                _localPathLogged = true;
+                API.LogInfo($"[SF6Access] Player position via {PLAYER_MANAGER}.LocalPlayerObject");
+            }
+            return (x, y, z, ok);
+        }
+        catch { return (0f, 0f, 0f, false); }
+    }
 
     /// <summary>Name + kind of an avatar ("Luke, master"), or null.
     /// <c>GetDispName</c> is not on <c>AvatarBase</c>, but the access-target

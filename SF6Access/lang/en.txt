@@ -885,3 +885,36 @@ wt.at_clock_meters={0} at {1} o'clock, {2} meters away
 wt.clock_short=at {0} o'clock, {1} meters
 wt.tracking_on=Tracking on
 wt.tracking_off=Tracking off
+wt.beacon_on=Beacons on
+wt.beacon_off=Beacons off
+wt.pad_guide_on=Panel guide on
+wt.pad_guide_off=Panel guide off
+wt.pads_done=All panels done
+wt.pad=panel
+wt.and_more=and {0} more
+wt.mission_cleared=cleared
+wt.mission_not_accepted=not accepted
+wt.mission_target=objective
+wt.mission_here=At the objective
+
+# --- World Tour navigation radar (geometry: walls, openings, drops) ---
+wt.nav_radar_on=Navigation radar on
+wt.nav_radar_off=Navigation radar off
+wt.nav_front_open=Clear ahead
+wt.nav_front_step=Low step
+wt.nav_front_waist=Waist-high obstacle
+wt.nav_front_wall=Wall
+wt.nav_front_tall=Tall wall
+wt.nav_obstacle_at={0} at {1} meters
+wt.nav_clear_for=Clear for {0} meters
+wt.nav_left_open=left open
+wt.nav_left_blocked=left blocked
+wt.nav_right_open=right open
+wt.nav_right_blocked=right blocked
+wt.nav_floor_solid=floor ahead
+wt.nav_floor_drop=drop ahead
+
+# --- World Tour zone / area name ---
+wt.zone_here=In {0}
+wt.zone_near=Near {0}
+wt.zone_unknown=Location unknown

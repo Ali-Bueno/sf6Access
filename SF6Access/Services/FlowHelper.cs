@@ -333,6 +333,31 @@ public static partial class FlowHelper
         return fallback;
     }
 
+    /// <summary>Read a <c>uint</c> field. NOT interchangeable with
+    /// <see cref="ReadIntField"/>: any value above <c>int.MaxValue</c> makes the
+    /// int path throw inside <c>Convert.ToInt32</c>, which the catch swallows, so
+    /// the caller silently gets the fallback instead of the number. Hashed ids
+    /// (Wwise trigger ids, message ids) routinely exceed it.</summary>
+    public static uint ReadUIntField(ManagedObject obj, string name, uint fallback = 0)
+    {
+        if (obj == null) return fallback;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            var field = td?.GetField($"<{name}>k__BackingField") ?? td?.GetField(name);
+            if (field != null)
+                return Convert.ToUInt32(field.GetDataBoxed(typeof(uint), obj.GetAddress(), false));
+        }
+        catch { }
+        try
+        {
+            var v = Call(obj, "get_" + name);
+            if (v != null) return Convert.ToUInt32(v);
+        }
+        catch { }
+        return fallback;
+    }
+
     /// <summary>Read an 8-bit (byte/sbyte enum) field as int. Reading a byte via
     /// the int path would pull in the adjacent field's bytes, so the type must match.</summary>
     public static int ReadByteField(ManagedObject obj, string name, int fallback = 0)
@@ -424,14 +449,59 @@ public static partial class FlowHelper
             var mgr = API.GetManagedSingleton("app.training.TrainingManager");
             if (mgr == null) return null;
             var tData = GetObjectField(mgr, "_tData");
-            if (tData == null)
+            if (tData == null && _displayFuncReadable && HasDisplayFunc(mgr))
             {
                 var func = GetObjectField(mgr, "DisplayFunc");
+                // The TYPE declares DisplayFunc but the INSTANCE never yields it,
+                // and every attempt costs three logged "not found" lines. Outside
+                // a live session this branch runs every frame, which measured
+                // 5200 log lines in five minutes. One failure is enough to know:
+                // a read that never worked will not start working, and a real
+                // training session never reaches here (its _tData is non-null).
+                if (func == null)
+                {
+                    _displayFuncReadable = false;
+                    API.LogInfo("[SF6Access] TrainingManager.DisplayFunc unreadable at runtime — " +
+                                "not probing it again");
+                }
                 tData = GetObjectField(func, "_tData");
             }
             return GetObjectField(tData, "DisplaySetting");
         }
         catch { return null; }
+    }
+
+    // Whether app.training.TrainingManager actually exposes DisplayFunc, resolved
+    // ONCE against the type definition.
+    //
+    // Why this exists: the TrainingManager singleton is alive in EVERY mode, not
+    // just training — so the World Tour field kept taking the `_tData == null`
+    // fallback path below and probing for DisplayFunc every frame. A failed
+    // member probe makes REFramework log three lines ("Member not found" twice
+    // plus "Method not found: get_<...>k__BackingField"), which flooded
+    // re2_framework_log.txt at ~180 lines/second and made the log unusable for
+    // research. Testing the TYPE instead of the value is both cheap and correct:
+    // a member either exists on the type or it never will, and a live training
+    // session is unaffected because a type that HAS the field still reads it.
+    private static bool _displayFuncResolved;
+    private static bool _displayFuncExists;
+    // Set false the first time the instance read fails; see the call site.
+    private static bool _displayFuncReadable = true;
+
+    private static bool HasDisplayFunc(ManagedObject mgr)
+    {
+        if (_displayFuncResolved) return _displayFuncExists;
+        try
+        {
+            var td = mgr?.GetTypeDefinition();
+            _displayFuncExists = td != null
+                && (td.GetField("DisplayFunc") != null
+                    || td.GetField("<DisplayFunc>k__BackingField") != null);
+        }
+        catch { _displayFuncExists = false; }
+        _displayFuncResolved = true;
+        API.LogInfo($"[SF6Access] TrainingManager.DisplayFunc present: {_displayFuncExists}");
+        return _displayFuncExists;
     }
 
     /// <summary>Call a method declared on the object's own class (not an interface). Returns null on failure.</summary>
@@ -482,15 +552,12 @@ public static partial class FlowHelper
     /// offsets (x/y read 0 and z reads adjacent garbage).</para></summary>
     public static float ReadVecComponent(object vec, string name)
     {
-        try
-        {
-            if (vec is IObject po)
-            {
-                var v = po.Call("get_" + name);
-                if (v != null) return Convert.ToSingle(v);
-            }
-        }
-        catch { }
+        // VALUE-TYPE PATH FIRST. via.vec3 is a value type whose components are
+        // FIELDS; it has no get_x/get_y/get_z. Trying the getter first still
+        // worked (it fell through to here) but REFramework logged a
+        // "Method not found" line for every component of every read — three lines
+        // per position, several positions per frame once the World Tour readers
+        // became always-on. That flooded the log and cost real time in a hot path.
         try
         {
             if (vec is REFrameworkNET.ValueType vt)
@@ -498,6 +565,15 @@ public static partial class FlowHelper
                 var field = vt.GetTypeDefinition()?.GetField(name);
                 if (field != null)
                     return Convert.ToSingle(field.GetDataBoxed(typeof(float), vt.GetAddress(), true));
+            }
+        }
+        catch { }
+        try
+        {
+            if (vec is IObject po)
+            {
+                var v = po.Call("get_" + name);
+                if (v != null) return Convert.ToSingle(v);
             }
         }
         catch { }
@@ -848,16 +924,22 @@ public static partial class FlowHelper
     private static ManagedObject _tableDataMgr;
 
     /// <summary>
-    /// Resolve a localized World Tour master message from a master id, e.g.
-    /// "StyleNameID" → "Luke's Style", "MasterUINameID" → "Luke". The master's
-    /// name is rendered as a texture in-game (no text element), so this table
-    /// lookup is the only way to recover it as speakable text. Read through the
-    /// MasterProfileUserDataDict (a managed dictionary) rather than the native
-    /// TryGetMasterProfileUserData(out ...), whose out-param invoke access-violates.
+    /// One record of a <c>TableDataManager</c> user-data dictionary, unwrapped
+    /// from its <c>RecordHolder&lt;T&gt;</c>. Read through the managed dictionary
+    /// rather than the native <c>TryGet...UserData(out ...)</c>, whose out-param
+    /// invoke access-violates.
+    ///
+    /// <para>Every one of those dictionaries is keyed by the record's
+    /// <c>ManageId</c> — that is literally the parameter name on the matching
+    /// <c>TryGet...</c> — and in SF6's tables the ManageId IS the domain id, as
+    /// proven by <see cref="ResolveMasterMessage"/>, which has keyed
+    /// <c>MasterProfileUserDataDict</c> by the plain master id in shipped code all
+    /// along. Callers whose records carry their own <c>id</c> should still
+    /// cross-check it rather than assume the identity holds for their table.</para>
     /// </summary>
-    public static string ResolveMasterMessage(uint masterId, string messageFieldName)
+    public static ManagedObject GetTableRecord(string dictFieldName, string recordTypeName, uint manageId)
     {
-        if (masterId == 0) return null;
+        if (manageId == 0) return null;
         try
         {
             _tableDataMgr ??= API.GetManagedSingleton("app.TableDataManager");
@@ -865,22 +947,35 @@ public static partial class FlowHelper
 
             // Interface property getters don't dispatch on IL2CPP concrete types —
             // read the backing field directly.
-            var dict = GetObjectField(_tableDataMgr, "MasterProfileUserDataDict");
+            var dict = GetObjectField(_tableDataMgr, dictFieldName);
             if (dict == null) return null;
 
             // Missing key throws a managed KeyNotFoundException (caught), not an AV.
-            // The dict value is a RecordHolder<MasterProfileUserDataRecord> wrapper,
-            // so unwrap to the actual record before reading the message field.
-            var holder = Call(dict, "get_Item", masterId) as ManagedObject;
+            var holder = Call(dict, "get_Item", manageId) as ManagedObject;
             if (holder == null) return null;
 
-            var record = UnwrapRecord(holder, "MasterProfileUserDataRecord");
-            if (record == null) return null;
+            var record = UnwrapRecord(holder, recordTypeName);
+            if (record != null) return record;
 
-            var msg = GetObjectField(record, messageFieldName);
-            return ResolveGuidField(msg, "GUID");
+            // Some tables store the record directly instead of wrapping it.
+            return holder.GetTypeDefinition()?.GetFullName()?.Contains(recordTypeName) == true
+                ? holder : null;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Resolve a localized World Tour master message from a master id, e.g.
+    /// "StyleNameID" → "Luke's Style", "MasterUINameID" → "Luke". The master's
+    /// name is rendered as a texture in-game (no text element), so this table
+    /// lookup is the only way to recover it as speakable text.
+    /// </summary>
+    public static string ResolveMasterMessage(uint masterId, string messageFieldName)
+    {
+        var record = GetTableRecord("MasterProfileUserDataDict", "MasterProfileUserDataRecord", masterId);
+        if (record == null) return null;
+        var msg = GetObjectField(record, messageFieldName);
+        return ResolveGuidField(msg, "GUID");
     }
 
     private static ManagedObject _wtMasterMgr;

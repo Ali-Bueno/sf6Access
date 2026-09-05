@@ -6,6 +6,10 @@
 > Progress and next steps live in this repo's `STATUS.md` — open it first.
 > Note: this mod currently uses **Tolk**; the shared playbook's default is **PRISM** — migrating is a
 > separate code decision, not required by this note.
+> **Planned (deferred, not now):** migrate the screen-reader transport from Tolk to **PRISM**, dropping
+> Tolk. Since this mod targets .NET 10, PRISM can be consumed either via the official **Prismatoid**
+> .NET binding (NuGet, targets .NET 10) or by P/Invoking `prism.dll` directly (PRISM exposes a stable C
+> API). See the shared playbook §4 (PRISM integration).
 
 REFramework.NET **C#** plugin that makes Street Fighter 6 usable with a screen reader (Tolk). Built on
 Capcom's RE Engine via REFramework. This repository began as a generic RE Engine modding skeleton (the
@@ -17,6 +21,11 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
 - Build: `dotnet build` from the `SF6Access` folder (auto-copies the DLL into the game). Compile after
   every code change without asking.
 - Log: `re2_framework_log.txt` in the game root; dumps/screenshots in `<game>\reframework\data\`.
+- **Hot-reload dev loop — no game restart:** for fast iteration, develop as a C# **source plugin** (a
+  loose `.cs` under `<game>/reframework/plugins/source/`); REFramework.NET compiles it on save and
+  hot-reloads it live without restarting SF6. `[DllImport]` to the native screen-reader DLL (Tolk today)
+  keeps working in this mode. Keep `dotnet build` -> compiled `.dll` for the release build. Details:
+  [`docs/hot-reload-workflow.md`](docs/hot-reload-workflow.md).
 
 ## Documentation map
 
@@ -41,6 +50,10 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
   `docs/lua-hooks-and-patterns.md` — Lua side (this plugin uses C#, but the type system is shared).
 - `docs/csharp-api.md`, `docs/csharp-hooks.md`, `docs/csharp-objects-and-arrays.md` — REFramework.NET C# API.
 - `docs/examples.md`, `docs/tools.md`, `docs/accessibility-patterns.md` — patterns & Object Explorer.
+- [`docs/hot-reload-workflow.md`](docs/hot-reload-workflow.md) — iterate without restarting the game:
+  C# source-plugin & Lua reload; C#/Lua/native decision; driving the screen-reader DLL.
+- [`docs/discovery-and-gotchas.md`](docs/discovery-and-gotchas.md) — Object Explorer discovery tricks,
+  enumeration primitive, data-reading & performance gotchas.
 
 ## Architecture (at a glance — details in `docs/sf6-architecture.md`)
 

@@ -5,8 +5,18 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Library projects don't copy NuGet assemblies to the output folder by default,
+         and REFramework.NET has no deps.json to resolve them from — we need the real
+         NAudio DLLs on disk so the build can deploy them next to the plugin. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <SF6Path>D:\games\steam\steamapps\common\Street Fighter 6</SF6Path>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Mixes the mod's own sound cues (radar, beacons). The game's Wwise banks can
+         only play events SF6 already ships, so mod-authored audio needs its own mixer. -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="TolkDotNet">
@@ -39,14 +49,19 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Copy output DLL, TolkDotNet.dll and the translation files to the game -->
+  <!-- Copy output DLL, dependencies, translations and sounds to the game -->
   <Target Name="CopyToGame" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SF6Path)\reframework\plugins\managed" />
     <Copy SourceFiles="..\references\tolk\TolkDotNet.dll" DestinationFolder="$(SF6Path)\reframework\plugins\managed\dependencies" />
     <ItemGroup>
       <LangFiles Include="lang\*.txt" />
+      <SoundFiles Include="sounds\*.*" />
+      <!-- NuGet drops these next to the build output; same dependencies folder as TolkDotNet -->
+      <NAudioDlls Include="$(TargetDir)NAudio*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(LangFiles)" DestinationFolder="$(SF6Path)\reframework\plugins\managed\SF6Access.lang" />
+    <Copy SourceFiles="@(SoundFiles)" DestinationFolder="$(SF6Path)\reframework\plugins\managed\SF6Access.sounds" />
+    <Copy SourceFiles="@(NAudioDlls)" DestinationFolder="$(SF6Path)\reframework\plugins\managed\dependencies" />
   </Target>
 
 </Project>

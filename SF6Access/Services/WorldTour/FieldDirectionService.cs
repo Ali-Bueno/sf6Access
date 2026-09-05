@@ -25,8 +25,9 @@ public static class FieldDirectionService
     // Clock-face geometry: 12 hours over 360°.
     private const float DEGREES_PER_HOUR = 360f / 12f;
 
-    // Below this squared XZ length a forward vector has no usable heading (e.g.
-    // a camera looking straight down projects to ~zero); treat it as unreadable.
+    // Below this squared XZ length a direction has no usable heading (a camera
+    // looking straight down projects to ~zero, a target standing on top of the
+    // player likewise); treat it as unreadable.
     private const float MIN_FLAT_SQR_LEN = 1e-6f;
 
     /// <summary>A direction projected onto the ground (XZ) plane.</summary>
@@ -58,21 +59,48 @@ public static class FieldDirectionService
         return vec.ok ? Flatten(vec.x, vec.z) : default;
     }
 
+    /// <summary>An offset expressed in the frame of a forward direction: how much
+    /// of it lies AHEAD and how much to the RIGHT, both normalized to [-1, 1]. The
+    /// clock hour is one reading of it; a stereo pan (<see cref="Right"/>) and a
+    /// front/back test (<see cref="Behind"/>) are two others, and they all have to
+    /// agree, so they all come from here.</summary>
+    public readonly struct Bearing
+    {
+        public readonly float Ahead;
+        public readonly float Right;
+        public readonly bool Ok;
+        public Bearing(float ahead, float right, bool ok) { Ahead = ahead; Right = right; Ok = ok; }
+
+        /// <summary>True when the target sits in the back half of the frame.</summary>
+        public bool Behind => Ahead < 0f;
+    }
+
+    /// <summary>Resolve the offset <c>(dx, dz)</c> into <paramref name="forward"/>'s
+    /// frame. <c>Ok=false</c> when either direction is unusable.</summary>
+    public static Bearing GetBearing(FlatDir forward, float dx, float dz)
+    {
+        if (!forward.Ok) return default;
+        var to = Flatten(dx, dz);
+        if (!to.Ok) return default;
+
+        float ahead = to.X * forward.X + to.Z * forward.Z;
+        // Rightward basis = forward × up = (-fz, fx) on the XZ plane: RE
+        // Engine's world is right-handed Y-up, CONFIRMED in game 2026-07-20 —
+        // with the target at 12, rotating the camera right must drop the hour
+        // toward 11 (the opposite sign read 1, i.e. mirrored).
+        float rightward = to.Z * forward.X - to.X * forward.Z;
+        return new Bearing(ahead, rightward, true);
+    }
+
     /// <summary>The clock hour (1–12) of the offset <c>(dx, dz)</c> relative to
     /// <c>forward</c>: 12 = straight ahead, 3 = right, 6 = behind, 9 = left.
     /// Returns 0 when the forward frame is unusable.</summary>
     public static int ClockHour(FlatDir forward, float dx, float dz)
     {
-        if (!forward.Ok) return 0;
-        float ahead = dx * forward.X + dz * forward.Z;
-        // Rightward basis = forward × up = (-fz, fx) on the XZ plane: RE
-        // Engine's world is right-handed Y-up, CONFIRMED in game 2026-07-20 —
-        // with the target at 12, rotating the camera right must drop the hour
-        // toward 11 (the opposite sign read 1, i.e. mirrored).
-        float rightward = dz * forward.X - dx * forward.Z;
-        if (ahead == 0f && rightward == 0f) return 0;
+        var b = GetBearing(forward, dx, dz);
+        if (!b.Ok) return 0;
 
-        double deg = System.Math.Atan2(rightward, ahead) * 180.0 / System.Math.PI;
+        double deg = System.Math.Atan2(b.Right, b.Ahead) * 180.0 / System.Math.PI;
         int hour = (int)System.Math.Round(deg / DEGREES_PER_HOUR);
         hour = ((hour % 12) + 12) % 12;
         return hour == 0 ? 12 : hour;

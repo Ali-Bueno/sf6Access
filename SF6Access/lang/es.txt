@@ -846,4 +846,37 @@ wt.at_clock_meters={0} a las {1}, a {2} metros
 wt.clock_short=a las {0}, a {1} metros
 wt.tracking_on=seguimiento activado
 wt.tracking_off=seguimiento desactivado
+wt.beacon_on=sonidos de personas activados
+wt.beacon_off=sonidos de personas desactivados
+wt.pad_guide_on=guía de paneles activada
+wt.pad_guide_off=guía de paneles desactivada
+wt.pads_done=todos los paneles pisados
+wt.pad=panel
+wt.and_more=y {0} más
+wt.mission_cleared=completada
+wt.mission_not_accepted=sin aceptar
+wt.mission_target=objetivo
+wt.mission_here=en el objetivo
 input.Move=movimiento
+
+# --- Radar de navegación de World Tour (geometría: paredes, huecos, caídas) ---
+wt.nav_radar_on=radar de navegación activado
+wt.nav_radar_off=radar de navegación desactivado
+wt.nav_front_open=camino libre
+wt.nav_front_step=escalón bajo
+wt.nav_front_waist=obstáculo a la altura de la cintura
+wt.nav_front_wall=pared
+wt.nav_front_tall=pared alta
+wt.nav_obstacle_at={0} a {1} metros
+wt.nav_clear_for=libre {0} metros
+wt.nav_left_open=izquierda libre
+wt.nav_left_blocked=izquierda bloqueada
+wt.nav_right_open=derecha libre
+wt.nav_right_blocked=derecha bloqueada
+wt.nav_floor_solid=suelo delante
+wt.nav_floor_drop=caída delante
+
+# --- Zona / área de World Tour ---
+wt.zone_here=en {0}
+wt.zone_near=cerca de {0}
+wt.zone_unknown=ubicación desconocida

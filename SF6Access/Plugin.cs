@@ -95,6 +95,7 @@ public class Plugin
         API.LogInfo("[SF6Access] Initializing SF6 Accessibility Plugin...");
 
         ScreenReaderService.Initialize();
+        AudioService.Initialize();
         ScreenReaderService.Speak("SF6 Access loaded");
 
         API.LogInfo("[SF6Access] Plugin initialized successfully");
@@ -106,6 +107,7 @@ public class Plugin
         API.LogInfo("[SF6Access] Shutting down...");
 
         GameStateTracker.Clear();
+        AudioService.Shutdown();
         ScreenReaderService.Shutdown();
     }
 }

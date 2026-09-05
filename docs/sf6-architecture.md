@@ -144,6 +144,53 @@ keeps the adapter active).
   components land at the wrong offsets — x/y come back 0 and z reads adjacent garbage (this silently
   broke every World Tour avatar world position). Use `FlowHelper.ReadVecComponent`, the single shared
   reader (getter first, then the value-type field path); don't hand-roll a second copy.
+- **NEVER pass a generated engine type (`typeof(via.vec3)`, `via.Quaternion`, `via.physics.ContactPoint`)
+  as the target return type of `InvokeBoxed` / `GetDataBoxed`.** Those generated C# types are
+  **interfaces**, not structs. REFramework already boxes the result correctly from the member's own TDB
+  type; naming an interface on top makes it wrap that result in a `DispatchProxy`, and a proxy is not a
+  `REFrameworkNET.ValueType`, so `ReadVecComponent` finds neither the value-type fields nor a `get_x` it
+  can dispatch — **every component reads back 0** and it looks exactly like an object sitting at the world
+  origin. Pass nothing (or `typeof(object)`, which `TranslateBoxedData` leaves untouched) for struct
+  members and struct returns; keep a target type only for primitives, where it just picks the final
+  conversion. The width worry is unfounded: boxing always uses the member's real TDB type.
+- **`out` / `ref` parameters: REFramework copies NOTHING back into the `object[]` after the call.** The
+  only thing that works is pointer aliasing — every argument implementing `IObject` is passed as
+  `Ptr()`, i.e. its own address, so the engine writes straight into it and you read the buffer
+  afterwards. A `ref float` needs the same treatment (a boxed `float` is passed BY VALUE, and is even
+  up-converted to `double` first). Shape the buffer from the method's own `GetParameters()[i].Type`,
+  never by naming a type by hand. `ValueType.New<T>()` is NOT the way — with a generated interface `T`
+  it hands back a proxy, which marshals as nothing useful.
+- **DO NOT use `TypeDefinition.CreateValueType()` for a buffer native code writes into** (this replaces
+  earlier advice in this file — it is what crashed SF6 from the F10 field probe, 2026-09-04). Decompiling
+  `REFramework.NET.dll` shows `ValueType` is a managed `new byte[ValueTypeSize]` on the GC heap, and
+  `ValueType.Ptr()` takes its address inside a `fixed` block that is **released before the pointer is
+  returned**. The address handed to the engine is therefore unpinned — a GC during the native call moves
+  the array and the engine keeps writing into memory that is no longer ours. It is also exactly
+  `ValueTypeSize` bytes with no slack, on an 8-byte-aligned array, so a whole-register store of a 12-byte
+  `via.vec3` can run off the end and an *aligned* SIMD store can fault. Symptom: correct data comes back,
+  then the game dies silently seconds later with nothing in `re2_framework_log.txt`. Use
+  `SF6Access/Services/WorldTour/FieldOutBuffer.cs` instead: `Marshal.AllocHGlobal` (never moves),
+  rounded up to and aligned on the engine's own vector-register width read from the TDB (`via.vec4`),
+  zeroed per call, wrapped in `NativeObject.FromAddress` — whose `Ptr()` returns that stable address
+  verbatim.
+- **NEVER call a method whose `out` / `ref` parameter is a REFERENCE type.** For a value type the by-ref
+  address is a struct buffer we can shape correctly. For a reference type there is no buffer that can be
+  shown correct: the engine either stores an object pointer *through* the address (trampling the header
+  of whatever was passed) or writes the whole record into REFramework's own argument slot. Both are
+  native writes outside anything we allocated. Check `GetParameters()[i].Type.IsValueType()` and
+  **skip the call**, printing why. Concrete case:
+  `AvatarState_FieldBase.CastRay(CastRayTypes, out app.CollisionSystem.HitResult)` — `HitResult` is a
+  class, so `CastRay` returned a truthful `bool` over a permanently blank `HitResult` and corrupted the
+  heap. Its sibling `CastRayAll(CastRayTypes, via.physics.CastRayResult, eFilterInfo)` is safe because
+  `result` carries **no** by-ref marker (the same signature does mark its `vec3` params, so the absence
+  is real information): it is an ordinary by-value object the engine mutates in place, created with
+  `CreateInstance(0)` and **not** globalized. It also returns strictly more —
+  `NumContactPoints` + `getContactPoint(i)` → `via.physics.ContactPoint` (Position/Normal/Distance/
+  TimeOfImpact), returned BY VALUE and boxed by REFramework, so no caller buffer is involved at all.
+- **Don't `Globalize()` a buffer the engine writes into.** `Globalize` is an `AddRef` with no inverse
+  besides `Release`, so it roots the object forever (a leak per probe run) and keeps a possibly-damaged
+  object alive for later traversal. Out buffers live for one synchronous call inside a single frame and
+  need no rooting at all.
 - **`AvatarBase` has no `DrawObj`** — in the decompiled source `DrawObj` only exists inside the nested
   per-body-part `WTBodyDisp` struct. Reach an avatar's transform through its own
   `Component.get_GameObject()` → `get_Transform()` → `get_Position()`.
@@ -264,6 +311,154 @@ Output lands in `<game>\reframework\data\` (path derived from `Environment.Proce
   (`GetForegroundWindow`/`GetWindowThreadProcessId == Environment.ProcessId`).
 - Intra-flow popups/submenus that create no new flow param aren't captured by F8/F9 — use F7.
 - Research workflow: toggle F8, navigate the flow once, send the session file + `re2_framework_log.txt`.
+
+## Game audio (Wwise) — for spatialized beacons
+
+Mapped and **confirmed in game 2026-08-03**: triggering a World Tour NPC's own sound container plays
+the sound **in true 3D at that NPC's position** (verified by rotating the camera — the sound stays
+glued to the NPC). Spatialized beacons are therefore built on the game's own audio.
+
+Why it matters: a beacon that marks an NPC's position is far more useful in 3D (real panning,
+distance attenuation, occlusion, and it obeys the player's own volume sliders) than a stereo pan we
+mix ourselves. SF6 can do that — with one hard limit.
+
+- **The engine is Wwise, under `via.simplewwise`** (there is NO `via.wwise` namespace), plus
+  `via.wwiselib`. Managed layers on top: `soundlib.SoundManager` (all-static), `soundlib.SoundContainer`
+  → `app.sound.SoundContainerApp` (the per-GameObject component), `app.sound.SoundManager` (a
+  `via.Behavior`, not a singleton).
+- **HARD LIMIT: we cannot play our own audio file this way.** Wwise only fires events that already
+  exist in SF6's soundbanks. Using the game's audio means picking an existing SE, not shipping a sample.
+  Shipping our own sample means mixing it ourselves (no HRTF, stereo pan only) — the fallback.
+- **Playing at a position.** Two mechanisms, both first-class:
+  - by GameObject — `SoundContainer.trigger(uint trgId, via.GameObject positionGameObj, …)`; the
+    engine tracks the object, which is what we want for a moving NPC;
+  - by raw position — `SoundContainer.trigger(uint trgId, via.vec3 pos, …)`,
+    `app.sound.SoundContainerApp.trigger(uint, via.vec3, …)`, and the static shortcut
+    `app.UISound.Trigger(uint triggerId, via.vec3 pos, app.sound.SoundManager.ContainerType)`.
+  - **Simplest path: NPCs already carry their own emitter.** `app.sound.SoundNPCBehavior` +
+    a sibling `SoundContainerApp` sit on the NPC's GameObject (same component array
+    `AvatarFieldReader.DescribeAvatar` already walks), so calling the plain
+    `soundlib.SoundContainer.trigger(System.UInt32)` on *that* container needs no vec3 at all — the
+    position comes from the GameObject for free.
+- **Trigger ids are hashed `uint`s with NO enum anywhere in the TDB.** They can only be discovered at
+  runtime by walking `SoundContainer.AllTriggerInfoListData → SoundTriggerInfoListData.TriggerInfoList
+  → SoundTriggerInfo.TriggerId / .EventId`. `SoundContainerApp.exists(uint)` validates one.
+  Raw Wwise names hash via `via.simplewwise.Driver.getIdFromString("Play_…")`.
+- **Design principle this unlocks:** reusing the game's own sounds gives audio cues that are
+  *diegetic* — they read as part of the world instead of a mod layered on top, so they locate things
+  without breaking immersion the way synthetic beeps do. Prefer an existing SE/voice over a shipped
+  sample wherever one fits.
+- **HAZARD: some triggers LOOP.** Firing a trigger blind can leave a sound playing forever (confirmed
+  2026-08-03 — it forced a game restart). Anything that fires triggers must be able to stop them:
+  - `soundlib.SoundContainer.stopTriggered(uint trgId, via.GameObject gameObj, uint duration)` —
+    targeted, `duration = 0` stops immediately instead of fading;
+  - `soundlib.SoundManager.stopAll()` — static panic button, silences everything;
+  - also available: `stopEvent(GameObject, uint evId, uint duration)`, `stopEventByRequestId`.
+  `stopAll()` works but **also kills the music, which does not restart on its own** — treat it as a
+  last resort, not the default panic button. For the shipped beacon this means **never fire an
+  unvetted id**: use a curated set, and/or watch `RequestInfo.Playing` and stop anything still
+  sounding past its expected length.
+- **Watching what the game itself plays — polling does NOT work; use a hook.** `soundlib.SoundManager`
+  has the static fields `_RequestInfoList` (`IList<RequestInfo>`), `_RequestInfoDict`
+  (`IDictionary<uint, RequestInfo>`) and `_GameObjectInfoDict` (`IDictionary<ulong, GameObjectInfo>`,
+  each with its own `RequestInfoList`), read with `GetDataBoxed(..., address 0, false)`. Each
+  `RequestInfo` carries `RequestId`, the inherited `TriggerId`, `SrcGameObj`, `Playing`/`PlayingId`
+  and `Position`. **Measured 2026-08-03: polling them once per frame catches almost nothing.**
+  `_RequestInfoList` is a transient queue filled and drained *within a frame* — every heartbeat read
+  it as empty (`global 0, npc 0`) while `RequestId` advanced ~110/second, so a per-frame sample caught
+  ~1/s and only ever the player's own footsteps. The per-NPC lookup works
+  (`via.simplewwise.Driver.getGameObjectId(via.GameObject, uint)` returned a valid id) but its list
+  reads empty for the same reason.
+  To watch what the game plays, **hook `soundlib.SoundManager.postRequestInfo(RequestInfo)`** — the
+  single choke point every request passes through — and do it from the **compiled DLL**, not a source
+  plugin: there is no documented unhook, so a hot-reloading plugin would leave a stale delegate
+  pointing into an unloaded assembly.
+- **Making one sound carry further, without touching the mix.** `RequestInfo.AttenuationScalingFactor`
+  stretches the Wwise attenuation curve for a SINGLE playback: at a given real distance the sound is
+  treated as though it were nearer, so it carries. It still rides the player's SFX volume, which is
+  what we want. Do **not** instead use a global RTPC / bus volume (moves all game audio) or mutate
+  `SoundTriggerInfo.TriggerRange` (shared data the game itself uses).
+  Applying it means building the request by hand instead of calling `trigger(id)`:
+  1. `soundlib.SoundContainer.createRequestInfo(SoundTriggerInfo, GameObject src, GameObject target,
+     uint jointHash, bool symmetry, bool positioned, uint seekTime, CallbackType, object, object)` —
+     `positioned: true`, trailing callbacks `null`, `CallbackType` accepts a plain `0`. **There are two
+     10-parameter overloads**; pick by first parameter type (`System.Int32` vs
+     `soundlib.SoundTriggerInfo`), and wrap the per-parameter inspection in its own try — letting one
+     bad overload throw aborts the whole search and silently yields null.
+  2. **`AttenuationScalingFactor` is a PROPERTY with no backing field** — `GetField` returns null and
+     the write is a silent no-op. Use `set_AttenuationScalingFactor` / `get_AttenuationScalingFactor`.
+     (The usual "read fields, not getters" rule targets concrete types that have both; here there is
+     no field at all.) Always read the value back: this whole path fails silently otherwise, and
+     "it sounds a bit louder" is not evidence — measured, 54 pings believed to be boosted were not.
+  3. `soundlib.SoundManager.postRequestInfo(RequestInfo)` to play it.
+- **Overload trap:** `trigger` has three 1-argument overloads (`uint`, `SoundTriggerInfo`,
+  `RequestInfo`). `IObject.Call("trigger", id)` may bind the wrong one — resolve explicitly with
+  `TDB.Get().FindType("soundlib.SoundContainer").GetMethod("trigger(System.UInt32)")`.
+- **The full `trigger` overload set** (dumped from the TDB 2026-08-14). Two of these take a
+  **`positionGameObj`**, which is the important one: it lets a *known-good* sound be played at
+  *another object's* position, so a cue is not limited to the sounds in the emitter's own banks, and
+  still needs no `via.vec3` construction:
+
+  ```
+  uint trigger(SoundTriggerInfo trgInfo)
+  uint trigger(SoundManager.RequestInfo reqInfo)
+  void trigger(uint trgId)
+  void trigger(uint trgId, via.GameObject positionGameObj, via.GameObject targetGameObj,
+               uint jointHash, bool symmetry, uint seekTime,
+               via.simplewwise.CallbackType callbackType,
+               Action<RequestInfo> postRequestInfo, Action<RequestInfo> endOfEvent)
+  void trigger(uint trgId, via.vec3 pos, via.GameObject targetGameObj, uint seekTime,
+               via.simplewwise.CallbackType callbackType,
+               Action<RequestInfo> postRequestInfo, Action<RequestInfo> endOfEvent)
+  void trigger(via.GameObject targetGameObj, uint trgId, via.GameObject positionGameObj,
+               uint jointHash, bool symmetry, uint seekTime,
+               via.simplewwise.CallbackType callbackType, Action<RequestInfo> endOfEvent)
+  void trigger(via.GameObject targetGameObj, uint trgId, via.vec3 position, uint seekTime,
+               via.simplewwise.CallbackType callbackType, Action<RequestInfo> endOfEvent)
+  ```
+
+  Also on the type: `bool exists(uint)`, `SoundTriggerInfo getTriggerInfo(int idx)`,
+  `bool getTriggerInfoIdx(uint trgId, int firstIdx, int trgCnt)`, `void sortTriggerInfoList()`,
+  `void loadTriggerInfoList()`.
+- **World-object emitters follow the same rule as NPCs.** Interactive field objects
+  (`app.worldtour.om.GimmickVisualController`) carry their own `SoundContainerApp` with a bank named
+  after the object — e.g. the World Tour tutorial's step-on pads (`vi_020000*`) expose bank
+  `om020000_es` with 3 trigger ids. So a cue on a world object can be *its own* sound, played
+  through *its own* emitter: positioned for free and immersive by construction.
+- **Escape hatch** if the managed layers misbehave: `via.simplewwise.SendRequest.registerEmitter` +
+  `set3dPosition(ulong, via.vec3, via.vec3, via.vec3)` + `postEvent(…)`, with the game-object id from
+  `Driver.getGameObjectId(via.GameObject, uint)`.
+- **Telling voices from noises without hardcoding ids.** `soundlib.SoundTriggerInfo` carries
+  `LanguageEventId_Jpn` / `LanguageEventId_Eng` alongside `TriggerId`/`EventId`. A trigger with a
+  per-language event id **is a voice line** — the game must swap the asset per spoken language, which
+  footsteps, cloth and prop SE never need. This is how to pick an NPC's greetings out of its triggers
+  from the game's own data, with no hardcoded id list, so it keeps working across NPCs loading
+  different banks.
+  - **Group-level metadata is richer than the per-trigger flags.** The triggers arrive grouped as
+    `soundlib.SoundTriggerInfoListData`, and each group exposes **`IsLanguage`** (the game's own "this
+    group is voice data" bool) and **`Bank`**, a `via.simplewwise.BankResourceHolder` whose inherited
+    `via.ResourceHolder.ResourcePath` is a real string path. Since the trigger ids are hashed names
+    with no readable form, that bank path is the only human-meaningful label available — group by it.
+  - **Bank map of a World Tour NPC** (measured 2026-08-03: 464 triggers in 15 banks; a different NPC
+    gave 543, so counts are per-actor but the bank *kinds* repeat). `esf002` is that actor's id, so
+    voice bank names vary per NPC — select voices by the `IsLanguage` flag, never by name:
+
+    | Bank | Contents | Triggers | Use for a beacon? |
+    |---|---|---|---|
+    | `esf002_v_es`, `esf002_v_tutorial_es`, `wnf500_v_pv_es` | the actor's spoken lines (`IsLanguage=True`) | 134 / 31 / 35 | **yes** — greetings; skip the tutorial bank |
+    | `foot_steps_es` | footsteps | 53 | **yes** — the fallback for NPCs with no lines |
+    | `wcs_mvmt_cotton_01_es` | cloth movement | 58 (×2 groups) | **yes** — subtle |
+    | `wtnp_cmn_sfx_es`, `wtnp_city_action_sfx_es` | World Tour NPC SFX | 11 / 23 | maybe |
+    | `act_cmn_es`, `wpl_city_action_sfx_es` | generic action SFX | 38 / 29 | maybe |
+    | `dmg_cmn_es`, `dmg_human_es`, `down_human_es` | damage, pain, falls | 58 / 91 / 14 | **no** — an NPC groaning in pain on a timer is worse than a beep |
+    | `ui_bh_raid_cmn_es` | UI | 3 | **no** — UI events are authored 2D |
+
+  - **The "not set" value is `uint.MaxValue`, NOT zero.** Testing `!= 0` marks *every* trigger as a
+    voice. Measured on a World Tour NPC: of **543** triggers, **306** carry the sentinel in both
+    fields and **237** carry real ids. In all 237, `LanguageEventId_Eng == EventId` (the base asset)
+    and `LanguageEventId_Jpn` differs from it (the localized variant) — a clean, consistent signature.
+- **UI-container events are 2D** and would ignore a position argument; the NPC's own container is the
+  one to use. Probe both with `dev-source/SoundProbe.cs` — see `docs/hot-reload-workflow.md`.
 
 ## Release packaging
 

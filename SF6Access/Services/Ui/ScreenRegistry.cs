@@ -107,6 +107,16 @@ public class ScreenRegistry
         UiDispatcher.Register(new ComboTrialListHooks());
         UiDispatcher.Register(new SpTalkNovelHooks());
 
+        // Dialogue box catch-all — registered AFTER SpTalkNovelHooks so the
+        // dedicated novel reader binds first and this one stands down for it.
+        UiDispatcher.Register(new SF6Access.Hooks.WorldTour.MessageWindowHooks());
+
+        // World Tour phone: Messages and Missions
+        UiDispatcher.Register(new SF6Access.Hooks.WorldTour.DeviceIMHooks());
+        UiDispatcher.Register(new SF6Access.Hooks.WorldTour.IMContentHooks());
+        UiDispatcher.Register(new SF6Access.Hooks.WorldTour.MissionListHooks());
+        UiDispatcher.Register(new SF6Access.Hooks.WorldTour.MissionDetailHooks());
+
         API.LogInfo("[SF6Access] ScreenRegistry: adapters registered");
     }
 }

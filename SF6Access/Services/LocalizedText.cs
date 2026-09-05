@@ -169,9 +169,113 @@ public static class LocalizedText
     /// <summary>Continuous field tracking toggled off.</summary>
     public static string TrackingOff() => LangFile.Get("wt.tracking_off", "Tracking off");
 
+    /// <summary>Ambient NPC audio beacons toggled on.</summary>
+    public static string BeaconOn() => LangFile.Get("wt.beacon_on", "Beacons on");
+
+    /// <summary>Ambient NPC audio beacons toggled off.</summary>
+    public static string BeaconOff() => LangFile.Get("wt.beacon_off", "Beacons off");
+
+    /// <summary>Sequential guide to the tutorial's step-on panels, toggled on.</summary>
+    public static string PadGuideOn() => LangFile.Get("wt.pad_guide_on", "Panel guide on");
+
+    /// <summary>Sequential guide to the tutorial's step-on panels, toggled off.</summary>
+    public static string PadGuideOff() => LangFile.Get("wt.pad_guide_off", "Panel guide off");
+
+    /// <summary>Every panel has been stepped on — the guide is finished.</summary>
+    public static string PadsDone() => LangFile.Get("wt.pads_done", "All panels done");
+
+    /// <summary>What one step-on panel is called when announced with a direction.
+    /// "Panel" follows the game's own English tutorial dialogue.</summary>
+    public static string PadWord() => LangFile.Get("wt.pad", "panel");
+
+    /// <summary>A mission the player has finished.</summary>
+    public static string MissionCleared() => LangFile.Get("wt.mission_cleared", "cleared");
+
+    /// <summary>A mission the player has not taken on yet.</summary>
+    public static string MissionNotAccepted() => LangFile.Get("wt.mission_not_accepted", "not accepted");
+
+    /// <summary>What the mission objective is called when announced with a
+    /// direction ("objective at 2 o'clock, 40 meters away").</summary>
+    public static string MissionWord() => LangFile.Get("wt.mission_target", "objective");
+
+    /// <summary>Spoken once on reaching the mission objective.</summary>
+    public static string MissionHere() => LangFile.Get("wt.mission_here", "At the objective");
+
+    /// <summary>"and 12 more" — the tail of a list too long to read out in full.</summary>
+    public static string AndMore(int count)
+        => string.Format(LangFile.Get("wt.and_more", "and {0} more"), count);
+
     /// <summary>Kind word for an object / gimmick (ContactUIType.OM).</summary>
     public static string ContactObject() => LangFile.Get("wt.contact_object", "object");
 
     /// <summary>Kind word for another player (ContactUIType.OtherPlayer).</summary>
     public static string ContactPlayer() => LangFile.Get("wt.contact_player", "player");
+
+    // --- World Tour navigation radar (geometry: walls, openings, drops) ---
+
+    /// <summary>Continuous reactive navigation radar toggled on.</summary>
+    public static string NavRadarOn() => LangFile.Get("wt.nav_radar_on", "Navigation radar on");
+
+    /// <summary>Continuous reactive navigation radar toggled off.</summary>
+    public static string NavRadarOff() => LangFile.Get("wt.nav_radar_off", "Navigation radar off");
+
+    /// <summary>The obstacle class in front of the avatar, as a spoken phrase.
+    /// Every class gets its own key: the words differ in gender and number between
+    /// languages, so a shared template would be untranslatable.</summary>
+    public static string NavFront(SF6Access.Services.WorldTour.FrontProfile profile) => profile switch
+    {
+        SF6Access.Services.WorldTour.FrontProfile.Step => LangFile.Get("wt.nav_front_step", "Low step"),
+        SF6Access.Services.WorldTour.FrontProfile.WaistHigh => LangFile.Get("wt.nav_front_waist", "Waist-high obstacle"),
+        SF6Access.Services.WorldTour.FrontProfile.Wall => LangFile.Get("wt.nav_front_wall", "Wall"),
+        SF6Access.Services.WorldTour.FrontProfile.TallWall => LangFile.Get("wt.nav_front_tall", "Tall wall"),
+        _ => LangFile.Get("wt.nav_front_open", "Clear ahead"),
+    };
+
+    /// <summary>"Wall at 0.5 meters" — the obstacle class plus the engine's own
+    /// contact distance.</summary>
+    public static string NavObstacleAt(string what, float meters)
+        => string.Format(LangFile.Get("wt.nav_obstacle_at", "{0} at {1} meters"), what, Metres(meters));
+
+    /// <summary>"Clear for 1.9 meters" — nothing in the height stack, but the long
+    /// forward ray found something further out.</summary>
+    public static string NavClearFor(float meters)
+        => string.Format(LangFile.Get("wt.nav_clear_for", "Clear for {0} meters"), Metres(meters));
+
+    public static string NavLeftOpen() => LangFile.Get("wt.nav_left_open", "left open");
+
+    public static string NavLeftBlocked() => LangFile.Get("wt.nav_left_blocked", "left blocked");
+
+    public static string NavRightOpen() => LangFile.Get("wt.nav_right_open", "right open");
+
+    public static string NavRightBlocked() => LangFile.Get("wt.nav_right_blocked", "right blocked");
+
+    public static string NavFloorSolid() => LangFile.Get("wt.nav_floor_solid", "floor ahead");
+
+    /// <summary>No floor under the downward probe — a ledge or a hole.</summary>
+    public static string NavFloorDrop() => LangFile.Get("wt.nav_floor_drop", "drop ahead");
+
+    /// <summary>Radar distances are spoken to ONE DECIMAL, unlike the people radar's
+    /// whole metres: these readings live between 0.1 m and about 3 m, where rounding
+    /// to an integer would turn every wall the player is standing against into
+    /// "0 meters". Formatted invariantly so the decimal separator does not depend on
+    /// the machine's locale, which has nothing to do with the game's language.</summary>
+    private static string Metres(float meters)
+        => meters.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+
+    // --- World Tour zone / area name ---
+
+    /// <summary>"In Beat Street" — the district the player is actually standing
+    /// in. Containment, so it is stated plainly.</summary>
+    public static string ZoneHere(string name)
+        => string.Format(LangFile.Get("wt.zone_here", "In {0}"), name);
+
+    /// <summary>"Near Urban Park" — the nearest named landmark, NOT the area the
+    /// player is inside. Deliberately hedged, and combined with the distance by
+    /// the caller, so a proximity answer is never mistaken for a district.</summary>
+    public static string ZoneNear(string name)
+        => string.Format(LangFile.Get("wt.zone_near", "Near {0}"), name);
+
+    /// <summary>Answer to the on-demand key when the place cannot be named at
+    /// all. Silence would read as a broken key.</summary>
+    public static string ZoneUnknown() => LangFile.Get("wt.zone_unknown", "Location unknown");
 }

@@ -1005,3 +1005,505 @@ the separators and coordinate logs become unreadable (`pos=(0,0,0,0,48013800000,
   catalogs are body-type-specific.
 - Known gaps for the pending in-game pass: triangle-bar wording, voice list (numbers only, no
   names), color-popup HLS slider labels.
+
+## World Tour phone: Messages and Missions
+
+Captured with F8 on 2026-08-14 (`sf6access_autodump_135446.txt`) and implemented as four adapters
+under `Hooks/WorldTour/`. **None of this family has an `IsActive` field** — screen presence is read
+off `_Handles`, newest-first, as everywhere else.
+
+### Messages — contact/thread list
+`app.worldtour.UIFlowWTDeviceIM.DeviceIMParam` → `DeviceIMHooks`
+
+- Contacts: `HolderPartsArray` (`app.UIPartsFaceIconItem[]`), each with `ItemText` (a field-backed
+  `via.gui.Text` — read `get_Message`), `ItemCtrl` (selection state), `ListIndex`.
+  Selected contact: `SelectedHolderID` (**uint**, sentinel `uint.MaxValue` = none — the same
+  not-set convention as the sound system's language ids). Tab: `SelectedHolderTab`
+  (`eHolderCategory {All, Master, Other}`).
+- Threads for that contact: `SubjectPartsArray` (`app.UIPartsIMSubjectItem[]`), same `ItemText`
+  shape, plus `SubjectIDProp` and `eStatePattern {Default, New, Reply, NewReply}` (the
+  unread/reply badge). Selected: `SelectedSubjectIndex` (int).
+- **`HolderListParts` / `SubjectListParts` are `UIPartsScrollList` and have NO `_Children`** — walk
+  the parts arrays instead. Same trap as the other scroll lists in this doc.
+
+### Messages — reading a thread
+`app.worldtour.UIFlowIMContentScreen.IMContentFlowParam` → `IMContentHooks`
+
+- **The body text is not on the param.** `IMDataList` holds `WTIMData` records whose content is
+  asset/script-backed, with no plain string to read. Take it from the GUI owner
+  **`IMContentScreen`**: `e_text_name` (sender) + `e_text_message` (body) — the same route the mod
+  already uses for `MessageWindow`.
+- State: `IsProcessedFinish`, `IsFinishUIFlowInput`, `IsRequestedInputWait`; reply choices in
+  `ChoiceNum` / `ChoiceMessageIDs`.
+- A passcode gate (`app.worldtour.UIFlowIMPasscodeScreen.IMPasscodeFlowParam`, GUI
+  `IMPasscodeScreen`) can precede it the first time. Not yet handled.
+
+### Missions — list
+`app.UIFlowUI50600.Param` → `MissionListHooks`. **Namespace is `app`, not `app.worldtour`.**
+
+- Highlighted mission: `get_CurrentSelectMissionInfo` → `WTMissionDeviceInfo`, whose accessors are
+  **methods, not properties**: `GetTitleMessage()`, `GetDetailMessage()`, `GetChapterNo()`,
+  `GetProgressRate()`, `IsCleared()`, `IsAccepted()`. There is no `get_TitleMessage`.
+- Tabs: `CurrentTabCategory` (`TabCategoryType {All, Main, Master, Collection}`); sort:
+  `CurrentSortType`; focus side: `Wait.CurrentSelectType` (`{MissionEntryList, MissionList}`).
+- Per-mission status also available as `GetMissionStatus(info)` → `{Lock, Progress, Clear}`.
+- Both scroll lists (`PartsScrollListMissionEntry`, `PartsScrollListMissionInfo`) are again
+  `_Children`-less; reading the data avoids them entirely — and avoids de-duplicating the GUI,
+  which renders the chapter/progress/name triple **twice** (row + preview pane).
+
+### Missions — detail popup
+`app.UIFlowUI50613.Param` → `MissionDetailHooks`
+
+- One field, `MissionDeviceInfo`, the same `WTMissionDeviceInfo`; rewards via `GetReward()` /
+  `GetRewardId()`, and GUI owner `ui50613` carries the rendered reward names.
+- **Short-lived**: it opened and closed inside a second in the capture, and the auto-dump caught the
+  param already dead. Poll fast and announce on bind — waiting for a change may mean never speaking.
+
+### Not the Messages app
+`app.UIFlowMessageLog.Param` (GUI `WTMessageLog`) is the **conversation recap** overlay, not the
+phone. It fires around the same moments; do not confuse the two.
+
+## World Tour mission objective (for the audio beacon)
+
+`app.worldtour.WTMissionSystem` (singleton) → `FindProgressMissionId()` → one of
+`GetListNpcMissionTargetInfo(id)` / `GetListOmMissionTargetInfo(id)` / `GetListZoneMissionTargetInfo(id)`
+→ per record `HaveMissionTarget` and **`ListHolderObj`, a list of live scene `GameObject`s** →
+`get_Transform` → `get_Position`. So the objective is a real object, not a bare coordinate, which
+means a beacon can sound *on* it.
+
+- All three lists are asked in turn: an objective is sometimes a person, sometimes a thing,
+  sometimes a place, and the game keeps them separate.
+- **An empty holder list is normal**, not an error: the target has not streamed into the loaded
+  scene (another district, or not spawned yet).
+- `WTPlayerDataMission.mProgressMainMissionId` is the save-data authority on which mission is the
+  MAIN one, if "whatever the HUD is tracking" ever proves too loose.
+- Not used, but noted: `app.UICityHud_MissionGuide.missionTarget.TargetObject` is what the on-screen
+  marker itself points at. Its sibling `UIPos` is a screen-space projection — **not** a world
+  position; never feed that to a 3D sound.
+
+## World Tour — spatial navigation APIs (physics, navmesh, collision)
+
+Started as a decompiled-code pass (`sf6 code/`) done while porting the RE7 mod's navigation radar
+concept to World Tour. A first in-game dump (Metro City, 2026-09-04) confirmed some of it and appeared
+to disprove other parts; a **second** in-game run the same day (~20:59, fixed probe) overturned two of
+those "disproven" conclusions — they turned out to be a field-read bug in the first probe, not real API
+failures. See "Value-type reads: a known trap" below for the mechanism. Tags below: `CONFIRMED
+(decompiled)` = seen in the decompiled dump only (declarations only, no method bodies — argument values
+and internal filter choices cannot be read from it and must be established at runtime); `CONFIRMED IN
+GAME` = exercised live and returned real data; `DISPROVEN IN GAME` = the decompiled-era claim turned out
+wrong at runtime (still trustworthy where used below — the read-path bug specifically hit vec3/struct
+reads, not the cases tagged this way); `PENDING RUNTIME VERIFICATION` = not yet exercised live, or
+exercised but not yet trustworthy.
+
+**Bottom line after the second run (2026-09-04 ~20:59): both candidate routes for the navigation radar
+are confirmed reachable.** The avatar's own raycast API (§3, A/B-tested open-street vs. wall) and the
+NavMesh handle (§6, `AIMap.findMapHandle()` now confirmed non-null) are both live. Which one the radar
+should be built on is an open architectural question — see the Design note; an earlier version of this
+doc asserted raycast was the only option and that assertion is retracted. The `CollisionSystem` filter
+table (§2) is confirmed live and now includes the player's own filter; the `AvatarComponent` capsule
+route (§4) works via the corrected single-object route, with real capsule values now recorded.
+
+### Value-type reads: a known trap
+
+In the second run (2026-09-04 ~20:59), **every struct value came back zeroed** while reference types,
+bools, and plain floats all read fine. Diagnostic rule for future work: **a zeroed vec3 or a null struct
+from a new read path is far more likely a marshalling bug than a real game value — verify against a
+known-good reader before concluding the API is dead.** The NavMesh retraction in §6 below is the
+cautionary example: the first run's "NavMesh is dead in World Tour" conclusion was entirely this bug,
+not a real API failure.
+
+Broken in the second run:
+- `out`/`ref` parameter write-back: `GetCastRayPosition`'s two `out vec3` params, `CastRay`'s
+  caller-allocated `HitResult` (stayed empty even when the method returned `true`),
+  `GetGroundPos(out vec3)` (returned `true` with `(0,0,0)`),
+  `GetCurrentCharacterControllerSizeRatio(ref float, ref float)`, and `CastRayAll`'s `CastRayResult`
+  (reported `NumContactPoints=0` while the `CharacterController` simultaneously reported 5 wall contact
+  points).
+- Plain struct field/property reads: `CharacterController.Position`, `CityPointDataInfoBase.Position`/
+  `Rotation`, `CollisionInfo.AdjustedGroundPos` — all read back `(0,0,0)`.
+
+Contrast: `Transform.Position` reads **correctly** via this mod's existing
+`Services/WorldTour/AvatarFieldReader.cs` path, so a correct idiom for vec3 reads already exists in this
+codebase — the bug is in the new probe's read path, not in vec3 reads generally.
+
+**Status: IN PROGRESS** — a fix for the new probe's read path is being worked on separately (in code,
+not in this doc). Until it lands, treat any zeroed vec3 or null struct coming from a newly-added World
+Tour read path as unverified rather than as proof the underlying API is dead.
+
+### 1. Physics raycast — `CONFIRMED (decompiled)`
+- `via.physics.System`: `castRay(CastRayQuery, CastRayResult)`, `castRay(via.Scene, CastRayQuery,
+  CastRayResult)`, `castRayAsync`, `castShape`; `getLayerName(uint)`, `getMaskName(uint layer, uint bit)`.
+- `via.physics.CastRayQuery`: `FilterInfo`, `Options:uint`, `Ray`, `RayDistance`, `setRay(vec3,vec3)`,
+  `setRay(vec3,vec3,float)`, `enableAllHits`, `enableNearSort`, `disableInsideHits`,
+  `enableOneHitBreak`, `clearOptions`.
+- `via.physics.CastRayResult`: `NumContactPoints:uint`, `clear()`, `getContactCollidable(uint)`,
+  `getContactPoint(uint)`.
+- `via.physics.ContactPoint` (ValueType): `Position:vec3`, `Normal:vec3`, `TimeOfImpact`,
+  **`Distance:float`** — SF6 gives the hit distance directly (the RE7 mod had to bisect for it).
+- `via.physics.Collidable`: `GameObject`, `FilterInfo`, `Shape`, `TransformedShape`, `UserData`.
+- `via.physics.FilterInfo`: `Layer`, `Group`, `SubGroup`, `IgnoreSubGroup`, `MaskBits`.
+- `via.physics.CastRayOption` enum: `AllHits=0, DisableBackFacingTriangleHits=1,
+  DisableFrontFacingTriangleHits=2, BackFacing=3, FrontFacing=4, NearSort=5, InsideHits=6,
+  OneHitBreak=7`.
+- **GOTCHA**: `ContactPoint` is a ValueType → `InvokeBoxed` needs an explicit `typeof(...)`; passing
+  null fails silently (cost the RE7 mod weeks — see that mod's history).
+
+### 2. SF6 collision filters — `CONFIRMED (decompiled)`
+There is **no** `app.Collision.CollisionSystem.Filter` (that's RE7). SF6's equivalent is
+`app.CollisionSystem`.
+
+- `app.CollisionSystem.eFilterInfo` (`sf6 code/REFramework.NET.application/app/CollisionSystem.cs:82`):
+  `TerrainRayFilter=0, EffectRay=1, Terrain=2, Camera=3, Character=4, PhysicsDynamic=5,
+  TerrainStopCamera=6, BattleLine=7, OnlyAttribute=8`.
+- Static wrappers (no instance needed): `castRay(ref vec3 start, ref vec3 end, out HitResult,
+  eFilterInfo, bool disableBackFacingTriangleHit)` (:781), multi-hit overload taking `IList<HitResult>`
+  (:793), overloads taking a `via.physics.FilterInfo` directly (:787 / :799),
+  `castRay(ref vec3 start, ref vec3 dir, float distance, out HitResult, eFilterInfo)` (:775),
+  **`castRayAll(vec3 start, vec3 end, via.physics.CastRayResult, eFilterInfo, bool)`** (:805),
+  `castSphere` (:691-745).
+- `app.CollisionSystem.HitResult` (:144): `HitObject:GameObject`, `HitPoint:vec3`, `Normal:vec3`,
+  `Distance:float`, `TimeOfImpact`, `Material:MaterialInfo`.
+- Instance methods: `GetFilterInfo(eFilterInfo)` → `via.physics.FilterInfo` (:682),
+  `getLayerIndex(eLayerID)` (:685), `getFilterResource` (:688).
+- `app.gCollision.LayerId : byte` (`app/gCollision.cs:58-82`): `Terrain, Character, TerrainRay, Attack,
+  Damage, Sign, OMPress, GayaPress, NpcPress, PlayerPress, Marker, Sensor, EffectChecker, EffectCheckRay,
+  SoundSpace, SoundPosition, SoundRay, SoundWall, EnvMarker, EnvSensor, ChainSelf, ChainEffector,
+  Dynamic, Static, _Num`. Official byte→index conversion: `app.gCollision.GetLayerIndex(LayerId)` +
+  `LayerIndexArray` — this is the source to read layer indices from; do not hand-guess them (no-magic-
+  numbers rule).
+- `app.CollisionSystem.getWTEColMaterialID(vec3 pos, bool, float)` (:831) — surface material under a
+  World Tour point (asphalt/grass/…).
+
+`CONFIRMED IN GAME` (Metro City, 2026-09-04): `app.CollisionSystem` is reachable as a managed
+singleton, and `GetFilterInfo(eFilterInfo)` is an **instance** method (not static) that returns valid
+data for all nine `eFilterInfo` members. Recorded verbatim as confirmed runtime data:
+
+| eFilterInfo | value | layer | mask |
+|---|---|---|---|
+| TerrainRayFilter | 0 | 3:TerrainRay | 0x8 [TCStopCamera] |
+| EffectRay | 1 | 14:EffectCheckRay | 0xFFFFFFFF (all) |
+| Terrain | 2 | 1:Terrain | 0x0 (empty) |
+| Camera | 3 | 2:Character | 0x6 [TCAttribute\|TCThroughCamera] |
+| Character | 4 | 7:OMPress | 0xFFFFFFFF (all) |
+| PhysicsDynamic | 5 | 23:Dynamic | 0xFFFFFFFF (all) |
+| TerrainStopCamera | 6 | 3:TerrainRay | 0x7 [TbDefault\|TCAttribute\|TCThroughCamera] |
+| BattleLine | 7 | 3:TerrainRay | 0x18 [TCStopCamera\|TCNoBattleLine] |
+| OnlyAttribute | 8 | 3:TerrainRay | 0xD [TbDefault\|TCThroughCamera\|TCStopCamera] |
+
+Also `CONFIRMED IN GAME`: `app.gCollision.LayerId` → `GetLayerIndex()` works; 24 layers total; LayerId
+ordinal N maps to index N+1 (`Terrain`=0→1 … `Static`=23→24, `_Num`=24→0).
+
+`CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59): the player's own filter is now known directly,
+answering the earlier open question of which `eFilterInfo` matches it — `PLAYER
+CharacterController.FilterInfo` → `layer=2:Character group=1374 subgroup=0
+mask=0xA[TCAttribute|TCStopCamera]`. This is close to but not identical to the `Camera` row above (also
+`layer=2:Character`, different mask); treat the player's own live `FilterInfo` as authoritative rather
+than trying to force a match onto one `eFilterInfo` table row.
+
+### 3. Authoritative ray heights (avatar's own echolocation) — THE IMPORTANT ONE — `CONFIRMED (decompiled)`
+The avatar already casts rays at itself every frame for movement/animation purposes; reusing those
+heights avoids inventing our own offsets. This is the game's own avatar raycast API, on
+`app.worldtour.avatar.AvatarState_FieldBase`, reached via `AvatarBase.GetFieldState()` (`AvatarBase.cs:
+1293`). Note `AvatarCollisionManager` (see §4 alternate route) hangs off this **state** object, not off
+`AvatarPlayer` directly.
+
+- `void GetCastRayPosition(CastRayTypes type, out vec3 start, out vec3 end)` (:2438) — returns the
+  game's own world-space ray endpoints for a given `CastRayTypes`. Ray heights/lengths must **not** be
+  hardcoded — always read them from this method.
+- `bool CastRay(CastRayTypes type, out HitResult hit)` (:2441) — filter chosen internally by the game.
+- `bool CastRay(ref vec3 start, ref vec3 end, out HitResult hit)` (:2444).
+- `void CastRayAll(CastRayTypes type, via.physics.CastRayResult result, eFilterInfo filterId)` (:2450).
+- `void CastRayAll(ref vec3 start, ref vec3 end, CastRayResult result, eFilterInfo filterId)` (:2453).
+- `bool CastFloorSphere(IList<HitResult> hittedList, float checkDistance)` (:2447).
+- `bool checkGroundHitResult(HitResult h)` (:3053).
+- Enum `CastRayTypes` (:1083-1116), members in declaration order: `FRONT, FRONT_R, FRONT_L,
+  HANGING_FRONT, HANGING_FACE_FRONT, HANGING_VERTICAL, FOOT_FRONT, FOOT_FRONT_L, FOOT_FRONT_R,
+  WAIST_FRONT, SIDE_R, SIDE_L, CROUCH_UP, STEP_R, STEP_R2, STEP_L, STEP_L2, STEP_FOOT, BESIDE_R,
+  BESIDE_L, RIGHT_FOWARD, LEFT_FOWARD, FRONT_LONG, FOOT_FRONT_LONG, WAIST_FRONT_LONG, GROUND,
+  BUST_FRONT, HIWALL_FRONT, FALL_GUARD_CENTER, FALL_GUARD_RIGHT, FALL_GUARD_LEFT, _CAST_RAY_MAX`. Note
+  the game misspells FORWARD as FOWARD in `RIGHT_FOWARD`/`LEFT_FOWARD`.
+- Why this matters: it gives foot/waist/bust/high-wall ray heights **from the game's own data**,
+  satisfying the no-magic-numbers rule instead of guessing offsets like the RE7 mod had to.
+- `app.worldtour.ERayCastMode`: `UseCharacterController, Root, Foot, UseIkLeg`.
+- There is **no** `CastRayTypes`-indexed value table (searched, not found). Raw scalar offsets live in
+  `app.worldtour.avatar.AvatarConstSystemParams` group `RayOffset` (`AvatarConstSystemParams.cs:147`,
+  floats at :161-337: `RAY_FRONT_LL/L/M/S, RAY_UP_XL/LL/L/M/S, RAY_SIDE_SS/S/M, RAY_STEP_*, RAY_LINE_M,
+  RAY_GROUND, RAY_FALLGUARD_*`), reachable via `AvatarBase.ConstSystemParams` (:1005) — but they are not
+  per-`CastRayType`, so `GetCastRayPosition` remains the correct accessor.
+- **Invocation trap**: `app.CollisionSystem.HitResult` and `via.physics.CastRayResult` are objects the
+  **caller allocates** and the game fills — the TDB signatures have no `ref` even though ILSpy renders
+  them as `out`.
+
+`CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59): `WTPlayerManager.GetAvatarPlayer()` →
+`AvatarBase.GetFieldState()` returns `app.worldtour.avatar.AvatarState_FieldPlayer` (concrete type at
+runtime; the ray methods resolve on the base `app.worldtour.avatar.AvatarState_FieldBase`).
+`CastRayTypes` enumerates 32 members from the TDB, matching the decompiled list above.
+`CastRay(CastRayTypes, out HitResult)` returns a **reliable, meaningful** bool — recorded here as the
+useful A/B evidence for that (the `HitResult` itself is currently unreadable, see "Value-type reads: a
+known trap" above):
+- Standing in an open street (player at `(-2.510, 0.091, -72.181)`, `CharacterController.Wall`=False,
+  `NumWallContactPoints`=0) → 11 ray types hit, and they are all ground-related: `FOOT_FRONT_L, STEP_R,
+  STEP_R2, STEP_L, STEP_L2, STEP_FOOT, FOOT_FRONT_LONG, GROUND, FALL_GUARD_CENTER, FALL_GUARD_RIGHT,
+  FALL_GUARD_LEFT`.
+- Standing against a wall (player at `(-16.324, 0.200, -54.841)`, `CharacterController.Wall`=True,
+  `NumWallContactPoints`=5) → 23 ray types hit; the entire forward height stack lights up: `FRONT,
+  FRONT_R, FRONT_L, HANGING_FRONT, HANGING_FACE_FRONT, FOOT_FRONT, FOOT_FRONT_L, FOOT_FRONT_R,
+  WAIST_FRONT, FRONT_LONG, FOOT_FRONT_LONG, WAIST_FRONT_LONG, BUST_FRONT, HIWALL_FRONT` (plus the ground
+  set above).
+
+Practical consequence: the forward stack FOOT/WAIST/BUST/HIWALL gives an obstacle **height profile**,
+and the ray names already encode direction and height, so a usable radar can be built from the
+`CastRay` booleans alone, without any geometry read-back.
+
+### 4. Avatar capsule — `CONFIRMED IN GAME` for the player/Transform, capsule route corrected
+
+`CONFIRMED IN GAME` (Metro City, 2026-09-04): `WTPlayerManager.GetAvatarPlayer()`
+(`app.worldtour/WTPlayerManager.cs:560`) returns `app.worldtour.avatar.AvatarPlayer`. Its `Transform`
+reads fine — `Position`, `Rotation`, `EulerAngle`, `AxisZ`, `AxisX` — and `Position` agrees exactly with
+the mod's existing player position from `Services/WorldTour/AvatarFieldReader.cs`.
+
+`DISPROVEN IN GAME`: reading the player's `CharacterController` by scanning `AvatarBase.Components` as
+an **array** returns null — because `Components` is a **single object**, not a collection. Documented
+here as a trap; do not iterate it like `_Handles`/`_Children` elsewhere in this codebase.
+
+Corrected route (`CONFIRMED (decompiled)`):
+- Capsule route: `AvatarBase.Components : app.worldtour.avatar.AvatarComponent` (singular object,
+  `AvatarBase.cs:1101`) → `AvatarComponent.CharacterController : via.physics.CharacterController`
+  (`AvatarComponent.cs:42`).
+- Alternate route: `AvatarBase.GetFieldState()` → `AvatarState_FieldBase.CollisionManager :
+  AvatarCollisionManager` (`AvatarState_FieldBase.cs:2367`) → `AvatarCollisionManager.CharaController`
+  (`AvatarCollisionManager.cs:385`). `AvatarCollisionManager` hangs off the **state**, not off
+  `AvatarPlayer` — see §3.
+- `AvatarBase.GetCurrentCharacterControllerSizeRatio(ref float widthRatio, ref float heightRatio)`
+  (`AvatarBase.cs:1407`).
+- `via.physics.CharacterController`: `Height`(266), `Radius`(274), `SlopeLimit`(282), `Position`,
+  `Ground:bool`(314), `Wall:bool`(320), `Ceiling:bool`(326), `Jump:bool`(332),
+  `NumGroundContactPoints`(356), `getGroundContactPoint(int)` → ContactPoint (428),
+  `getGroundGameObject(int)`(431), `getGroundMaterialInfo(int)`(434), `overwriteFilterInfo` /
+  `restoreFilterInfo`(452/461). Also cached without a raycast: `NumWallContactPoints:int`,
+  `getWallContactPoint(int)`, `getWallGameObject(int)`, `getWallMaterialInfo(int)` (Wall equivalents of
+  the Ground getters above), `FilterInfo`.
+
+`CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59): the single-object `Components` →
+`CharacterController` route above works and reads correctly. Real values recorded: `Radius`=0.5,
+`Height`=1.8, `SlopeLimit`=46, plus the bools `Ground`/`Wall`/`Ceiling` and `NumGroundContactPoints` (3
+standing on flat ground) / `NumWallContactPoints` (5 against a wall) all read correctly. (`Position`
+itself is still unreadable via this struct path — see "Value-type reads: a known trap" above; use
+`AvatarPlayer.Transform.Position` instead, which is confirmed correct.)
+- **IMPORTANT**: the effective size is the above multiplied by
+  `AvatarBase.GetCurrentCharacterControllerSizeRatio(ref float widthRatio, ref float heightRatio)`
+  (`AvatarBase.cs:1407`). Authored values live in
+  `app.worldtour.avatar.CharacterControllerCustomParam` (`Height, Radius, Offset, SecondHeight,
+  SecondRadius, SecondOffset, Situation`).
+- `AvatarBase.GetContactedWallInfos(IList<ContactedWallInfo>)` (`AvatarBase.cs:1602`);
+  `ContactedWallInfo` (`AvatarBase.cs:816-844`) = `{ bool CanWallRide; vec3 ContactedPos; vec3
+  ContactedNormal; }`.
+
+### 5. Ground/wall info the avatar already publishes (free every frame) — `CONFIRMED (decompiled)`
+- `AvatarBase.__GetVolatileParam()` (`AvatarBase.cs:1770`) →
+  `AvatarFieldParam_Volatile.Collision : CollisionInfo` (`AvatarFieldParam_Volatile.cs:603`, type at
+  :164).
+- `CollisionInfo`: `IsGround:bool`(380), `IsGroundTouch()`(530), `IsAirAndNearGround()`,
+  `AdjustedGroundPos:vec3`(412), `GetGroundPos(out vec3)`(539), `GroundAngleRate`, `IsOnFloorSlope()`,
+  `IsSlope`, `GroundObjInfoList : IList<FloorObjInfo>`, `WallContactInfoList : IList<WallInfo>`,
+  `IsWallContact()`, `GetWallContact(out IList<WallInfo>)`, `WallMovableRate`,
+  `IsContactedDashStopWall`, **`CalcMovableRate(ref vec3 moveVec, ref vec3 selfPos, ref
+  AvatarFieldParam_Volatile preFrame)`** — the game already computes how far movement in a direction is
+  possible (0..1), which is a ready-made "can I walk this way" signal.
+- `FloorObjInfo{Normal:vec3, ContactPos:vec3, FloorObject:GameObject, FloorAngleX, FloorAngleRate}`
+  (:285-325); `WallInfo{Contact : via.physics.ContactPoint, Material : MaterialInfo}` (:215-234).
+- `AvatarBase.GetVelocity() : vec3` (:1443), `GetMotionAddedVelocity()` (:1758), `IsGround()` (:1422),
+  `GetLastTouchedGroundPos(ref vec3)` (:1689).
+- `WTPlayerManager.GetPlayerToAngle(vec3 currentPos, vec3 forwardDir) : float` (:566).
+
+`CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59): `__GetVolatileParam()` → `Collision` now resolves
+correctly to `AvatarFieldParam_Volatile.CollisionInfo`. The first run's null was the same field-read-path
+bug covered in "Value-type reads: a known trap" above, not a real absence of data — `IsGround`,
+`IsSlope`, `IsWallContact()` and `WallContactInfoList.Count` all read correctly in the second run.
+
+`PENDING` (open problem, second run): `AvatarBase.GetContactedWallInfos(IList<ContactedWallInfo>)`
+could **not** be called — allocating the caller-side `List<AvatarBase.ContactedWallInfo>` (the game's
+own nested type) failed. Cause not yet diagnosed.
+
+### 6. NavMesh — `CONFIRMED IN GAME` (handle obtainable)
+
+**RETRACTED — history note, read before touching this section again.** The first in-game run (Metro
+City, 2026-09-04) reported `WTCommon.CityResource` and `WTCityResources.CityAIMap` as null and concluded
+the NavMesh route was dead in World Tour. That conclusion was **wrong**: it was a field-read-path bug in
+the first probe (see "Value-type reads: a known trap" above), not an absent API. A null coming back from
+a read in this area should be treated as suspect until the read path is proven, not taken as proof the
+API doesn't exist.
+
+`CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59, fixed probe): `WTCommon=ok CityResource=ok
+CityAIMap=ok findMapHandle=via.navigation.MapHandle` — `AIMap.findMapHandle()` returns a valid
+`via.navigation.MapHandle` in World Tour.
+
+`PENDING RUNTIME VERIFICATION`: whether node queries against that handle (`queryClosestNode`,
+`queryNode(NodeQueryInfo)`, etc.) return useful data has **not** yet been exercised — only obtaining the
+handle itself is confirmed so far. Standing warning unchanged: the no-arg `MapHandleBase.queryNode()`
+must **never** be called — it's an unbounded city-wide query and stalls the game.
+
+The API surface below is `CONFIRMED (decompiled)` as a reference (types/signatures are real); node-query
+behavior against the now-confirmed handle is still `PENDING RUNTIME VERIFICATION`.
+- `app.global.WTCommon.CityResource` (`app.global/WTCommon.cs:280`) →
+  `app.worldtour.WTCityResources.CityAIMap : via.navigation.AIMap` (`WTCityResources.cs:335`);
+  `AIMapResources`(:481), `InitAIMapResources()`(:512). Also `app/WTCityHourlyResources.cs:13`
+  (`NpcAIMap`).
+- `via.navigation.AIMap`: `findMapHandle()`(177), `findMapHandle(string)`(180),
+  `findMapHandleBase(MapType)`(189), `getMaps(uint)` / `getMapsCount()`(207/210).
+- `via.navigation.MapHandleBase`: `queryClosestNode(vec3)` → NodeInfo (379),
+  `queryClosestNode(vec3, NodeQueryInfo)`(382), `queryNode(NodeQueryInfo)` → NodeInfoList (388),
+  `checkOutOfMap(NodeQueryInfo)`(364), `Boundary:AABB`(177), `MapName`(77), `SectionID`(95),
+  `queryAttributeName(int bitNo)`(376).
+- `via.navigation.NodeQueryInfo`: `setRegion(Sphere/AABB/OBB/Capsule/Cylinder/LineSegment/Collidable)`
+  (121-139), `setFilter`(115/118), `ExcludeShapes`(100).
+- `via.navigation.map.NodeInfo`: `Pos`(169), `Normal`(175), **`Wall:bool`(217)**,
+  **`WallHeight:float`(223)**, `ShapeType`(229), `LinkBoundary`/`MaxY`/`MinY`/`EdgeCount`(193-211),
+  `getVertices()`(248), `getVertex(uint)` / `getVertexCount()`(260/263), `getGlobalVertex(uint)`(254),
+  `findIntersection(ref vec3, LineSegment)`(251), `queryLinkToNodes()` → NodeInfoList (278),
+  `queryLinks()`(281), `queryClosestLinkBoundaryEdge(vec3)`(272), `hasAttribute(string)`(266).
+- `via.navigation.NavigationSurface` — **synchronous** pathfinding: `queryPathSync(vec3 start, vec3
+  end, PathQueryReport)`(556) and variants (559/562/565-571); `AgentRad`(257), `AgentHeight`(265),
+  `UnderSearchLength`(273). `PathQueryReport{Exist, FailReport, PathInfo}`;
+  `via.navigation.map.PathInfo`: `PathPointCount`(261), `getPathPointInfo(uint)`(274),
+  `getPortalPos(uint)`(319), `getPortalEdge(uint, ref bool)`(313), `calcDistance()`(289).
+- Real WT usage for reference: `app.worldtour.npc.WTEventNpcNavigator.NaviSurface`
+  (`WTEventNpcNavigator.cs:75`), `NaviSurfaceMapSet()`(142); `WTNpcAI : AvatarNaviControllBase`
+  (`WTNpcAI.cs:13`), `IsDontUseAIMap`(534).
+- Authored routes: `app.worldtour.WTCityRoute.GetRouteInfosBySituationId(uint)` /
+  `GetRoute(int,uint)` (`WTCityRoute.cs:135/141`).
+- Status: `CityAIMap.findMapHandle()` returns a **valid handle** in World Tour (see confirmation above,
+  retracting the earlier "returns NULL" claim). The real navmesh attribute names (`queryAttributeName
+  (0..31)`) and node-query results against the handle have not yet been pursued/verified — see `PENDING
+  RUNTIME VERIFICATION` above.
+
+### 7. Transit points (doors, fast travel, sections) — `CONFIRMED (decompiled)`
+- There are **no** `*Door*`/`*Gate*`/`*Entrance*`/`*Teleport*` types under `app.worldtour.*`. Building
+  entrances are numbered "OM" objects (`app.worldtour.om.Om00xxxx`, e.g. `Om008000` = body shop) that
+  fire contact events — not modeled doors.
+- Fast travel: `WTCityManager.GetFastTravelPointList(uint cityId, uint situationId, bool releasedOnly,
+  bool needSort) : IList<PointDataFastTravelInfo>` (`WTCityManager.cs:798`), `GetFastTravelPoint(uint)`
+  (:795), `GetFastTravelAttachedData(uint)` (:792), `GetWarpPoint()`, `ReqFastTravel(...)`. Elements are
+  `app.worldtour.PointDataFastTravelInfo` (`PointDataFastTravelInfo.cs:7`); id/position live on the
+  **base class** `app.worldtour.CityPointDataInfoBase`: `int mPointId` (:12 — **INT**, reading it as
+  uint/long gives garbage), `via.vec3 Position` (:20), `via.Quaternion Rotation` (:28).
+  `PointDataFastTravelInfo.mAttachedData` → `app.worldtour.FastTravelPointUserDataRecord { uint id
+  :24; FastTravelPointMessage PointNameID :32 (nested, `Guid GUID` :13 — feed the existing Guid→message
+  resolver); uint CityID :40; uint SceneCityID :48; bool IsMyRoom :56; uint TimeType :64 }`. Catalog:
+  `app.worldtour.udCityPointList{CityPoints, FastTravelPoints}`, served by
+  `app.worldtour.CityPointHolder.PointList`. State: `WTFastTravelCtrl{PointID, UnlockPointIDArray,
+  CurrentState}`.
+- `CONFIRMED IN GAME` (Metro City, 2026-09-04): `GetFastTravelPointList` returned **8 points** for
+  `cityId=400, situationId=1`. Context for reproducibility: `city=400, situation=1, section=0,
+  CitySectionManager.CurrentSectionId=0, SectionInfoList count=0`.
+- `CONFIRMED IN GAME` (second run, 2026-09-04 ~20:59): `mPointId` reads correctly as **int** (values
+  seen for the 8 points above: 1, 3, 5, 6, 7, 8, 10, 68), and the localized names resolve through the
+  existing Guid→message resolver path (e.g. 'Beat Square', 'Westbay Promenade', 'Urban Park', 'Beat
+  Street - Pórtico de Chinatown').
+- Sections/districts: `app.worldtour.CitySectionManager`: `CurrentSectionInfo`(13),
+  `CurrentSectionId:uint`(37), `SectionInfoList`(29), `UpdateCurrentSectionId()`(65),
+  `CheckUsingSectionMap(uint)`(59), `RequestSectionNotice(...)`(68). Volumes:
+  `CitySectionZone` / `CitySectionZoneGroup`.
+- Streaming: `app.worldtour.WTAreaManager`: `OnAreaTransition`(1366), `InTransition`(1554),
+  `getActiveAreaList()`(1573), `isAreaActive(string)`(1576), `isNearActiveArea(vec3, ref
+  IList<uint>)`(1630).
+- Interaction: `app.worldtour.WTContactSystem.GetActiveCallObjects() : IList<GameObject>`(8035),
+  `ZoneInfoList`(7842), `EnterZoneContact`(8044).
+
+### Design note
+The RE7 mod's radar (`D:\code\re engine\Re7Access`) is **reactive echolocation of geometry by raycast**
+— a different job from the entity radar SF6 already has (`FieldAwarenessHooks`, § World Tour — field
+awareness above). **Open question, revised 2026-09-04 (second run):** whether the navigation radar
+should be built on the avatar's own raycast API (§3 — `GetCastRayPosition`/`CastRay`/`CastRayAll`, now
+A/B-confirmed open-street vs. wall) or on the NavMesh handle (§6 — `AIMap.findMapHandle()`, now
+confirmed to return a valid handle) is **UNDECIDED**. An earlier version of this note asserted NavMesh
+could not be used and the design had to be raycast-based; that assertion is **retracted** — it rested on
+§6's since-retracted "NavMesh is dead" finding, which was a field-read bug, not a real API failure (see
+"Value-type reads: a known trap" above). Do not assume a winner until node queries against the NavMesh
+handle have been exercised (still `PENDING RUNTIME VERIFICATION`, §6). In favor of the raycast option:
+it gives real world-space ray endpoints from the game's own per-frame movement/animation casts and
+avoids inventing offsets — the furniture false-positive concern a naive raycast approach would hit is
+mitigated by reusing those authored `CastRayTypes` rays rather than casting arbitrary directions. Also
+unlike RE7:
+since World Tour is played in third person, navigation rays must originate from the **avatar's**
+transform, not the camera (RE7 is first-person, so camera-origin rays were correct there) — while the
+*directional frame* for reporting hits should still be the **camera's**, because World Tour movement is
+camera-relative (already calibrated and confirmed in game, see § Clock direction (camera-relative)
+above, `Services/WorldTour/FieldDirectionService.cs`).
+
+### 7. Shipped implementation — the navigation radar (2026-09-04)
+The Design note's open question is **settled for the first cut in favour of the raycast route**: it was
+already A/B-confirmed live, it needs no node queries, and it satisfies the no-magic-numbers rule for
+free (the obstacle class comes from WHICH named ray hit, so no height or reach is ever written down).
+The NavMesh route stays open for a future "which way is walkable" layer; nothing here forecloses it.
+
+- `Services/WorldTour/NavReading.cs` — the state model: `FrontProfile { Open, Step, WaistHigh, Wall,
+  TallWall }` plus a `NavReading` struct (front class, nearest forward contact distance, per-side
+  blocked flags, ground solid). `SameStateAs` deliberately **excludes distance** — including it would
+  make every sample a "state change".
+- `Services/WorldTour/FieldNavRadarService.cs` — the sensor. Nine casts per sample through
+  `CastRayAll` with `TerrainRayFilter`; ray names and the filter id resolved by NAME from the TDB once
+  per process; the `CastRayAll` handle cached per concrete field-state type; one engine-allocated
+  `CastRayResult` per sample (never globalized, never held across frames); distance from
+  `ContactPoint.Distance` via a getter bound on first use.
+- `Hooks/WorldTour/FieldNavRadarHooks.cs` — **B** one-shot readout, **Shift+B** continuous reactive
+  mode (cues only on confirmed state change: `impassable.mp3` / `exit.mp3`, panned ±0.8 for the sides,
+  a descending three-note motif for a drop).
+
+Ladder rule for the front class: the HIGHEST rung of `FOOT_FRONT < FRONT < WAIST_FRONT < BUST_FRONT <
+HIWALL_FRONT` that reports a contact decides the class (`FOOT_FRONT`/`FRONT` share the low tier). Read
+that way rather than as exact hit combinations, the class stays right when a lower ray misses under an
+overhang. `FRONT_LONG` feeds **distance only** — classifying by it would report a wall two metres off
+as something the player is standing against.
+
+### 8. Sideways reach — why the radar casts two segments of its own (2026-09-04)
+**Symptom:** in game the front cues fired correctly but the sides *never* did.
+
+**Measured cause**, from the game's own `GetCastRayPosition` output (dump
+`sf6access_fieldprobe_212037.txt`, player at `(-2.510, 0.091, -72.181)`, all rays at chest height
+`y = 0.691` except the foot/waist/bust/hiwall rungs):
+
+| ray | reach | direction |
+| --- | --- | --- |
+| `SIDE_R` / `SIDE_L` | **0.50 m** | ∓AxisX (pure sideways) |
+| `BESIDE_R` / `BESIDE_L` | 0.40 m | ∓AxisX |
+| `RIGHT_FOWARD` / `LEFT_FOWARD` (sic) | 0.60 m | mostly sideways, slight forward tilt |
+| `FRONT_R` / `FRONT_L` | 1.30 m | **parallel to `FRONT`**, origin offset ±0.40 m sideways |
+| `FRONT` | 1.30 m | +AxisZ |
+| `FRONT_LONG` | **2.00 m** | +AxisZ |
+
+The game publishes **no long sideways ray** — the avatar only needs short ones to hug a wall. With a
+0.50 m feeler you must be all but touching a wall for a side to report, which is why the sides were
+silent. `FRONT_R`/`FRONT_L` are *not* sideways probes: they are shoulder-offset forward feelers, so
+they light up together with the whole front stack and were deliberately **not** added to the radar
+(two more casts, no new information, and a wall approached head-on would fire a left *and* a right
+cue).
+
+**Fix — `Services/WorldTour/FieldNavSideRays.cs`:** cast our own segment through the free-form
+overload `CastRayAll(ref vec3 start, ref vec3 end, CastRayResult, eFilterInfo)` (`:2453`). Everything
+in that segment is still read from the game at run time, nothing is written down:
+- **origin + direction** = the published `SIDE_R`/`SIDE_L` segment itself, normalized;
+- **length** = the length of `FRONT_LONG`, the state's own longest forward probe. The radar's
+  sideways reach is *defined as* the game's own longest forward reach, so the sensor is symmetric.
+
+The long rays **replace** the published short ones (any hit inside 0.50 m is inside the longer
+segment), so the sweep is still **nine casts per sample**, plus three `GetCastRayPosition` segment
+reads, which cast nothing. If the free-form overload or its buffers cannot be bound, the radar falls
+back to casting the short published pair and says so once in the log — a short truth beats a long guess.
+
+**Handedness (important):** `SIDE_R` runs along **−AxisX**, not +AxisX (`AxisX = (0.956, 0, 0.293)`,
+`SIDE_R` direction `(-0.956, 0, -0.294)`). That agrees with the right-basis `(-fz, fx)` that
+`FieldDirectionService` had already confirmed in game for the clock readout. Taking direction from the
+game's own ray instead of assuming an axis sign is what keeps the sides from being mirrored.
+
+**`ref` vs `out` buffers:** those two `vec3` parameters are **inputs the engine reads**, the opposite
+direction of travel from every other buffer in the probe, but the same memory rule applies — unmanaged,
+over-reserved, aligned `FieldOutBuffer` (never `CreateValueType`). `FieldOutBuffer.SetComponent` writes
+through the game's own field metadata and the value is **read back** before the cast; a mismatch skips
+the call rather than handing the engine a half-filled struct. The buffers are allocated once for the
+process (unmanaged memory never moves) instead of per sample.
+
+**Also fixed:** a front class change *while still blocked* (kerb `Step` → `Wall`) used to be silent,
+because cues only fired on open↔blocked. It now speaks the new class — **no** sound, since neither
+"closed" nor "opened" happened and re-firing a cue would lie; the 2-sample confirmation and the reader's
+duplicate filter keep it from chattering.

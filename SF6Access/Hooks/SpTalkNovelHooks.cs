@@ -34,7 +34,10 @@ public sealed class SpTalkNovelHooks : SingleParamScreenAdapter
 
     public SpTalkNovelHooks()
     {
-        SearchInterval = 30;
+        // Bind fast. At 30 frames the adapter could take half a second to notice
+        // the talk box had opened, which is long enough to miss a short first
+        // line entirely — and the first line is the one that says who is talking.
+        SearchInterval = 10;
         ReadInterval = 5;
     }
 

@@ -58,8 +58,20 @@ public abstract class ScreenAdapter
 
             if (frame % ReadInterval == 0) OnPoll();
         }
-        catch { }
+        catch (System.Exception ex)
+        {
+            // ONCE per adapter, never per frame. This catch used to be silent,
+            // which meant any exception inside a screen's OnBind/Poll made that
+            // screen simply not speak, with nothing in the log to say why —
+            // indistinguishable from "the screen was never opened". Chasing that
+            // difference by hand has already cost test rounds.
+            if (_faultLogged) return;
+            _faultLogged = true;
+            API.LogError($"[SF6Access] {GetType().Name} faulted and is now silent: {ex.Message}");
+        }
     }
+
+    private bool _faultLogged;
 
     /// <summary>Find and cache this screen's Param(s); return true when present.
     /// Called on every search tick — both to activate and, while active, to
