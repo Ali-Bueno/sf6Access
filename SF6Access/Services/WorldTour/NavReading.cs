@@ -102,6 +102,5 @@ public readonly struct NavReading
     /// a distant wall entered the long ray's reach.</summary>
     public bool SameStateAs(NavReading other) =>
         Ok == other.Ok && Block == other.Block && Front == other.Front
-        && LeftBlocked == other.LeftBlocked && RightBlocked == other.RightBlocked
         && GroundSolid == other.GroundSolid;
 }

@@ -1,0 +1,172 @@
+using SF6Access.Services.WorldTour;
+
+// Dependency-free behavioral tests: run with dotnet run --project tests/Navigation.Tests.
+int passed = 0;
+void Check(bool condition, string name)
+{
+    if (!condition) throw new Exception("FAILED: " + name);
+    passed++;
+}
+
+var route = new RouteLookAhead(0, 0, .5f);
+Check(route.Add(0, 0, 0) && !route.HasPoint, "ignore the route origin");
+Check(route.Add(0, 0, 1), "retain a close corner candidate");
+Check(!route.Add(2, 0, 1), "stop before cutting a right-angle corner");
+Check(route.X == 0 && route.Z == 1, "aim remains at the one-metre corner");
+Check(route.Turn == -1, "positive X from positive Z is left in the calibrated game basis");
+
+route = new RouteLookAhead(0, 0, .5f);
+route.Add(0, 0, 1);
+route.Add(-2, 0, 1);
+Check(route.Turn == 1, "negative X from positive Z is right");
+
+route = new RouteLookAhead(0, 0, .5f);
+Check(route.Add(0, 0, .3f), "corner just outside half a body radius survives");
+Check(!route.Add(1, 0, .3f) && route.Z == .3f, "very close bend is not discarded as a wiggle");
+
+route = new RouteLookAhead(0, 0, .5f);
+route.Add(0, 0, 2);
+Check(!route.Add(0, 0, 4) && route.Z == 4 && route.Turn == 0, "bounded straight look-ahead");
+
+route = new RouteLookAhead(0, 0, .5f);
+route.Add(.01f, 0, -1);
+Check(route.Add(-.01f, 0, -2) && route.Z == -2, "bearing wraps across 180 degrees without a false turn");
+
+route = new RouteLookAhead(20, 40, .5f);
+route.Add(20, 5, 41);
+Check(!route.Add(22, 5, 41) && route.X == 20 && route.Y == 5, "world translation and elevation preserve the corner");
+Check(!route.Add(float.NaN, 0, 0) && route.X == 20, "invalid points cannot replace a valid aim");
+
+var memory = new NavigationNoticeMemory();
+Check(memory.Wants("door-1", "closed", 10, false, 0), "new access is announced");
+memory.Spoke("door-1", "closed", 10, false, 0);
+Check(!memory.Wants("door-1", "closed", 10, false, 5000), "unchanged access stays silent");
+Check(memory.Wants("door-2", "closed", 10, false, 5000), "same description does not merge different doors");
+Check(!memory.Wants("door-1", "closed", 4, false, 1000), "approach updates leave time for speech");
+Check(memory.Wants("door-1", "closed", 4, false, 5000), "halving distance announces approach");
+memory.Spoke("door-1", "closed", 4, false, 5000);
+Check(memory.Wants("door-1", "closed", 4, true, 10000), "turning toward an access confirms alignment");
+memory.Spoke("door-1", "closed", 4, true, 10000);
+Check(!memory.Wants("door-1", "closed", 4, true, 15000), "holding alignment does not chatter");
+Check(memory.Wants("door-1", "open", 4, true, 15001), "door availability changes are news");
+Check(!memory.Wants("bad", "open", float.NaN, false, 15002), "invalid distance is not a discovery");
+Check(!memory.Wants("bad", "open", -1, false, 15002), "negative distance is refused");
+memory.Prune(40002);
+Check(memory.Wants("door-1", "closed", 4, true, 40002), "streamed-out identities expire");
+memory.Spoke("door-1", "closed", 4, true, 40002);
+memory.Clear();
+Check(memory.Wants("door-1", "closed", 4, true, 40003), "new area has no stale announcements");
+
+var first = new NavReading(FrontBlock.Blocked, FrontProfile.Wall, true, 1, false, false, false, true);
+var sides = new NavReading(FrontBlock.Blocked, FrontProfile.Wall, true, .5f, false, true, true, true);
+Check(first.SameStateAs(sides), "side flicker cannot suppress a confirmed front warning");
+var drop = new NavReading(FrontBlock.Blocked, FrontProfile.Wall, true, 1, false, false, false, false);
+Check(!first.SameStateAs(drop), "ground loss remains a state change");
+Check(!first.SameStateAs(default), "missing sensor data is not a valid baseline");
+// Level routes: ground (y 0), roof A (y 12, x < 50), roof C (y 12, x >= 50), roof B (y 20), tower D (y 30).
+string Region(LevelRoutePlanner.Spot s) => s.Y < 6 ? "ground" : s.Y > 25 ? "D" : s.Y > 16 ? "B" : s.X < 50 ? "A" : "C";
+LevelRoutePlanner Plan(LevelRoutePlanner.Spot from, LevelRoutePlanner.Spot to, LevelRoutePlanner.Link[] links,
+                       int budget = 48, Func<LevelRoutePlanner.Spot, LevelRoutePlanner.Spot>? snap = null)
+{
+    var planner = new LevelRoutePlanner(from, to, links, budget);
+    while (planner.Next() is { } q)
+    {
+        var a = planner.SpotOf(q.From);
+        var b = planner.SpotOf(q.To);
+        if (snap == null) { planner.Answer(Region(a) == Region(b)); continue; }
+        var sa = snap(a); var sb = snap(b);
+        planner.Answer(Region(sa) == Region(sb), sa, sb);
+    }
+    return planner;
+}
+var ground = new LevelRoutePlanner.Spot(5, 0, 5);
+var roofA = new LevelRoutePlanner.Spot(5, 12, 5);
+var roofB = new LevelRoutePlanner.Spot(25, 20, 0);
+var toA = new LevelRoutePlanner.Link(new(0, 0, -1), new(0, 12, 0));
+var aToB = new LevelRoutePlanner.Link(new(10, 12, 0), new(20, 20, 0));
+var toC = new LevelRoutePlanner.Link(new(100, 0, 0), new(100, 12, 50));
+
+var level = Plan(ground, roofA, new[] { toC, toA });
+Check(level.Plan is { Count: 2 } && level.Plan[0].Link == 1 && level.Plan[0].Up, "one ladder up to a roof");
+Check(level.Plan![0].To == toA.Low && level.Plan[0].Exit == toA.High, "walk to the ladder foot, leave at its top");
+Check(level.Plan[1].Link == -1 && level.Plan[1].To == roofA, "last leg is the destination");
+Check(level.Asked == 2, "nearest ladder answers in two questions");
+
+level = Plan(roofA, new(5, 0, 20), new[] { toA });
+Check(level.Plan is { Count: 2 } && !level.Plan[0].Up && level.Plan[0].To == toA.High, "one ladder down from a roof");
+
+level = Plan(ground, roofB, new[] { toC, aToB, toA });
+Check(level.Plan is { Count: 3 } && level.Plan[0].Link == 2 && level.Plan[1].Link == 1, "two ladders chain ground, roof A, roof B");
+
+var tower = new LevelRoutePlanner.Spot(30, 30, 10);
+level = Plan(ground, tower, new[] { toC, toA, aToB });
+Check(level.Finished && level.Partial && level.Plan is { Count: 3 } && level.Plan[0].Link == 1 && level.Plan[1].Link == 2,
+      "an unreachable tower climbs as high as the ladders go");
+Check(level.Plan![2].Link == -1 && level.Plan[2].To == aToB.High, "a partial plan stops at the highest reached ladder top");
+level = Plan(roofB, tower, new[] { toC, toA, aToB });
+Check(level.Finished && level.Plan == null, "no ladder nearer the target's height, no plan");
+level = Plan(ground, new(80, 30, 80), new[] { toC, toA, aToB });
+Check(level.Finished && level.Plan == null, "a ladder top in another block is not a destination");
+var hidden = new LevelRoutePlanner.Link(new(60, 30, 0), new(60, 40, 0));
+level = Plan(ground, tower, new[] { hidden, toA });
+Check(level.Partial && level.Plan is { Count: 2 } && level.Plan[0].Link == 1, "a ladder whose foot cannot be walked to is left out");
+level = Plan(ground, new(9, 1, 9), new[] { toA }, budget: 48);
+Check(level.Plan == null, "a destination on the player's own level gets no partial climb");
+level = Plan(ground, roofA, new[] { toC, toA }, budget: 1);
+Check(level.Finished && level.Plan == null && level.Asked == 1, "question budget bounds the search");
+level = Plan(ground, roofA, new[] { toC, toA }, budget: 2);
+Check(level.Plan is { Count: 2 }, "the last answer inside the budget can still complete a plan");
+level = Plan(ground, roofA, Array.Empty<LevelRoutePlanner.Link>());
+Check(level.Finished && level.Plan == null && level.Asked == 0, "no ladders, no questions");
+
+var moved = new LevelRoutePlanner.Spot(1, 12, 0);
+level = Plan(ground, roofA, new[] { toA }, snap: s => s == toA.High ? moved : s);
+Check(level.Plan![0].Exit == moved, "an endpoint moved onto the navmesh replaces the ladder end");
+
+level = new LevelRoutePlanner(ground, roofA, new[] { toA }, 48);
+Check(level.Known(LevelRoutePlanner.Player, LevelRoutePlanner.Target) == 0, "direct failure is known from the start");
+var twin = new LevelRoutePlanner.Link(new(0, 0, -2), new(0, 12, 1));
+level = new LevelRoutePlanner(ground, new(80, 30, 80), new[] { toA, twin }, 48);
+int targetQuestions = 0;
+while (level.Next() is { } tq)
+{
+    if (tq.To == LevelRoutePlanner.Target) targetQuestions++;
+    level.Answer(Region(level.SpotOf(tq.From)) == Region(level.SpotOf(tq.To)));
+}
+Check(targetQuestions == 4, "each ladder end is asked about the target once");
+level = new LevelRoutePlanner(ground, new(9, 0, 9), new[] { toA }, 48, askDirect: true);
+Check(level.Next() is { From: LevelRoutePlanner.Player, To: LevelRoutePlanner.Target }, "an off-mesh target asks the direct walk first");
+level.Answer(true, to: new LevelRoutePlanner.Spot(9, 0, 8));
+Check(level.Next() == null && level.Plan is { Count: 1 } && level.Plan[0].To == new LevelRoutePlanner.Spot(9, 0, 8),
+      "a target moved onto the navmesh can be walked to directly");
+
+// Chapter 2-2: street, a 5 m roof split by a sign the navmesh does not model, a 10 m roof, the boss apart.
+var boss = new LevelRoutePlanner.Spot(15, 12.2f, 17);
+string Block(LevelRoutePlanner.Spot s) => s == boss ? "boss" : s.Y < 2.5f ? "street" : s.Y >= 7.5f ? "roof10" : s.Z < 8 ? "roof5" : "behindSign";
+var ladderA = new LevelRoutePlanner.Link(new(0, 0, 0), new(0, 5, 0));
+var ladderB = new LevelRoutePlanner.Link(new(0, 4.8f, 10.5f), new(0, 10.1f, 10.5f));
+level = new LevelRoutePlanner(new(20, 0, -20), boss, new[] { ladderB, ladderA }, 48);
+while (level.Next() is { } bq) level.Answer(Block(level.SpotOf(bq.From)) == Block(level.SpotOf(bq.To)));
+Check(level.Partial && level.Plan is { Count: 3 } && level.Plan[0].Link == 1 && !level.Plan[0].Blocked,
+      "a sign-split roof: the first ladder is walked to");
+Check(level.Plan![1].Link == 0 && level.Plan[1].Blocked && level.Plan[2].To == ladderB.High,
+      "the ladder behind the sign is a blocked leg, and the plan stops at its top");
+
+var legs = new[]
+{
+    new LevelRoutePlanner.Leg(toA.Low, toA.High, 0, true),
+    new LevelRoutePlanner.Leg(roofA, roofA, -1, false),
+};
+Check(LevelRoutePlanner.Progress(legs, 0, new(20, 0, 20), 4, 2) == 0, "walking to the ladder stays on the first leg");
+Check(LevelRoutePlanner.Progress(legs, 0, new(0.5f, 12, 0.5f), 4, 2) == 1, "standing at the ladder top advances");
+Check(LevelRoutePlanner.Progress(legs, 0, new(0, 7, 0), 4, 2) == 0, "halfway up the ladder is not the top yet");
+Check(LevelRoutePlanner.Progress(legs, 1, new(6, 12, 6), 4, 2) == 1, "walking on the roof keeps the last leg");
+Check(LevelRoutePlanner.Progress(legs, 1, new(1, 0, -1), 4, 2) == 0, "back down at the foot returns to the ladder leg");
+Check(LevelRoutePlanner.Progress(legs, 1, new(40, 0, 40), 4, 2) == 1, "a fall far away is left to the route check");
+var shortLadder = new[]
+{
+    new LevelRoutePlanner.Leg(new(0, 0, 0), new(0, 4, 0), 0, true),
+    new LevelRoutePlanner.Leg(new(3, 4, 3), new(3, 4, 3), -1, false),
+};
+Check(LevelRoutePlanner.Progress(shortLadder, 0, new(6, 2.5f, 0), 4, 2) == 0, "a ramp beside a short ladder is not its top");
+Console.WriteLine($"Passed {passed} navigation checks.");

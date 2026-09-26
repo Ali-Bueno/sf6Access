@@ -39,7 +39,14 @@ public static class FieldHeadingService
     private static readonly (float x, float z) NORTH_FALLBACK = (0f, 1f);
 
     private const string MINIMAP_WINDOW = "app.UIMiniMapWindow";
-    private const string SCENE_MANAGER = "via.SceneManager";
+
+    /// <summary>The HUD component that OWNS the minimap window
+    /// (<c>UICityHud_CityMiniMap.cs:7</c>), and the member it holds it in
+    /// (<c>:27</c>). This is the route that actually binds — see
+    /// <see cref="FindMiniMapWindow"/>.</summary>
+    private const string MINIMAP_HUD = "app.UICityHud_CityMiniMap";
+    private const string MINIMAP_WINDOW_MEMBER = "MiniMapWindow";
+
     private const string CONVERT_TO_UI = "ConvertTo_UIPos";
     private const string VECTOR_SUFFIX = "vec3";
 
@@ -71,6 +78,7 @@ public static class FieldHeadingService
     private static North _north;
     private static long _nextTryTick;
     private static bool _fallbackLogged;
+    private static bool _windowRouteLogged;
     private static Method _convertToUi;
     private static Method _rotateFlag;
     private static TypeDefinition _vecType;
@@ -109,6 +117,7 @@ public static class FieldHeadingService
         _north = default;
         _nextTryTick = 0;
         _fallbackLogged = false;
+        _windowRouteLogged = false;
     }
 
     /// <summary>Compass heading of a ground-plane direction: 0 = north, 90 = east,
@@ -241,20 +250,44 @@ public static class FieldHeadingService
         return float.IsFinite(ux) && float.IsFinite(uy);
     }
 
-    /// <summary>The live minimap window component, found by walking the scene the
-    /// same way <see cref="GuiTextReader"/> finds GUI components.</summary>
+    /// <summary>The live minimap window, for the readers that need more from it
+    /// than a compass. There is exactly one search for it in the mod, here, so
+    /// the compass and <see cref="MapIconCatalog"/> can never end up looking at
+    /// two different windows. Not cached: the component is rebuilt on every city
+    /// load, and a stale wrapper over a destroyed one is the finalizer crash this
+    /// mod has already paid for once.</summary>
+    public static ManagedObject MiniMapWindow() => FindMiniMapWindow();
+
+    /// <summary>The live minimap window.
+    ///
+    /// <para><b>It is NOT a scene component, and asking for it as one silently
+    /// returned nothing.</b> Confirmed in game 2026-09-09: searching the scene for
+    /// <c>app.UIMiniMapWindow</c> found nothing for a whole session, so the
+    /// compass ran on <see cref="NORTH_FALLBACK"/> — a guessed axis — the entire
+    /// time, and the minimap icon catalogue came back empty. The window is OWNED
+    /// by a HUD component: <c>app.UICityHud_CityMiniMap : UIHudBase</c> exposes
+    /// <c>MiniMapWindow : UIMiniMapWindow</c>
+    /// (<c>UICityHud_CityMiniMap.cs:7,27</c>), and <c>UICityHud_*</c> components
+    /// ARE in the scene — <see cref="MissionGuideReader"/> finds
+    /// <c>app.UICityHud_MissionGuide</c> the same way and has always worked.</para>
+    ///
+    /// <para>The direct search is kept as a second attempt, costing nothing when
+    /// the first succeeds: if a future patch ever does put the window in the scene
+    /// itself, that still binds rather than regressing.</para></summary>
     private static ManagedObject FindMiniMapWindow()
     {
-        var td = TDB.Get().FindType(MINIMAP_WINDOW);
-        var runtimeType = td?.GetRuntimeType();
-        var find = TDB.Get().FindType("via.Scene")?.GetMethod("findComponents(System.Type)");
-        if (runtimeType == null || find == null) return null;
+        var hud = FieldProbeService.FirstSceneComponent(MINIMAP_HUD);
+        var window = FieldProbeService.Member(hud, MINIMAP_WINDOW_MEMBER) as ManagedObject
+                     ?? FieldProbeService.FirstSceneComponent(MINIMAP_WINDOW);
 
-        var sceneMgr = API.GetNativeSingleton(SCENE_MANAGER);
-        var scene = (sceneMgr as IObject)?.Call("get_CurrentScene") as IObject;
-        if (scene == null) return null;
-
-        var list = find.InvokeBoxed(typeof(object), scene, new object[] { runtimeType }) as ManagedObject;
-        return list != null && FlowHelper.GetListCount(list) > 0 ? FlowHelper.GetListItem(list, 0) : null;
+        if (window != null && !_windowRouteLogged)
+        {
+            _windowRouteLogged = true;
+            API.LogInfo($"[SF6Access] Heading: minimap window via " +
+                        (hud != null ? $"{MINIMAP_HUD}.{MINIMAP_WINDOW_MEMBER}" : MINIMAP_WINDOW));
+        }
+        return window;
     }
+
+
 }

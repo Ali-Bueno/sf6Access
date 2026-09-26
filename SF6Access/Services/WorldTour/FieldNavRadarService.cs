@@ -115,7 +115,6 @@ public static class FieldNavRadarService
     private static Method _getContactPoint;
     private static Field _contactDistanceField;
     private static bool _contactDistanceProbed;
-    private static bool _contactDistanceIsValue;
     private static bool _unavailableLogged;
     private static bool _shortSidesLogged;
 
@@ -379,13 +378,11 @@ public static class FieldNavRadarService
                 _contactDistanceProbed = true;
                 var td = uo.GetTypeDefinition();
                 _contactDistanceField = td?.GetField("Distance");
-                _contactDistanceIsValue = cp is REFrameworkNET.ValueType;
                 if (_contactDistanceField == null)
                     API.LogWarning("[SF6Access] Nav radar: ContactPoint.Distance field not found, using the slow member walk");
             }
             if (_contactDistanceField != null)
-                return FieldProbeService.ToFloat(
-                    _contactDistanceField.GetDataBoxed(typeof(float), uo.GetAddress(), _contactDistanceIsValue));
+                return FieldProbeService.ToFloat(PinnedValue.Field(_contactDistanceField, uo, typeof(float)));
         }
         return FieldProbeService.ToFloat(FieldProbeService.Member(cp, "Distance", typeof(float)));
     }

@@ -61,6 +61,7 @@ public sealed class HomingCue
     private readonly string _file;
     private readonly float _tightAtM;
     private readonly float _looseFromM;
+    private readonly int _nearGapMs, _farGapMs;
     private long _nextTick;
     private int _lastLoggedM = int.MinValue;
 
@@ -71,11 +72,16 @@ public sealed class HomingCue
     /// <param name="looseFromM">Distance from which the repeat is at its slowest.
     /// It has to span the whole approach: pinned at its slowest for all but the
     /// last few metres, the cadence would say nothing about progress.</param>
-    public HomingCue(string fileName, float tightAtM, float looseFromM)
+    /// <param name="nearGapMs">Silence between repeats at <paramref name="tightAtM"/>.</param>
+    /// <param name="farGapMs">Silence between repeats from <paramref name="looseFromM"/> out.</param>
+    public HomingCue(string fileName, float tightAtM, float looseFromM,
+                     int nearGapMs = GAP_NEAR_MS, int farGapMs = GAP_FAR_MS)
     {
         _file = fileName;
         _tightAtM = tightAtM;
         _looseFromM = looseFromM;
+        _nearGapMs = nearGapMs;
+        _farGapMs = farGapMs;
     }
 
     /// <summary>True when the next repeat is due. A clock comparison and nothing
@@ -107,7 +113,7 @@ public sealed class HomingCue
         // loop hammering the log; fall back to the slowest spacing.
         long spacing = length > TimeSpan.Zero
             ? (long)length.TotalMilliseconds + Gap(dist)
-            : GAP_FAR_MS;
+            : _farGapMs;
         _nextTick = Environment.TickCount64 + spacing;
 
         // One line per metre of progress, not per ping: up close a cue repeats
@@ -125,6 +131,6 @@ public sealed class HomingCue
     {
         float span = _looseFromM - _tightAtM;
         float t = span <= 0f ? 1f : Math.Clamp((dist - _tightAtM) / span, 0f, 1f);
-        return (long)(GAP_NEAR_MS + t * (GAP_FAR_MS - GAP_NEAR_MS));
+        return (long)(_nearGapMs + t * (_farGapMs - _nearGapMs));
     }
 }

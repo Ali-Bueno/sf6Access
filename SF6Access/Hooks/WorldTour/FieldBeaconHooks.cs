@@ -142,6 +142,9 @@ public class FieldBeaconHooks
     private static void PulseHome(System.Collections.Generic.List<AvatarFieldReader.Other> others)
     {
         if (MissionBeaconHooks.Homing) { Home.Snooze(OUT_OF_RANGE_RECHECK_MS); return; }
+        // ...and to the breakable beacon: something a mission needs smashed is more
+        // use to the player than a passer-by, and two pulses are two directions.
+        if (BreakableBeaconHooks.Homing) { Home.Snooze(OUT_OF_RANGE_RECHECK_MS); return; }
 
         var target = StickyTarget.NearestPerson.Pick(others);
         if (target.Dist > HOME_RANGE_M) { Home.Snooze(OUT_OF_RANGE_RECHECK_MS); return; }

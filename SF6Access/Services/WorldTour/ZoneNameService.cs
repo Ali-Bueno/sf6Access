@@ -70,7 +70,8 @@ public static class ZoneNameService
         _current = default;
         _refreshedAt = 0;
         _sectionNames.Clear();
-        _sectionMissId = 0;
+        _sectionsBuilt = false;
+        _sectionsAt = 0;
         _points = null;
         _pointsLogged = false;
         _stickyPoint = null;
@@ -101,58 +102,98 @@ public static class ZoneNameService
     // session, while re-querying every refresh would flood the log.
     private static readonly Dictionary<uint, string> _sectionNames = new();
     private static uint _sectionCity;
-    private static uint _sectionMissId;
-    private static long _sectionMissAt;
+    private static bool _sectionsBuilt;
+    private static long _sectionsAt;
+
+    /// <summary>How far past the record count the key probe may reach before giving
+    /// up. These tables' ManageIds are dense in practice, so a small multiple is
+    /// generous; it exists only so a sparse table cannot spin forever.</summary>
+    private const uint KEY_PROBE_SLACK = 8;
 
     /// <summary>The district name for a section id, or null when the section is
-    /// unavailable (id 0 means "no section", not "section zero") or the table
-    /// has nothing for it.</summary>
+    /// unavailable (id 0 means "no section", not "section zero") or the table has
+    /// nothing for it.</summary>
     private static string SectionName(uint sectionId)
     {
         if (sectionId == 0) return null;
 
         uint city = WorldTourStateService.CityId;
-        if (city != _sectionCity) { _sectionNames.Clear(); _sectionCity = city; _sectionMissId = 0; }
-        if (_sectionNames.TryGetValue(sectionId, out string cached)) return cached;
+        if (city != _sectionCity)
+        {
+            _sectionNames.Clear();
+            _sectionCity = city;
+            _sectionsBuilt = false;
+            _sectionsAt = 0;
+        }
 
+        if (!_sectionsBuilt) BuildSectionNames();
+        return _sectionNames.TryGetValue(sectionId, out string name) ? name : null;
+    }
+
+    /// <summary><b>Build the whole id-to-name map at once, indexed by each record's
+    /// OWN id.</b>
+    ///
+    /// <para>This replaced a keyed lookup that asked the table for
+    /// <c>get_Item(sectionId)</c> and then cross-checked the record's <c>id</c>
+    /// against it. That check was there for a good reason — these dictionaries are
+    /// keyed by <c>ManageId</c>, which is not guaranteed to be the section id, and
+    /// handing back somebody else's district would be worse than silence — but its
+    /// consequence was that whenever the two ids differ the route simply went mute.
+    /// Reading every record and filing it under its own <c>id</c> makes the question
+    /// moot: it no longer matters what the dictionary is keyed by.</para>
+    ///
+    /// <para><b>Bounded by the table's own count.</b> There is no safe way to walk an
+    /// IL2CPP dictionary's entries in this codebase — no helper exists and the
+    /// enumerator is a struct — so the keys are probed upward with
+    /// <c>ContainsKey</c>, which is a by-value call returning a bool, and the scan
+    /// stops the moment <c>get_Count</c> records have been found. The ceiling exists
+    /// only so that a sparse table cannot spin: it is a multiple of the record
+    /// count, generous because these ids are dense in practice, and stopping early
+    /// is logged rather than hidden.</para>
+    ///
+    /// <para>Run once per city, and only re-attempted after
+    /// <see cref="EMPTY_RETRY_MS"/> while the table is still empty — during a city
+    /// load it legitimately is.</para></summary>
+    private static void BuildSectionNames()
+    {
         long now = Environment.TickCount64;
-        if (sectionId == _sectionMissId && now - _sectionMissAt < EMPTY_RETRY_MS) return null;
+        if (now - _sectionsAt < EMPTY_RETRY_MS) return;
+        _sectionsAt = now;
 
-        string name = null;
-        var record = FlowHelper.GetTableRecord(SECTION_DICT, SECTION_RECORD, sectionId);
-        if (record != null)
+        var dict = FlowHelper.GetTableDict(SECTION_DICT);
+        int total = FlowHelper.GetListCount(dict);
+        if (dict == null || total <= 0) return;
+
+        int found = 0;
+        uint key = 0;
+        uint ceiling = (uint)total * KEY_PROBE_SLACK;
+
+        while (found < total && key < ceiling)
         {
-            // THE CROSS-CHECK. The dictionary is keyed by ManageId; the record also
-            // carries its own `id`. If they name the same section the key mapping is
-            // proven for this table, and if they don't we have somebody else's
-            // district and must say nothing rather than something confident and
-            // wrong.
-            uint recordId = FlowHelper.ReadUIntField(record, "id");
-            if (recordId == sectionId)
-            {
-                var msg = AvatarFieldReader.GetProp(record, "SectionNameID");
-                name = FlowHelper.CleanTags(FlowHelper.ResolveGuidField(msg, "GUID"))?.Trim();
-            }
-            else
-            {
-                API.LogInfo($"[SF6Access] Zone: section {sectionId} keyed a record whose id is " +
-                            $"{recordId} — ManageId is not the section id, route rejected");
-            }
+            key++;
+            bool present;
+            try { present = Convert.ToBoolean(FlowHelper.Call(dict, "ContainsKey", key)); }
+            catch { continue; }
+            if (!present) continue;
+
+            found++;
+            var record = FlowHelper.GetTableRecord(SECTION_DICT, SECTION_RECORD, key);
+            if (record == null) continue;
+
+            uint id = FlowHelper.ReadUIntField(record, "id");
+            if (id == 0) continue;
+
+            var msg = AvatarFieldReader.GetProp(record, "SectionNameID");
+            string name = FlowHelper.CleanTags(FlowHelper.ResolveGuidField(msg, "GUID"))?.Trim();
+            if (string.IsNullOrEmpty(name)) continue;
+
+            _sectionNames[id] = name;
         }
 
-        if (name != null)
-        {
-            _sectionNames[sectionId] = name;
-            API.LogInfo($"[SF6Access] Zone: section {sectionId} -> '{name}'");
-            return name;
-        }
-
-        // One line the first time a section fails, not one per retry.
-        if (_sectionMissId != sectionId)
-            API.LogInfo($"[SF6Access] Zone: section {sectionId} has no name in {SECTION_DICT}");
-        _sectionMissId = sectionId;
-        _sectionMissAt = now;
-        return null;
+        _sectionsBuilt = _sectionNames.Count > 0;
+        API.LogInfo($"[SF6Access] Zone: {SECTION_DICT} enumerated - {_sectionNames.Count} named sections " +
+                    $"from {found} of {total} records" +
+                    (found < total ? $" (stopped at key {key} of a {ceiling} ceiling)" : ""));
     }
 
     // ---------- route C: the nearest named landmark ----------

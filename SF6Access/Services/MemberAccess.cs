@@ -66,6 +66,41 @@ public static class MemberAccess
     private static readonly Dictionary<string, Method> _methods = new Dictionary<string, Method>();
     private static readonly Dictionary<string, Accessor[]> _declaredFirst = new Dictionary<string, Accessor[]>();
     private static readonly Dictionary<string, Accessor[]> _getterFirst = new Dictionary<string, Accessor[]>();
+    private static readonly Dictionary<string, Accessor[]> _fieldsFirst = new();
+
+    /// <summary>Read concrete storage before interface getters. Used by the exploration
+    /// readers, where a false/empty interface result must not hide a live backing field.</summary>
+    public static object ReadFieldsFirst(object owner, string name, System.Type expected = null)
+    {
+        if (owner is not UnifiedObject obj) return null;
+        try
+        {
+            var td = obj.GetTypeDefinition();
+            string type = FullName(td);
+            if (type == null) return null;
+            string key = type + "::" + name;
+            if (!_fieldsFirst.TryGetValue(key, out var found))
+            {
+                var entries = new List<Accessor>();
+                AddField(entries, td, name);
+                AddField(entries, td, BackingField(name));
+                if (entries.Count == 0) AddGetter(entries, td, name);
+                found = Store(_fieldsFirst, key, type, name, entries);
+            }
+            foreach (var accessor in found)
+            {
+                try
+                {
+                    return obj is REFrameworkNET.ValueType vt
+                        ? PinnedValue.Use(vt, address => accessor.Read(obj, address, expected, true))
+                        : accessor.Read(obj, obj.GetAddress(), expected, false);
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return null;
+    }
 
     /// <summary>The method as the engine will dispatch it. <c>TypeDefinition.GetMethod</c>
     /// IS <c>FindMethod</c> (TypeDefinition.hpp: <c>GetMethod(name) { return

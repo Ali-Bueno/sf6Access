@@ -218,7 +218,14 @@ public static class FieldProbeService
     public static object Member(object owner, string name, System.Type expected = null)
     {
         if (owner == null) return null;
+        // A struct's bytes must not move while the engine reads them (see PinnedValue).
+        return owner is REFrameworkNET.ValueType vt
+            ? PinnedValue.Use(vt, _ => Lookup(owner, name, expected))
+            : Lookup(owner, name, expected);
+    }
 
+    private static object Lookup(object owner, string name, System.Type expected)
+    {
         // The untyped getter, but only when the CONCRETE type declares it: asking
         // IObject.Call for a method a type does not have costs a logged
         // "Method not found" line on every single read, and these members are read
@@ -419,6 +426,42 @@ public static class FieldProbeService
             catch { }
         }
         return null;
+    }
+
+    // ---------- components in the live scene ----------
+
+    /// <summary>Every component of a type in the current scene, as the engine's own
+    /// list, or null. One copy of an idiom that had grown four of them
+    /// (<see cref="FieldHeadingService"/>, <see cref="FieldPadService"/>,
+    /// <c>GuiTextReader</c>, <c>MissionGuideReader</c>).
+    ///
+    /// <para><b>Never cache what this returns.</b> The wrappers are over live scene
+    /// objects that a city load, a section stream or an NPC despawn destroys, and a
+    /// managed wrapper outliving its object is the finalizer-on-the-GC-thread crash
+    /// documented in <c>docs/sf6-architecture.md</c>. Re-ask instead; the call is a
+    /// scene walk, so ask at a human cadence, not per frame.</para></summary>
+    public static ManagedObject SceneComponents(string typeName)
+    {
+        try
+        {
+            var runtimeType = TDB.Get().FindType(typeName)?.GetRuntimeType();
+            var find = TDB.Get().FindType("via.Scene")?.GetMethod("findComponents(System.Type)");
+            if (runtimeType == null || find == null) return null;
+
+            var sceneMgr = API.GetNativeSingleton("via.SceneManager");
+            var scene = (sceneMgr as IObject)?.Call("get_CurrentScene") as IObject;
+            if (scene == null) return null;
+
+            return find.InvokeBoxed(typeof(object), scene, new object[] { runtimeType }) as ManagedObject;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>The first component of a type in the current scene, or null.</summary>
+    public static ManagedObject FirstSceneComponent(string typeName)
+    {
+        var list = SceneComponents(typeName);
+        return list != null && FlowHelper.GetListCount(list) > 0 ? FlowHelper.GetListItem(list, 0) : null;
     }
 
     // ---------- enums straight out of the TDB ----------

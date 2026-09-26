@@ -41,6 +41,12 @@ public static class MissionGuideReader
     private const string F_MISSION_TARGET = "missionTarget";
     private const string F_CUR_MISSION_ID = "curProgressMissionId";
     private const string F_TARGET_OBJECT = "TargetObject";
+
+    /// <summary><c>ProgressMisionInfo.AccessTarget</c>
+    /// (<c>UICityHud_MissionGuide.cs:195</c>) — the thing that knows WHERE THE PLAYER
+    /// MUST STAND to interact with this objective. See <see cref="AccessPointReader"/>
+    /// for why that, and not the target's own transform, is the place to walk to.</summary>
+    private const string F_ACCESS_TARGET = "AccessTarget";
     private const string F_TARGET_TYPE = "TargetType";
 
     /// <summary>Unreadable target kind. Not an <c>eTargetType</c> value: the
@@ -53,14 +59,19 @@ public static class MissionGuideReader
     public readonly struct Guide
     {
         public readonly ManagedObject TargetObject;
+
+        /// <summary>The objective's access target, or null. Never held across
+        /// frames by anyone — read it, use it, drop it.</summary>
+        public readonly ManagedObject AccessTarget;
         public readonly uint MissionId;
         /// <summary>app.UICityHud_MissionGuide.eTargetType, or <see cref="TYPE_UNKNOWN"/>.</summary>
         public readonly int TargetType;
         public bool Ok => TargetObject != null;
 
-        public Guide(ManagedObject targetObject, uint missionId, int targetType)
+        public Guide(ManagedObject targetObject, uint missionId, int targetType, ManagedObject accessTarget)
         {
             TargetObject = targetObject; MissionId = missionId; TargetType = targetType;
+            AccessTarget = accessTarget;
         }
     }
 
@@ -69,24 +80,36 @@ public static class MissionGuideReader
     private static bool _bindChecked;
     private static bool _bindOk;
 
+    /// <summary>Why the last <see cref="Read"/> found nothing, for the fallback's log line; null after a hit.</summary>
+    public static string LastMiss { get; private set; }
+
     /// <summary>The HUD marker's current target. Re-resolved on every call.</summary>
     public static Guide Read()
     {
         try
         {
+            LastMiss = "guide type not bound";
             if (!EnsureBound()) return default;
 
+            LastMiss = "no HUD mission guide in the scene";
             var guide = FindGuide();
             if (guide == null) return default;
 
             var info = AvatarFieldReader.GetProp(guide, F_MISSION_TARGET);
+            LastMiss = "guide has no missionTarget; targetList count=" +
+                       FlowHelper.GetListCount(AvatarFieldReader.GetProp(guide, "targetList") as ManagedObject);
             if (info == null) return default;
 
             var go = AvatarFieldReader.GetProp(info, F_TARGET_OBJECT);
+            LastMiss = "missionTarget has no TargetObject";
             if (go == null) return default;
+            LastMiss = null;
 
             uint id = FlowHelper.ReadUIntField(guide, F_CUR_MISSION_ID);
-            return new Guide(go, id, ReadTargetType(info));
+            // The access target rides along: it is optional, and a mission whose
+            // objective publishes none simply keeps the old behaviour.
+            var access = AvatarFieldReader.GetProp(info, F_ACCESS_TARGET) as ManagedObject;
+            return new Guide(go, id, ReadTargetType(info), access);
         }
         catch { return default; }
     }

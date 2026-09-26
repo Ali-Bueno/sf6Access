@@ -2,7 +2,116 @@
 
 > Per-mod status ledger / dashboard. Open this first when resuming the mod so progress isn't re-derived from the code each session. Keep it short — a dashboard, not docs. Update the **Next step** line and the section table whenever you finish a chunk. Derive every value from the game's real data — no guessed offsets.
 
-**Last updated:** 2026-09-09
+**Last updated:** 2026-09-26
+
+**Next step (tester request, 2026-09-26): a better way to know where I am and to choose where to go
+in the open world.** Mission 11011 (Chapter 2-2) was finally completed with the ladder route, but the
+tester still finds free navigation hard. Design session first (orientation readout, choosing a
+destination from nearby/known places, not only map icons) before more beacon tuning.
+
+**Test 2026-09-26, eighth run: PASSED.** The tester reached Boluo: partial plan #4 → blocked #2 → 10 m
+roof, then got up to him. The new `RequestShowFromPlayer`/`RequestShowFromOM` hooks installed (2) but
+never fired all session, ladders included: the prompt HUD is still unread (`IsShow` false, requests
+silent) — the way game action prompts are raised is still unknown.
+
+**Test 2026-09-26, seventh run (fixed, not re-verified):** both ladders climbed (blocked leg worked,
+the way opened); stopped on the 10 m roof 16 m from Boluo, whose spot is a separate island 3 m up.
+At the stand-in the beacon now aims at the destination; game action prompts (Climb, GetOver…) are
+announced from their show requests. Next test: from the stand-in, walk to the wall under Boluo and
+listen for "Disponible: Trepar"; report `the game requested action prompt` lines.
+
+**Test 2026-09-26, sixth run (fixed, not re-verified):** on the first roof the tester found nothing to
+break and the beacon offered a 133 m street route. New "blocked legs": the second ladder, 10.5 m away
+and level but not connected on the navmesh (the sign), is now the next leg, pointed at directly, with
+"no hay paso libre… acción de maestro"; `Level route: blocked walk …` logs the objects in between (the
+sign's type). Absurd stand-in routes after a climb are rejected.
+
+**Test 2026-09-26, fifth run (fixed, not re-verified):** correct ladder (#5), but "ladders done" fired
+while still on the ladder, and the approach searched from the street node below (131 m street route,
+back down, into walls). The hand-over now waits until the navmesh confirms the player is on the
+ladder's roof. Next test: climb #5, step onto the roof, expect "Las escaleras no suben más…" and the
+beacon pointing up/toward the boss (~23 m), not back down.
+
+**Test 2026-09-26, fourth run (fixed, not re-verified):** ladder climbing works ("Ya puedes agarrar
+la escalera" + action button). The partial plan had picked a ladder on another building 85 m from the
+boss, and the retry then led back down; partial ends are now bounded to 32 m from the target, and the
+mission route no longer restarts when the game swaps the NPC for its map icon. Next test: from the
+street, expect ladder #5 (-244, 0→5 m), then "Las escaleras no suben más…", break the sign, and the
+beacon pointing to the objective. Details: `docs/sf6-screens.md` § multi-level routes, "Fourth run".
+
+**Test 2026-09-26, third run (not re-verified):** the partial plan led to ladder #3's foot, but the
+player could not climb it and no game prompt was read. New: lowest-rung height and access-target
+match per ladder (`Ladder contact:` lines, "Ya puedes agarrar la escalera", "salta hacia ella"),
+first-call log of the action-prompt HUD, and a much faster mission beacon (far gap 0.5 s, keeps
+pinging during speech). Details: `docs/sf6-screens.md` § multi-level routes, "Third run".
+
+**Test 2026-09-26, second run (fixed the same day, not re-verified):** the earlier crash was NOT the
+emote call: the Windows event log shows an `AccessViolationException` in `FieldRayContacts.Read` — an
+unpinned REFramework `ValueType` read racing the GC (`docs/sf6-architecture.md`, "Read a REFramework
+`ValueType` only while it is pinned"). Fixed with `PinnedValue` on the hot paths. The mission is
+Chapter 2-2 "Moratones a los Caracartones" (boss Boluo, (-229.3, 12.2, -104.3), confirmed by the map
+icon). Guides: first ladder, a sign blocks the roof path (break it with a master action), second
+ladder. No loaded ladder end connects to Boluo's spot on the navmesh, so the planner now returns a
+PARTIAL plan (climb as near the target's height as ladders allow, then approach from there). The map
+cursor call no longer runs while the map closes (11 game exceptions). **Test:** from the street, expect
+"Ninguna escalera llega al destino, pero … te acercan", the ladders, then "Las escaleras no suben
+más…"; break the sign when the breakable beacon points at it. Report `Level route:` lines.
+
+**Test 2026-09-26 (fixed the same day, not re-verified):** hard crash first blamed on `AvatarEmoteHooks`
+calling an `out string` method (10 faults) — call removed, but see the second run above. Ladder search
+ran but no loaded ladder reaches mission 11011's roof NPC; the fallback said "objetivo … a 5 metros"
+for the point BELOW it — now "pie de objetivo" plus the height. Radar laterals no longer go silent
+while turning (tester request). New log lines to read: `Mission guide: HUD unused …` (all target
+holders by name/position), `ladders readable; unread: …`. Details: `docs/sf6-screens.md` §
+"multi-level routes through ladders", "First run".
+
+**Next step (2026-09-22): test multi-level routes through ladders.** Tester reports a mix of
+"objective on another floor" and "getting lost on the way"; the 2026-09-09 log shows ground routes
+working and a roof objective (`PathNotFound`) leaving the player under it. New `LevelRoute` plans
+walk → ladder → walk with the game's navmesh and ladder gimmicks (`Om011000`) and speaks each leg.
+Built and logic-reviewed, 49 pure checks pass, **nothing verified in game**. Test: take a roof/upper-floor objective
+from the street; expect "N meters above you. Searching for a ladder", then "Route found…", the
+beacon leading to the ladder, "Ladder here. Climb up", and "Ladder done…" at the top. Report the
+`Level route:` log lines. Details: `docs/sf6-screens.md` § "multi-level routes through ladders".
+The 2026-09-14 prototype below is also still untested.
+
+**Previous step (2026-09-14, implemented prototype):** test the automatic navigation/access
+increment in World Tour. Radar starts ON; short route bends are retained and announced;
+route loss/nearby approach are explicit; matching native contact data replaces proximity
+as mission interaction confirmation. New `FieldExplorationHooks` discovers nearby
+ladder/door families and reads active contextual action guides without new hotkeys or
+automatic movement. `AccessPointReader` now binds enabled `AccessCheckShape` instances
+and honors the bool return. Existing audio assets and dependencies retained.
+
+**Validation:** `dotnet build` succeeded, 0 warnings/errors; post-build deployed to the
+configured REFramework managed folder. Dependency-free `tests/Navigation.Tests` passed
+27 checks (close bends, bearing wrap, turn handedness, invalid positions, per-access
+announcement memory, expiry and independent front debounce). Native bindings, audio
+timing and usable access positions remain **PENDING IN-GAME VERIFICATION**. Nothing is
+marked complete. Test: enter exploration without Shift+B; approach/pass/return to a
+ladder; compare closed/open door; approach an NPC around a close corner; check upper-floor
+objective fallback; confirm silence in menus/dialogue/combat. Read `Exploration`,
+`Access point` and `Mission navigation` log lines. No diagnostic keys are required.
+
+**Navigation review (2026-09-14):** user reaffirmed existing navigation, no additional
+keys and no auto-walk. Code review and prioritized proposal added to
+`docs/wt-radar-improvements.md` ("Review against current working code"): radar still
+starts disabled; close turns can be skipped; automatic mission guidance ignores
+`NoRoute`; proximity does not confirm interaction. Recommended next implementation is
+hands-free route reliability and final approach before experimental navmesh exits.
+No navigation code changed; no feature marked complete or verified in game.
+
+**Game-code follow-up (2026-09-14):** declaration review found ladder endpoints
+(`Om011000`), door restrictions/transitions (`Om016000`/`Om017000`), native contextual
+action guides, and portal-edge data on our existing path report. `AccessPointReader`
+looks for `GetNearPos` on the target, but the declaration belongs to nested
+`AccessCheckShape`; binding/return handling needs correction and runtime verification.
+Details in `docs/sf6-screens.md` under "Follow-up: independent exploration radar";
+hands-free free-exploration proposal in `docs/wt-radar-improvements.md`. Next: automatic
+contact/action diagnostics and a ladder/door probe alongside radar reliability fixes.
+Analysis/documentation only; no code changes, build or new in-game verification.
+
+**Earlier plan (2026-09-12):** **keep the radar, improve it** (user decision; a full redesign and any auto-walk / teleport were rejected). Plan in `docs/wt-radar-improvements.md`: Level 0 debt (one filter, B reuses the sample, capsule cast, mirrored sides), Level 1 every beacon follows the route + on-course ping, Level 2 real exits from navmesh link edges (`findMapHandle` bound by shape, bounded `NodeQueryInfo`, `queryLinkBoundaryEdge`) feeding the exit cue and "junction / narrow passage", Level 3 route-aware beams, Level 4 speech arbiter. Decide its open questions, then run experiments 1–2. Native leads from the stub sweep: `docs/sf6-screens.md` § "native navigation infrastructure leads".
 
 ## Identity
 - **Engine / framework:** RE Engine (Capcom), REFramework.NET C# plugin (net10.0), `SF6Access/Plugin.cs` entry, attribute + dynamic hooks.
@@ -33,6 +142,8 @@
 | Avatar — Special Moves / Super Arts equip | wip | Slot-usage announced (per-category slots, no cost system); verified in Avatar Arcade |
 | World Tour — navigation radar (spatial APIs) | wip | Ray API confirmed in game 2026-09-04 (`CastRayAll` + `TerrainRayFilter`). Feature SHIPPED but NOT yet verified in game: `WorldTour/FieldNavRadarHooks` (B = one-shot readout, Shift+B = continuous reactive mode) on `Services/WorldTour/FieldNavRadarService`. Front cues and both keys CONFIRMED working in game 2026-09-04; the sides never fired, root-caused by measurement (every sideways ray the game publishes reaches <=0.60 m) and fixed by casting our own segment via the free-form `CastRayAll(ref vec3, ref vec3, ...)` at the reach of `FRONT_LONG` -- still nine casts per sample. A front class change while still blocked now speaks too. **Pending test:** do the sides now fire at ~2 m in a corridor and on the correct side (not mirrored), does the free-form segment cast stay crash-free over a long walk, does B conflict with a World Tour keyboard action. **False positives fixed 2026-09-05 (UNVERIFIED):** the front verdict no longer comes from the ray height ladder -- it is read from the game itself (`Services/WorldTour/FieldNavVerdictService.cs`: `CollisionInfo.IsWallContact()`/`WallMovableRate` vs `AvatarConstMoveParams.DashMove_StopWallRate`, `CharacterController.Wall` as fallback, `AvatarCollisionCache.GetGoupStepInfo` for "the game will step over this", wall-ride route DISABLED 2026-09-06 after it crashed the game -- constructing the generic interface `IList<ContactedWallInfo>` produced a bogus managed wrapper whose finalizer raised AccessViolationException on the GC thread with a clean log; `NewInstance` now refuses interface/abstract/generic types); the rays now feed distance and description only. **Pending test (2026-09-05):** read the one-time log line `[SF6Access] NavRadar verdict routes: volatile=.., charaCtrl=.., goupStep=.., wallRide=.., stopWallRate=..` and report it -- it says which routes bound; then check that a waist-high wall that really stops the avatar is announced as blocked (was "open"), that kerbs/low fences the avatar climbs are NOT announced as walls, that walking along a wall no longer chatters open/closed, and that a stationary player pressed against a wall still reads as blocked (the `WallMovableRate` risk). **Continuous-mode open/closed cues replaced 2026-09-07:** the armed exit chime (`_exitArmed`/`ExitCheck`, `LongRangeClear`, the 2 m side feelers) is retired — see the PENDING IN-GAME VERIFICATION 2026-09-07 entry below for the new three-beam design and its checklist. **Beam anti-chatter, same day, second pass:** `NavBeams.Sample` now takes a `moving` flag (`FieldNavRadarHooks.Moved()`, avatar XZ displacement ≥ 0.05 m per sample) — while moving the FRONT beam never cues (tracks silently so a stop-and-turn scans from where it is) and any change on any beam must hold `MOVING_HOLD_SAMPLES` = 6 samples (1 s, vs. 2 standing) before cueing; session log showed open/close pairs half a second apart, 20 cues in one 14 s burst, all false positives. See `docs/sf6-screens.md` § World Tour -- spatial navigation APIs (§9 Front verdict / continuous-mode openings). **2026-09-08 rebuild for precision (tester: could never tell exactly where an exit was or where passage was really blocked):** new sensor `Services/WorldTour/FieldRayCaster.cs` casts with the avatar's OWN `CharacterController.FilterInfo` instead of the camera's `TerrainRayFilter`; a new always-on 4-tone bed (`NavToneBed.cs` + `NavProximityBed.cs`, NAudio, ported from the DRG/Megabonk wall-sonification synth) replaces silence-vs-event with silence-vs-continuous-tone; a NavMesh-based exit finder (`NavMeshOpenings.cs`) answers "where is the exit" with real gap widths (a ray-fan exit detector was tried and deleted — proven blind to distant narrow gaps and false-positive-prone at grazing angles by a standalone simulation). **`NavBeams.cs` (§9b, the four-beam open/closed design) is DELETED**, retiring `FieldNavRadarService.Beams()`/`BEAM_REACH_M`; the older ray-ladder + `FieldNavVerdictService` spoken front-verdict (§9) is unchanged. All new, compiles 0 errors, NOTHING verified in game — see "Built but not yet verified in game" below for the full checklist. **2026-09-08, second pass — the continuous mode IS now the RE7 radar:** the wall-sonification tone bed was a wrong turn and is gone; Shift+B runs `FieldRadarService` (event radar, three beams x three capsule heights, open/closed state machine, time-to-contact pitch, monotonic cadence) — see the dedicated entry below. **2026-09-08, later session — that RE7-style line-memory model retired in turn:** measured at 109 cues/90 s in Metro City (a city facade changes slope about once a second, which is a real event a line-break detector cannot filter, and a line break itself means "sees past the boundary", not "passage" — this is what produced the exit/blocked contradiction). `Services/WorldTour/FieldRadarLines.cs` DELETED, replaced by a body-clearance PASSABILITY model (`Services/WorldTour/FieldRadarClearance.cs`): per-beam STATE (`Unknown`/`Passable`/`Blocked`) from the waist body-width cast, not a remembered line, speaking only on a debounced state change; the spoken verdict and the cue channel now share one measured "blocked" boundary (`FieldNavSideRays.PublishedReachM`). `MESH_WAYS_ENABLED` still `false`. **PENDING IN-GAME VERIFICATION** — baseline to beat is the 36-cues/30 s measurement above; see the dedicated entry in "Built but not yet verified in game" and `docs/sf6-screens.md` § 9d |
 | World Tour — phone map | wip | Built 2026-09-07 from the F8 capture `sf6access_autodump_154237.txt` (lines 770-965): `Hooks/WorldTour/DeviceMapHooks.cs` + `Services/WorldTour/DeviceMapText.cs` on `app.UIFlowWTDeviceMap.MapParam`. Speaks the location + guide message on entry, then flow-state changes ("Map" / "Fast travel list"), the icon under the free cursor ("Beat Square, shop"), the highlighted fast-travel point ("name, 2 of 7") and the marker info panel. Icon kinds come from `ICON_TYPE` member NAMES mapped to nine family words (`wt.map.icon_*` in `lang/en.txt` + `es.txt`). **PENDING IN-GAME VERIFICATION** — checklist below. The world map (`app.UIFlowWorldMap`) is still untouched |
+| World Tour — map-selection aiming + route guidance | wip | Built 2026-09-09, **NOTHING VERIFIED IN GAME**. `Hooks/WorldTour/FieldTrackerHooks.cs` on `Services/WorldTour/{MapIcon, MapIconCatalog, TrackerSelection, TrackerButtons, FieldInputMask, BeaconDestination}.cs`. R3/V opens a modal list of everything the HUD minimap is showing (`app.UIMiniMapWindow.mIconInfoList`, real `IconInfo.GlobalPos` world positions); d-pad up/down or the arrows cycle targets nearest-first, L1/R1 or PageUp/PageDown cycle the game's own `ICON_GROUP_TYPE` categories. The chosen icon takes over the mission beacon; the game removing its icon is what triggers auto-retracking to the next of the same category. **Shift+V turns on `FieldNavPath`** (inert since 2026-09-08) so the beacon aims at the route's first corner. See `docs/sf6-screens.md` § World Tour minimap tracker + route guidance |
+| World Tour — multi-level routes (ladders) | wip | Built 2026-09-22, NOT verified in game. `LevelRoute` + `LevelRoutePlanner` + `LadderCatalog`: walk → ladder → walk when the objective's navmesh island is disconnected. `docs/sf6-screens.md` § multi-level routes |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
 
 ## Derived facts (so we never re-RE them)
@@ -57,6 +168,570 @@ records that survive a machine change.)
 - Shop Enhance/Dye side panes still unread.
 
 **Built but not yet verified in game**
+- **`ZoneNameService` now ENUMERATES the section table instead of looking it up by key, 2026-09-10.**
+  `CitySectionDataUserDataDict` is keyed by `ManageId`, which is not guaranteed to be the section id.
+  The old route asked `get_Item(sectionId)` and then cross-checked the record's own `id`; that check was
+  right to exist (handing back somebody else's district is worse than silence) but its consequence was
+  that whenever the two ids differ the route went mute. Every record is now read and filed under its own
+  `id`, so what the dictionary is keyed by stops mattering. New `FlowHelper.GetTableDict(string)` exposes
+  the dictionary for enumeration.
+
+  **Bounded by the table's own count.** There is still no safe way to walk an IL2CPP dictionary's
+  entries in this codebase — no helper exists and the enumerator is a struct — so keys are probed upward
+  with `ContainsKey` (by-value, returns bool) and the scan stops as soon as `get_Count` records have
+  been found. `KEY_PROBE_SLACK` = 8x the record count is only a spin guard; stopping early is logged,
+  not hidden. Built once per city, retried on the existing `EMPTY_RETRY_MS` beat while the table is
+  still loading.
+
+  **HONEST CAVEAT, stated before it was built:** the failure actually measured in game (2026-09-04) was
+  `CurrentSectionId=0, SectionInfoList count=0` — **no section at all**, so the table lookup was never
+  reached and this enumeration may fix nothing that was being suffered. It is robustness, not the
+  transformation it looked like. The sub-area announcements now come from
+  `Hooks/WorldTour/SectionNoticeHooks.cs` (the game's own banner), which sidesteps this table entirely.
+
+  **In-game verification checklist:**
+  - [ ] `Zone: CitySectionDataUserDataDict enumerated - N named sections from M of T records` — report
+        N, M and T. N=0 means the table is unreadable; M<T means the key probe stopped early and the
+        slack needs raising.
+  - [ ] Does the Z key still name the district correctly, and does it now name districts it used to be
+        silent about?
+- **Shop entry/exit announcements, 2026-09-10 (tester: "si entré con el personaje en la tienda, que el
+  lector diga tienda tal. si salí, saliendo de tienda tal").** `Hooks/WorldTour/ShopEntryHooks.cs`.
+
+  **The game announces it; nothing is inferred.** `app.worldtour.om.Om008000` calls
+  `CallShopInSoundTrigger()` / `CallShopOutSoundTrigger()` (`Om008000.cs:241/:244`) at exactly the
+  moments IT considers the player to have gone in and come out, so the announcement can never disagree
+  with the game's own idea of what happened. There is **no `IsInside`/`CurrentShop` member anywhere** —
+  searched — so hooking these is not the cheap route, it is the only honest one.
+
+  Dynamic hooks (`AddHook(false).AddPre`), `args[1]` as `this`, the shape `BattleInfoHooks` established.
+  The name comes from the instance's access target via `GetDispName()` — the same call
+  `AvatarFieldReader` has always used to name NPCs and objects, already localized, cleaned through
+  `FlowHelper.CleanTags`. **The hook resolves the NAME and lets the engine object go**; only a string
+  crosses to the next frame, and the speaking happens on the ordinary tick, never inside the hook.
+  Queued, not interrupting, and silent during dialogue.
+
+  **Known limit:** `Om008000` is documented as the BODY SHOP OM (`docs/sf6-screens.md` § 7). Whether
+  other shop kinds are other OM numbers with their own triggers is **not established** — if some shops
+  stay silent, that is why, and the fix is to hook their families too.
+
+  **In-game verification checklist:**
+  - [ ] `ShopEntryHooks initialized (enter=True, leave=True)` — both must be True.
+  - [ ] Walk into a shop: does it say "Entrando en <name>", with the same name the map shows?
+  - [ ] Walk out: "Saliendo de <name>"?
+  - [ ] Do any shops stay silent? Name them — that tells us which OM families are missing.
+- **Sub-area announcements, 2026-09-10 (tester asked: "algo que nos pueda leer subzonas... salón,
+  restaurante, calle tal").** `Hooks/WorldTour/SectionNoticeHooks.cs` speaks
+  `app.UICityHud_SectionNotice.mTextSection` — the game's OWN on-screen banner, already localized and
+  already worded ("Hong Hu Lu Chinatown - Calle principal"), announced once per change and queued rather
+  than interrupting. The game decides when a crossing counts, so nothing is inferred. Full survey of what
+  the game does and does not model in `docs/sf6-screens.md` § naming WHERE THE PLAYER IS.
+
+  **Street names and intersections DO NOT EXIST in SF6** — searched the whole tree; the only `Street` is
+  a battle type. Recorded so it is never hunted again. "Cruce entre X e Y" could only ever be our own
+  synthesis.
+
+  **Two leads NOT yet built, both high value:** interiors are nameable via
+  `GUIAccessDataManager.GetWTCityOMSetterData_OM(OMType.Shop)` → `WTCityOMSetter.GetDispName()`, with the
+  game's own enter/exit in `Om008000.CallShopInSoundTrigger/CallShopOutSoundTrigger`; and
+  `CitySectionDataUserDataDict` is ENUMERABLE, which likely fixes `ZoneNameService`'s keyed lookup +
+  `ManageId` cross-check (`ZoneNameService.cs:130`) that can reject good records — a plausible cause of
+  the `CurrentSectionId=0` reading measured 2026-09-04.
+
+  **In-game verification checklist:**
+  - [ ] `Section notice: app.UICityHud_SectionNotice found in the scene` — if absent, the component is
+        not reachable and this whole route is dead.
+  - [ ] Walking between named parts of a district: does it speak them, once each, at the right moment?
+  - [ ] Is the wording the same as the banner on screen?
+- **Getting the player to an objective on a disconnected navmesh island, 2026-09-09.** Two independent
+  mechanisms, both aimed at the tester's blocker ("con el radar no encuentro forma de llegar hasta ahí").
+
+  **1. Route to the ACCESS POINT, not the object's origin.** `ProgressMisionInfo.AccessTarget`
+  (`UICityHud_MissionGuide.cs:195`) → `AvatarAccessTargetBase.GetNearPos(ref vec3, Transform, ref vec3)`
+  (`AvatarAccessTargetBase.cs:467`) is the game's own "where must the player stand to interact".
+  `Services/WorldTour/AccessPointReader.cs`; `MissionTargetService.FindFromGuide` prefers it. The mod had
+  been routing to object origins all along — close enough for a street NPC, meaningless for one on an
+  upper floor. Refused if further than `5 x ARRIVED_M` from its own target (a misread), and any failure
+  falls back to the transform, so it cannot regress.
+
+  **2. `Services/WorldTour/ApproachFinder.cs` — when the objective genuinely cannot be walked to, guide
+  to the nearest place that can.** Candidates in order of increasing distance, so the first that routes
+  is the closest: the objective projected straight DOWN to the player's height (the street beneath it —
+  the answer nearly every time), then two rings of `FieldHeadingService.SECTORS` = 8 points at
+  `2 x ARRIVED_M` and `4 x ARRIVED_M`. All radii and counts come from vocabulary this mod already uses.
+
+  **The call pattern is unchanged, and that is the point.** Exactly ONE `queryPathSync` per resolve in
+  every branch. When the objective is known unroutable the beacon SPENDS that query on a probe instead
+  of re-asking the same failing question once a second — so the search is free and never runs two
+  queries in a frame. **That is the rule the 15:07 crash bought**: the earlier attempt re-ran the query
+  into the SAME `PathQueryReport` inside one call. Each probe here is an ordinary `TryReach` with its
+  own fresh report and its own rate limit.
+
+  **The player is told the truth about it.** A stand-in is not the objective: R3 says "Hacia el pie de
+  X" rather than "Hacia X", and ARRIVING says "Al pie de X. Está N metros por encima de ti" instead of
+  "At the objective" — which, at the foot of a building the objective sits on top of, would be the
+  mod's worst kind of lie.
+
+  **In-game verification checklist:**
+  - [ ] `Approach: probe N of 17 reached (x, y, z) - guiding there instead of the objective` — report N
+        and the coordinates. Probe 1 is the ground directly below; if that is the one, the whole idea
+        works and the rest of the ring never runs.
+  - [ ] `Approach: no reachable stand-in within 16 m ... after 17 probes` means even the wide ring
+        failed, and the objective's surroundings are not walkable at all.
+  - [ ] `Access point: bound GetNearPos on ...` / `access point is N m from the target`.
+  - [ ] Does the beacon now actually walk you to the foot of the upper-floor objective, with the
+        distance counting down?
+  - [ ] Does guidance to ordinary street objectives still behave exactly as before? Both mechanisms are
+        no-ops when the objective routes normally, so any change there is a regression.
+- **The mission beacon now routes to the ACCESS POINT, not the target's own origin (2026-09-09).**
+  This is the answer to "me pide llegar a un objetivo pero según tú no hay camino", and the diagnosis
+  that found it is the reason two prepared fixes were thrown away unbuilt.
+
+  **What the log proved.** 69 identical verdicts: `PathNotFound (startNode=<varies>, destNode=10421)`.
+  The destination **resolved to a real navmesh node** — it is NOT off-mesh — and simply had no walkable
+  link to the player's node. The objective sits on a **disconnected island of navmesh**: an upper floor
+  or roof reached through a door, lift or scripted transition the navigation graph does not model.
+  **This killed both candidate fixes before they were written**: snapping the point to the mesh (it was
+  already on it) and widening `EndNodeSearchRange` (the node was found first try). Neither could ever
+  have worked, and both would have cost a test session and mutated a borrowed NPC's component.
+
+  **"Route to the entrance" is not possible either, and that is now recorded.** World Tour does not
+  model doors or transitions: `WTAreaManager` areas are streaming cells keyed by name hash with no
+  geometry (`WTAreaManager.cs:135-160,1573`), `CitySectionManager` is districts only, there is no
+  `*Door*`/`*Elevator*`/`*Stairs*`/`*Indoor*` type anywhere under `app.worldtour.*`, and no OM carries
+  an entrance classification. `isNearActiveArea(vec3, ref IList<uint>)` (`:1630`) is a by-ref REFERENCE
+  parameter — forbidden. A mission target record carries no area id, no section id and no approach
+  position (`WTMissionDefine.cs:659`, `WTMissionSystem.cs`).
+
+  **What the game DOES publish: `ProgressMisionInfo.AccessTarget`** (`UICityHud_MissionGuide.cs:195`) →
+  `AvatarAccessTargetBase.GetNearPos(ref vec3 outPos, Transform tr, ref vec3 searcherPos)`
+  (`AvatarAccessTargetBase.cs:467`) — "the nearest access position to this searcher", i.e. **where the
+  player must stand to interact**. `Services/WorldTour/AccessPointReader.cs` reads it and
+  `MissionTargetService.FindFromGuide` now prefers it over `TargetObject.Transform.Position`.
+
+  **This is a better destination in every case, not a patch for the island one** — the mod has been
+  routing to object origins all along, which merely happened to be close enough for street NPCs. The
+  two by-ref parameters are VALUE types, handled with the `FieldOutBuffer` contract this mod has always
+  used for `castRayAll(ref vec3, ref vec3, ...)`; nothing by-ref is a reference type and nothing is
+  constructed per call.
+
+  **It cannot regress anything:** an access point further than `5 x ARRIVED_M` from its own target is
+  treated as a misread and refused, and any failure falls straight back to the transform — the exact
+  behaviour that shipped before.
+
+  **Also fixed:** the no-route log line printed the `DestNodeNotFound` explanation regardless of the
+  actual verdict, so it asserted "the destination is off the navmesh" underneath a `PathNotFound` that
+  meant the opposite. The explanation now follows the verdict.
+
+  **Breakable beacon, cost corrected:** in game it found `250 intact of 250 scanned across 3 of 5
+  families` and read the state correctly (`Om001000.State.Destroyed = 1 (byte)`). But 250 props at ~7
+  engine calls each every 1.5 s is over a thousand calls a second — the order of magnitude that has
+  crashed this mod. `RESCAN_MS` raised 1500 -> 4000.
+
+  **In-game verification checklist:**
+  - [ ] `Access point: bound GetNearPos on ...` then `access point is N m from the target` — report both.
+        "not found" means the objective publishes no access target and nothing changed.
+  - [ ] Does the beacon now route to the upper-floor objective (a real `Exist=True` with a distance that
+        counts down), instead of `PathNotFound`?
+  - [ ] Does guidance to ordinary street objectives still behave exactly as before?
+- **"No route" is now DIAGNOSED instead of assumed, 2026-09-09.** The tester's intuition — "creo que el
+  objetivo sí es alcanzable, solo hay que mirar un poco mejor" — has a mechanism behind it, and the
+  engine already answers the question. `PathQueryReport.FailReport` (`PathQueryReport.cs:24`) carries
+  `isFailed(FailAttribute)` (`FailReport.cs:157`) over
+  `{DestPosNotSpecified, StartNodeNotFound, DestNodeNotFound, PathNotFound, PathfindInterrupt}`
+  (`:114`), plus `StartNodeID`/`DestNodeID` (`:138/:144`).
+
+  **`DestNodeNotFound` = the destination point is not ON the navmesh** (a roof, a walkway, inside
+  geometry) — our problem to solve. **`PathNotFound` = it is on the mesh and genuinely cannot be
+  reached** — the game's answer, to be respected. The mod was treating both as "fall back to a straight
+  line". `FieldNavPath.Diagnose` now logs which, once per distinct verdict. **Every call is a by-value
+  read on a report already owned: zero new risk**, which is the point after two crashes today.
+
+  **What was NOT done, deliberately.** There is **no** "snap a point to the navmesh" API for a
+  `NavigationSurface`: `queryClosestNode` lives only on `MapHandleBase` (`:379/:382`) and the only
+  producers are `AIMap.findMapHandle` (FORBIDDEN, crashed the game) and the statics
+  `NavigationManager.findMapHandle(string)` / `findMapHandleByFlag(uint)` (`:228/:234`) — shape-safe,
+  but the RE could not tell from the stubs whether they share the crashing native path, so it is not
+  being tried on a guess. `PathQueryInfo` (`PathQueryInfo.cs:11-35`) has only `FilterTarget`,
+  `FilterGroup`, `InterruptDist`, `ShowFailedWarning` — **no "allow nearest" flag**. None of the six
+  `queryPathSync` overloads (`NavigationSurface.cs:556-571`) has a by-ref reference type, so all are
+  shape-legal if ever needed.
+
+  **The candidate fix, held until the diagnosis comes back:** widen the engine's own end-node search
+  with `NavigationSurface.setEndUnderSearchLength(float)` (`:574`),
+  `setUnderSearchSettingType(...)` (`:580`), `Navigation.EndNodeSearchRange` (`:1107`),
+  `NoEndNodeSearch` (`:1099`) and especially `TryPossibleNearNavigation` (`:1115`). Float/enum setters
+  on a live component — shape-safe, and inside types already held. Two caveats that must be honoured:
+  it mutates a BORROWED NPC's component (restore the previous value), and whether `queryPathSync`
+  honours these is not determinable from the stubs.
+
+  **In-game verification checklist:**
+  - [ ] `NavPath no route because: <reason> (startNode=..., destNode=...)` — report the reason verbatim.
+        `DestNodeNotFound` means the objective is reachable and we are asking the wrong question;
+        `PathNotFound` means it really is not walkable and the mod should say so and stop trying.
+
+- **Breakable beacon, precedence and cadence fixed the same day.** The first version yielded to
+  `MissionBeaconHooks.Homing` — which is true whenever an objective is active, i.e. nearly always — so
+  the cue was silent almost all the time ("no me indica mucho"). That yield is removed: the two are
+  different tasks with different sounds, and the objective is usually far while the crate is at arm's
+  reach. Only the NPC beacon still stands down. The cadence gradient now spans `RANGE_M * 0.6` instead
+  of the full 25 m, so the speed-up is spent on the stretch where the player is actually closing in.
+- **Breakable-object beacon, 2026-09-09 (tester: "para avanzar necesito romper unos carteles").** A
+  looping homing pulse on the nearest INTACT breakable street prop, using the tester's own
+  `sounds/breakable object.mp3`. `Services/WorldTour/BreakableCatalog.cs` +
+  `Hooks/WorldTour/BreakableBeaconHooks.cs`.
+
+  **The type is `app.worldtour.om.Om001000 : WTCityOM : Behavior`** (`Om001000.cs:10`) — the World Tour
+  smashable, carrying `Vital` (`:150`), `EventDestroy` (`:254`) and the state below. Asking
+  `via.Scene.findComponents` for that CONCRETE type returns only breakables, so no name filter is needed
+  (unlike the tutorial panels). Four sibling destructible families are scanned alongside it:
+  `Om039000` (`State : byte`), `Om021000` / `Om038000` (`IsDestroyEnd` bool), `Om028000` (`Vital` float).
+
+  **"Already broken" is `Om001000.CurrentState`, type `State : byte { Default, Destroyed }`**
+  (`Om001000.cs:115-119,158`) — **ONE BYTE**. An int read would drag in the neighbouring bytes; the
+  `Destroyed` value is resolved from the TDB BY NAME at byte width via
+  `FieldProbeService.ReadEnum(..., byteWidth: true)`, never written as a literal. `IsDefaultState`
+  (`:238`) is deliberately unused — a getter-only property, which does not dispatch on concrete types.
+
+  **A family whose state cannot be read is DROPPED, never assumed intact.** A cue over rubble is worse
+  than no cue: it would send the player to smash something that is not there, repeatedly, with no way to
+  tell the mod is wrong. Each family logs its verdict once.
+
+  **Deliberately NOT following the RE advice to cache component handles between frames.** That is the
+  wrapper-lifetime crash this mod has already paid for twice. The scene is re-scanned every
+  `RESCAN_MS` = 1500 ms and each prop is copied into a plain struct immediately; props do not move, so a
+  cached position stays true and a broken one simply vanishes on the next scan.
+
+  **Precedence is now mission > breakable > passer-by.** `FieldBeaconHooks` gained one line yielding to
+  `BreakableBeaconHooks.Homing`, mirroring how it already yields to the mission beacon. Three cues, three
+  distinct sounds.
+
+  **Known gap:** the crate-vs-ball-vs-sign distinction is NOT determinable from the stubs — `Om001000`
+  covers them all and its sub-variant is not exposed. The cue is therefore the same for every kind, and
+  nothing is spoken. `WTOmAccessTarget.GetDispName()` (`WTOmAccessTarget.cs:450`) is the route if a
+  spoken name is ever wanted.
+
+  **In-game verification checklist (nothing below has run):**
+  - [ ] `Breakables: N intact of M scanned across K of 5 families` — report N, M and K. K=0 means no
+        family bound and nothing will ever pulse.
+  - [ ] `Breakables: app.worldtour.om.Om001000.State.Destroyed = 1 (byte)` — if it says "not found",
+        the main family is being skipped and that is the bug to chase.
+  - [ ] Does a pulse lead to a breakable sign/crate, and does it STOP when you smash it (within ~1.5 s)?
+  - [ ] Does it stay silent while the mission beacon is pulsing, and does the NPC beacon stand down
+        while a breakable is in range?
+- **CRASH ON THE WORLD TOUR LOADING SCREEN, 2026-09-09 15:07 — caused by the mod, and REVERTED.**
+  The log stops dead with no shutdown sequence, one line after a change made minutes earlier:
+  ```
+  step 4: calling queryPathSync ... to (-229.26, 12.18, -104.32)
+  step 4: no route to (...); asking again at the player's own height 0.00   <- the new retry
+  step 5: reading PathQueryReport.Exist / PathInfo
+  step 5: calling PathInfo.createTraceLine()
+  step 6: reading calcDistance / PathPointCount / getPathPointInfo(i)
+  <end of file>
+  ```
+  **Cause: re-running `queryPathSync` into the SAME `PathQueryReport`.** Until that change a failed
+  query (`Exist=false`) produced `points=0` and was harmless — earlier logs show exactly that, repeatedly,
+  with no crash. The second query evidently leaves the report's `PathInfo` in a state that
+  `createTraceLine` and the point reads cannot survive. **If the "objective is on a roof" case is worth
+  solving, it needs a FRESH report per query and it must be proven before it ships.** The retry is gone
+  and the reason is recorded in `FieldNavPath.TryReach` so it is not re-attempted casually.
+
+  **`FieldNavFunnel.cs` was ALSO removed — but note it was wrongly blamed first.** The initial diagnosis
+  (hundreds of `getPortalEdgeInfo` wrappers per second flooding the GC thread) was plausible and WRONG:
+  the crash log contains only 8 `NavPath step` lines in total, no flood of any kind. The funnel is gone
+  because it was an unproven theoretical improvement on a path that already worked, shipped without a
+  failure to justify it — not because it was shown guilty. The algorithm and the reasoning are in
+  `docs/sf6-screens.md` § 3 if it is ever wanted, but it must not return without a measured need.
+
+  **What survives:** the camera aim (proven: a real 151 m -> 67 m guided walk), the map-selection
+  capture, and `BeaconDestination.NoRoute` + the spoken "no hay ruta a pie" — which costs no extra
+  engine call, only reporting what the first query already answered. That is the whole point: the player
+  is told the difference between a way and a bearing.
+
+  **Standing lesson for this mod, third time it has bitten:** a change that adds an engine call inside an
+  existing sequence must be justified by a failure the tester is actually suffering, and must be proven
+  before the next one is stacked on top of it.
+
+  **In-game verification checklist (nothing below has run):**
+  - [ ] Does World Tour load at all now? That is the only question that matters this round.
+  - [ ] Does R3 still guide the way it did in the 151 m walk?
+  - [ ] On the rooftop objective, does it now say "no hay ruta a pie" rather than crashing or marching
+        into a wall?
+- **FOURTH IN-GAME PASS, 2026-09-09 14:50 — the camera aim WORKS, and the wall-bumping was a different
+  bug entirely.**
+
+  **Camera aiming is FIXED and proven.** `Camera aim calibrated: yaw is CurrentRotation.y in radians`
+  and then a real guided walk: `Aimed at 'objetivo' (151 m ... 139 ... 120 ... 98 ... 79 ... 67 m, via
+  the route's next bend)` — the distance counts steadily down, which is a player being led along a
+  route. The fix was `Field.GetDataRaw(objAddr, false)` for the live field address; see
+  `docs/sf6-architecture.md` § gotchas, "To WRITE a struct field on a live object".
+
+  **The walls: the objective was TWELVE METRES UP and there is no route to it.**
+  `step 4: ... to (-229.26, 12.18, -104.32)` → `Exist=False; points=0`, then
+  `Aimed at 'objetivo' (22 m, straight line)`. A rooftop / upper floor / walkway. The navmesh answered
+  correctly; the MOD was at fault — it treated "no route" as "fall back to the straight line" and
+  confidently pointed the player at the foundations of the building. **Silently.** Two fixes:
+  1. `FieldNavPath.TryReach` now RETRIES the query with the destination projected to the player's own
+     height when the first answer is `Exist=false` and the target is more than one navmesh AGENT HEIGHT
+     above them. The route to the foot of the building is genuinely useful and is where the way up is.
+  2. `BeaconDestination.NoRoute` is a new state, and R3 now SAYS "No hay ruta a pie hasta X" instead of
+     pretending. A bearing is still given, because a direction beats nothing — but the player is told it
+     is a direction and not a way.
+
+  **Also added: a proper funnel** (`Services/WorldTour/FieldNavFunnel.cs`). `PortalPos` is a point on an
+  EDGE, so a straight line to it cuts corners by luck of the geometry; the simple-stupid-funnel string
+  pull returns a corner reachable in a straight line BY CONSTRUCTION. The old straight-run aim remains
+  as the fallback when the portal edges cannot be read. **Not the cause of the reported bug** (the
+  successful walk above used the old aim), so it is an improvement on principle, not a fix — watch for a
+  regression on routes that previously worked.
+
+  **Note:** `createTraceLine()` ran again and again changed nothing measurable. Still unexplained.
+
+  **In-game verification checklist (nothing below has run):**
+  - [ ] An objective on a ROOFTOP or upper floor: does R3 now say "no hay ruta a pie" instead of walking
+        you into a wall? And does the retry at ground level find a route to the building's foot?
+  - [ ] Do routes that already worked (the 151 m walk) still work with the funnel in place? A regression
+        here means the funnel's left/right derivation is wrong.
+  - [ ] `NavPath step 4: no route to (...); asking again at the player's own height` — does it appear,
+        and does the second query then succeed?
+- **Map-selection aiming replaces the minimap radar, 2026-09-09 (third pass).** User decision after two
+  test sessions: *"quitemos lo del radar y hagamos que R3 me apunte el personaje hacia la dirección del
+  punto que esté seleccionado en el mapa, sea misión, marcador propio, npc o lo que sea."*
+
+  **DELETED:** `Services/WorldTour/{MapIcon, MapIconCatalog, TrackerSelection, TrackerButtons,
+  FieldInputMask}.cs` and `Hooks/WorldTour/FieldTrackerHooks.cs` — the whole modal radar. Reason: its
+  icon source could never be reached. Neither `app.UIMiniMapWindow` NOR its owner
+  `app.UICityHud_CityMiniMap` turns up in `via.Scene.findComponents`, confirmed in game twice
+  (`Map icon catalogue: the live app.UIMiniMapWindow was not found in the current scene`), even though
+  `app.UICityHud_MissionGuide` is found that way and always has been. **Unexplained, and still open** —
+  it is also why the compass has been running on a guessed +Z axis since 2026-09-05
+  (`Heading: north from fallback axis`).
+
+  **NEW:** `Services/WorldTour/MapSelectionMemory.cs` (the phone map's cursor selection, kept as plain
+  floats so it outlives the map closing), `Services/WorldTour/CameraAimService.cs`, and
+  `Hooks/WorldTour/MapAimHooks.cs` (**R3 / V** = face the selection; **Shift+V** = route guidance
+  on/off). The capture is a single line in `DeviceMapHooks.AnnounceCursorIcon` — every kind of thing on
+  the map arrives through that one branch, including the player's own pins, since the game builds a
+  pin's icon with `MakePinIconInfo` and so its `IconInfo.GlobalPos` is the pin's own position.
+  `BeaconDestination` now resolves the map selection instead of a tracker target, so the beacon guides
+  to it for the whole walk.
+
+  **Aiming turns the CAMERA, not the avatar** (`WTFollowCameraController.CurrentRotation`, a `via.vec3`
+  euler field, `WTFollowCameraController.cs:20`): World Tour movement is camera-relative, so turning the
+  avatar would leave "forward" pointing the old way — and the avatar's own rotation is rewritten every
+  frame by `AvatarFieldParam_Common.ApplyDefaultRot` anyway. Held for 4x `CameraHoldService.HOLD_MS`
+  because the follow layer interpolates. **Which euler component is the yaw, and whether it is radians
+  or degrees, is NOT in the stubs and is NOT guessed**: both are derived at runtime by comparing every
+  component, both units and both signs against the camera's demonstrable bearing from
+  `GetCameraForward()`, and the write is read back to prove it landed. If nothing matches or the write
+  is a copy, the service reports unavailable and the key SPEAKS the clock direction instead — a press
+  never produces silence, and a wrong guess never spins a blind player's camera somewhere arbitrary.
+
+  **PATHFINDER: CONFIRMED WORKING IN GAME 2026-09-09, and the bug was mine.** The borrowed-NPC agent
+  resolved (`hasValidMap() on agent 1 of 19`) and `queryPathSync` returned real routes — `Exist=True`
+  with 65 / 12 / 2 points, and a correct `Exist=False` for an objective 12 m up a building. What made it
+  useless: **the path points are dense SAMPLES, not corners** — 65 points for a 19 m route, one every
+  30 cm — and the aim took the first point past the agent radius, i.e. about a metre ahead, at a
+  position dominated by the trace's initial wiggle. In the logged case the destination was 19 m to −X
+  and the chosen point was 1 m to +X, so the beacon panned the player at their next footstep, sometimes
+  behind them. That is the reported "it leads me into a wall". `FirstCorner` is replaced by `AimPoint`,
+  which walks outward extending a straight RUN and aims at its far end — "same bearing" = within half a
+  clock hour (finer than can be spoken), "far enough" = `MissionBeaconHooks.ARRIVED_M`. It stops as soon
+  as a straight run is long enough, so it reads about a dozen points instead of 65.
+  `FieldNavPath.Enabled` now defaults to **true** (kill switch still on Shift+V).
+
+  **SECOND IN-GAME PASS, 2026-09-09 — two verdicts.**
+  1. **Camera aiming NEVER WORKED:** `Camera aim unavailable: no euler component matched the camera's
+     actual bearing`, and `Could not aim ...; spoke the bearing instead` **17 times**. So R3 only ever
+     spoke a direction. The approach was wrong in principle — comparing a component against the camera's
+     ABSOLUTE bearing requires the two to share a zero and a winding direction, which nothing promised.
+     `CameraAimService` is rewritten to calibrate DIFFERENTIALLY (which component changes in proportion
+     to the heading changing, over two independent turns) and to apply the aim as a DELTA, which needs
+     no absolute mapping and is recomputed every frame so the turn converges. Needs a second or two of
+     the player turning the camera before it can aim; until then it speaks, as before.
+  2. **The path points were being misread, and THIS was "it leads me into a wall".** `PortalPos` is a
+     PORTAL CROSSING — the boundary between two navmesh polygons, positioned somewhere along an EDGE —
+     not a waypoint; the count is one per polygon, not a 30 cm sample spacing (the note previously
+     recorded here). Raw, two completely different destinations produced nearly the same bearing because
+     both were the same few edges around the player's own polygon. The missing step is
+     `PathInfo.createTraceLine()` (`PathInfo.cs:307`, zero params, void), the string-pulling pass that
+     turns the corridor into a route; it now runs before any point is read, and points flagged
+     `IsSkiped` are skipped. Full detail in `docs/sf6-screens.md` § 3.
+
+  **Confirmed WORKING in that pass:** the map-selection capture (`Map selection: 'Beat Square, viaje
+  rápido' at (-36.0, 0.1, -110.0)` — shops, NPCs and fast-travel points all captured with real world
+  coordinates), R3 binding (`MapAimHooks: R3 = 2000`), and the map pick reaching the pathfinder (a
+  228 m query to the chosen shop).
+
+  **THIRD IN-GAME PASS, 2026-09-09 14:05 — the differential calibration WORKS, the write did not.**
+  `Camera aim calibrated: yaw is CurrentRotation.y in radians (a -26.9 deg turn moved it by -0.469)` —
+  and -26.9 x pi/180 = -0.4695, so the measurement is exact. `Aimed at 'objetivo' (127 m, via the
+  route's next bend) using CurrentRotation.y in radians` then fired **nine times** with the read-back
+  check passing every time. **And the camera never moved.**
+
+  **Root cause: the write went to a COPY, and the verification was reading that same copy.**
+  `FieldProbeService.Member` tries the untyped GETTER first, and a getter returning a struct returns a
+  copy of it; writing to the copy succeeds and reading it straight back returns exactly what was
+  written. The check proved nothing. `CameraAimService` now resolves the `CurrentRotation` FIELD
+  directly (walking up to `WTFollowCameraController`, where it is declared) and reads it with the
+  CONTROLLER as the container, which is what yields an address inside the live object; the write is then
+  verified against a **freshly obtained** view rather than the wrapper it was written through.
+  **A read-back through the same wrapper is not a verification** — worth remembering mod-wide.
+
+  **`createTraceLine()` ran and changed NOTHING measurable.** `NavPath step 5: calling
+  PathInfo.createTraceLine()` appears, and the resulting aim `(-222.43, 0.17, -118.20)` with `points=65`
+  is byte-identical to the value the same route produced before string-pulling existed. Either the
+  optimisation is already applied by `LineOptimizeTiming`, or its result is published somewhere other
+  than `PortalPos`. **Unresolved.**
+
+  **Open question, not yet answerable:** the route reports **127 m walked to an objective 19 m away in a
+  straight line** (a 6.7x detour), and that objective's `y` is 3.09 — three metres up. That may be
+  entirely correct (a target on a walkway genuinely needs a long way round) or may mean the route is
+  wrong. It cannot be told apart until the camera actually turns and the route is walked.
+
+  **In-game verification checklist (nothing below has run):**
+  - [ ] **Does the camera visibly turn now?** That is the whole test. The log will say
+        `Aimed at ...` either way — only the player can say whether the view moved.
+  - [ ] If it still does not: look for `writing CurrentRotation.y does not reach the live controller`,
+        which is the new honest failure and means the field write itself is refused.
+  - [ ] Once it turns: walk the route and report whether the 127 m detour was real.
+  - [ ] `Camera aim calibrated: yaw is CurrentRotation.<x/y/z> in <unit>` — the single line that says
+        whether R3 can turn at all. It should appear within seconds of moving the camera.
+  - [ ] `NavPath step 5: calling PathInfo.createTraceLine()` — and then does the step-7 aim finally lie
+        in the direction of the destination rather than sideways?
+  - [ ] Open the phone map, put the cursor on something, close it. Log: `Map selection: '<name>' at
+        (x, y, z)`. Does the position look like a real world coordinate?
+  - [ ] Press R3 (and V). Either `Camera aim: yaw is CurrentRotation.<c> in <unit>` followed by a real
+        turn, or `Camera aim unavailable: ...` and a spoken clock direction. **Report which**, and the
+        exact line — that line is the answer to the one thing the decompiled code could not tell us.
+  - [ ] After aiming, does holding the stick forward actually walk toward the thing?
+  - [ ] Does the mission beacon now pulse toward the map selection instead of the story objective, and
+        say "En <name>" (not "objetivo") on arrival?
+  - [ ] With route guidance on (default), does the beacon's direction now change sensibly as you walk —
+        rather than pointing a metre ahead? Log `NavPath step 7: ... aim (x,y,z) vs avatar (x,y,z)`:
+        the aim should now be metres away, not centimetres.
+  - [ ] Shift+V still toggles route guidance and says so.
+- **Minimap tracker + route guidance, 2026-09-09 — ALL NEW, NOTHING HAS RUN IN GAME.** User request:
+  "a radar that tracks things on the player's minimap, R3 or V, d-pad up/down to cycle, R1/L1 to change
+  category, and use the pathfinder so the beacon takes you there — and keep tracking the same category
+  automatically once the player does whatever removes that thing from the radar."
+
+  **What it reads.** `app.UIMiniMapWindow.mIconInfoList : IDictionary<eUpdateTargetType,
+  IconInfo_Array1D>` (`UIMiniMapWindow.cs:260`) bounded by `mInfoCount` (`:268`) — the arrays are
+  REUSED BUFFERS, so entries past the count are stale. Each `IconInfo` gives `TitleText` (already
+  localized), `Type`, `GroupType`, `UniqueIndex` (**int**) and `GlobalPos` (the real world position).
+  The live window comes from `FieldHeadingService.MiniMapWindow()` — now the mod's single search for
+  it, shared with the compass. Full table in `docs/sf6-screens.md` § World Tour minimap tracker.
+  **First IL2CPP dictionary read in this codebase**: `ContainsKey` + `get_Item`, never `TryGetValue`
+  (its out parameter is a reference type — the documented crash family); keys taken from the enum, not
+  by enumerating the dictionary. Icon structs are read with `FlowHelper.Call(array, "Get", i)` and
+  `FieldProbeService.Member`, NOT `GetListItem` (which casts to `ManagedObject` and would return null
+  for every struct element), and copied into a plain `MapIcon` immediately — no engine wrapper is kept
+  across frames.
+
+  **Auto-retracking is free, and that is the design.** No per-category "done" flag was needed or found
+  (none exists on `IconInfo` or `CityPointDataInfoBase`): the GAME removes an icon from the minimap
+  when the player consumes it, so the tracker simply notices its pinned `UniqueIndex` stopped appearing
+  and moves to the nearest remaining icon of the same category. Both cursors are pinned by identity,
+  never by list index, because the list is re-sorted by distance every poll — and that identity is the
+  COMPOSITE `MapIcon.Key` (`GroupType/Type/UniqueIndex/TitleText`), **not `UniqueIndex` alone**: only
+  `MakePinIconInfo` takes a unique index, so it may be 0 for every shop and mission, which would make a
+  whole category read as a single target (cursor stuck, auto-retracking dead). Worth confirming in game
+  what `UniqueIndex` really holds for a non-pin icon.
+
+  **Input is taken with the game's own lock, not a hook**:
+  `app.InputManager.RequestMaskLowerAndEqualLayers(InputLayerPriority.Action)` (`InputManager.cs:1524`),
+  the same mechanism the phone UI uses. **`RequestMaskLowerLayers` was the first attempt and is wrong**
+  — the enum is `UI=0 ... Action=3, Other=4` and "lower" means lower PRECEDENCE, so it would have
+  masked only `Other`, left the avatar walking, and logged success anyway. It lasts
+  ONE FRAME and is re-requested every frame, so it fails safe — if the mod stops ticking the player's
+  controls come back next frame and they can never be locked out. The press that OPENS the list still
+  reaches the game (`ACT_RSB` etc. are real field slots); every press after it is the tracker's.
+  Button bits are resolved from `via.hid.GamePadButton` BY MEMBER NAME (`RStickPush`, `LUp`, `LDown`,
+  `LTrigTop`, `RTrigTop`), so no hex is written into mod code.
+
+  **The category cycle starts on "mission objective"** (a documented -2 sentinel, the one literal in
+  the feature — `ICON_GROUP_TYPE` is non-negative), which tracks nothing. That is deliberate: the
+  tracker must never take the mission beacon over on its own, and cycling back to it is how the player
+  hands the beacon back. Every session and every city load starts there.
+
+  **`FieldNavPath` now has a caller and a live switch.** `PATHFINDER_ENABLED` became
+  `FieldNavPath.Enabled` (default OFF, toggled by **Shift+V**), so a session that starts misbehaving is
+  rescued without a rebuild. `BeaconDestination` keeps the AIM point (the route's first corner) apart
+  from the DESTINATION (distance, ping cadence, arrival) — measuring arrival against a corner would
+  announce "you are here" at every turn. `FirstCorner` no longer trusts path point 0: it walks the
+  points and takes the first one farther from the avatar than the navmesh agent's own `AgentRad`, which
+  settles the open "is point 0 the start or the first turn" question without having to answer it.
+
+  **Cost while idle is zero by construction.** The catalogue is only read when the list is open or the
+  player has cycled off the default category, so a normal World Tour session never walks the scene for
+  the minimap component — this mod has been taken down twice by per-frame wrapper churn finalizing on
+  the GC thread, and the tracker must not be a third.
+
+  **Reviewed adversarially before shipping, five real defects found and fixed** (the input mask above;
+  the `UniqueIndex` pin above; `TrackerButtons.Reset` zeroing its edge state, which made a still-held
+  R3 read as a second press and slam the list shut on the frame after it opened; arrival announcing the
+  MISSION objective on reaching a tracked shop; and the idle scene walk).
+
+  **FIRST IN-GAME PASS, 2026-09-09 — no crash, and two root causes found.** Shift+V did NOT crash the
+  game: `queryPathSync` is safe to reach for. But the beacon did not change, and the log said why.
+  1. **`NavigationSurface` is an AGENT, not the navmesh, and the player has none.** `NaviSurface` null
+     and `getComponent(NavigationSurface)` null, once a second for two minutes, so `TryReach` returned
+     "no answer" and the beacon fell back to the straight line silently. Fixed by BORROWING a navigating
+     NPC's agent from the scene (first with `hasValidMap()` true, never cached). Details in
+     `docs/sf6-screens.md` § 3.
+  2. **The minimap window is not a scene component**, so the icon catalogue was empty all session
+     (`Nada en todo` on every category) — and the same bug had been quietly feeding the compass a
+     GUESSED north since 2026-09-05 (`Heading: north from fallback axis`). It is owned by
+     `app.UICityHud_CityMiniMap.MiniMapWindow` (`UICityHud_CityMiniMap.cs:7,27`); `UICityHud_*` IS
+     findable in the scene, which is why `MissionGuideReader` always worked. Details in
+     `docs/sf6-screens.md` § 2b.
+
+  **Confirmed WORKING in that pass:** the modal itself, the pad buttons (`R3=2000, up=1, down=2,
+  L1=100, R1=400`), the input mask (`bound app.InputManager.RequestMaskLowerAndEqualLayers(...Action=3)`),
+  the category cycle and every spoken line (`Siguiendo objetivo de mision`, `Radar cerrado`, `Nada en
+  todo`). Only the icon SOURCE was empty.
+
+  **Also fixed the same day:** `MapIconCatalog` had a failure path that returned without logging
+  anything (which is what made cause 2 hard to see) — every exit now says why; and `FieldNavPath.Fail`
+  now stops the numbered trace, because a route that fails every second wrote four log lines a second,
+  ~500 in that session, the log-flood pathology this mod has been bitten by twice. The scene-component
+  lookup was down-duplicated from four copies into `FieldProbeService.SceneComponents`.
+
+  **In-game verification checklist (the first four are now ANSWERED; the rest still unrun):**
+  - [x] ~~`Tracker buttons: ...`~~ CONFIRMED 2026-09-09: all five resolved.
+  - [x] ~~`Field input mask: bound ...`~~ CONFIRMED 2026-09-09.
+  - [x] ~~R3 opens the list and says "mission objective"~~ CONFIRMED 2026-09-09.
+  - [x] ~~Shift+V does not crash~~ CONFIRMED 2026-09-09.
+  - [ ] The one-time log line `[SF6Access] Map icon catalogue: N icons across M buckets` — report N and
+        M. **Was ABSENT in the 2026-09-09 pass**, which is what exposed the minimap bug; it should now
+        appear. `the live app.UIMiniMapWindow was not found in the current scene` means the HUD-owner
+        route did not work either.
+  - [ ] `[SF6Access] Heading: minimap window via app.UICityHud_CityMiniMap.MiniMapWindow` followed by
+        `Heading: north from minimap = (x, z)` — the compass finally on the game's own north rather than
+        the fallback axis. This is a fix to a PRE-EXISTING bug, worth reporting separately.
+  - [ ] `[SF6Access] NavPath step 1/2` then `NavPath route: ... on ...` — does a borrowed NPC agent
+        resolve, and what agent radius/height and map name does it report?
+  - [ ] `[SF6Access] Tracker buttons: R3=2000, up=1, down=2, L1=100, R1=400` — a 0 anywhere means that
+        member did not resolve and only the keyboard mirror works for it.
+  - [ ] `[SF6Access] Field input mask: bound app.InputManager.RequestMaskLowerAndEqualLayers(...)` — if it says
+        "not found", browsing will ALSO reach the game (a warning is logged when the list opens).
+  - [ ] R3 (and V) opens the list and it says "mission objective" — NOT a shop. If it names an icon on
+        the first press, the default category is wrong and the beacon has been hijacked.
+  - [ ] R1 cycles to "everything" and names the nearest icon with a clock hour and metres; L1 goes back.
+        Do the category words match what the phone map calls the same icons?
+  - [ ] With the list open: does the avatar stay still, and does the d-pad NOT open the shortcut wheel?
+  - [ ] Close with R3: it should say "Following <icon>" and the mission beacon should now pulse toward
+        that icon instead of the story objective.
+  - [ ] Walk into/complete the tracked thing: does it say "Next: <the following one>" by itself, and
+        does the beacon move on? This is the whole feature.
+  - [ ] Cycle back to "mission objective" — the beacon must return to the story objective.
+  - [ ] **Shift+V (route guidance) is the risky press.** Read the log for `NavPath step 1..9` lines in
+        order; the LAST one present names the call that did not return. Step 6 is the first call that
+        has never run in game. If SF6 dies here, that is the pathfinder and Shift+V should stay off.
+  - [ ] With route guidance on and a destination round a corner: does the beacon pan toward the corner
+        while the spoken distance still counts down the WALKED metres, and does it not announce arrival
+        at the corner?
 - **World Tour navigation radar — API mapped from decompiled code, in progress.** Porting the RE7 mod's
   navigation-radar concept to World Tour. The physics raycast, SF6 collision filter (`app.CollisionSystem`),
   authoritative ray-height, avatar-capsule, ground/wall, NavMesh and transit-point APIs are all mapped

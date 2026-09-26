@@ -38,7 +38,7 @@ internal static class FieldRayContacts
     private static Method _getContactPoint, _getContactCollidable, _getLayerName;
     private static Field _fDistance, _fNormal, _fPosition;
     private static readonly Dictionary<uint, bool> ArchByLayer = new();
-    private static bool _fieldsProbed, _contactIsValue;
+    private static bool _fieldsProbed;
 
     /// <summary>Whether the layer route bound — when it did not, every contact counts
     /// as architectural and the two distances converge. Said in the route line rather
@@ -216,15 +216,15 @@ internal static class FieldRayContacts
         _fDistance = td?.GetField("Distance");
         _fNormal = td?.GetField("Normal");
         _fPosition = td?.GetField("Position");
-        _contactIsValue = cp is REFrameworkNET.ValueType;
         if (_fDistance == null || _fNormal == null || _fPosition == null)
             API.LogWarning("[SF6Access] FieldRayCaster: ContactPoint is missing Distance/Normal/Position; " +
                            "contacts that cannot be measured are dropped, never guessed at.");
     }
 
+    /// <summary>A contact is a struct returned by value: read it pinned (see <see cref="PinnedValue"/>).</summary>
     private static object Read(Field f, UnifiedObject owner, System.Type want)
     {
-        try { return f?.GetDataBoxed(want, owner.GetAddress(), _contactIsValue); }
+        try { return PinnedValue.Field(f, owner, want); }
         catch { return null; }
     }
 

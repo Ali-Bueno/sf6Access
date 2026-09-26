@@ -53,9 +53,12 @@ public static class MissionTargetService
         public readonly ManagedObject Go;
         public readonly float X, Y, Z;
         public readonly bool Ok;
-        public Target(ManagedObject go, float x, float y, float z)
+        /// <summary>Which objective this is, independent of the object holding it: the game swaps a far NPC
+        /// for its map icon (<c>IconNpc_*</c>, 1.8 m higher) and back as the player moves (2026-09-26).</summary>
+        public readonly string Slot;
+        public Target(ManagedObject go, float x, float y, float z, string slot)
         {
-            Go = go; X = x; Y = y; Z = z; Ok = go != null;
+            Go = go; X = x; Y = y; Z = z; Ok = go != null; Slot = slot;
         }
     }
 
@@ -83,9 +86,24 @@ public static class MissionTargetService
         var p = PositionOf(guide.TargetObject);
         if (!p.ok) return default;
 
+        float x = p.x, y = p.y, z = p.z;
+
+        // WHERE THE PLAYER MUST STAND beats where the object happens to be. For a
+        // street NPC the two are nearly the same point; for one on an upper floor
+        // the object's own origin is somewhere the player can never be, and the
+        // navmesh says so. Refused answers fall straight back to the transform, so
+        // this can only improve the destination.
+        var me = AvatarFieldReader.ReadPlayerPos(WorldTourStateService.GetAvatarManager());
+        if (me.ok && AccessPointReader.TryRead(guide.AccessTarget, guide.TargetObject,
+                                               me.x, me.y, me.z, p.x, p.y, p.z,
+                                               out float ax, out float ay, out float az))
+        {
+            x = ax; y = ay; z = az;
+        }
+
         LogFix("hud", guide.MissionId, MissionGuideReader.TargetTypeName(guide.TargetType),
-               guide.TargetObject, p.x, p.y, p.z);
-        return new Target(guide.TargetObject, p.x, p.y, p.z);
+               guide.TargetObject, x, y, z);
+        return new Target(guide.TargetObject, x, y, z, $"hud:{guide.MissionId}:{guide.TargetType}");
     }
 
     private static Target FindFromMissionSystem()
@@ -127,9 +145,9 @@ public static class MissionTargetService
                     var p = PositionOf(go);
                     if (!p.ok) continue;
 
-                    LogFix("system", missionId, MissionGuideReader.TargetTypeName(kind),
-                           go, p.x, p.y, p.z);
-                    return new Target(go, p.x, p.y, p.z);
+                    if (LogFix("system", missionId, MissionGuideReader.TargetTypeName(kind), go, p.x, p.y, p.z))
+                        LogHolders(sys, missionId);
+                    return new Target(go, p.x, p.y, p.z, $"system:{missionId}:{kind}:{i}");
                 }
             }
         }
@@ -141,14 +159,42 @@ public static class MissionTargetService
     /// the mission system. The position is a snapshot at that moment, not a
     /// tracked value: an objective that walks does not deserve a line a second.
     /// </summary>
-    private static void LogFix(string source, uint missionId, string type,
+    private static bool LogFix(string source, uint missionId, string type,
                                ManagedObject go, float x, float y, float z)
     {
         string key = $"{source}|{missionId}|{type}|{FlowHelper.AddressOf(go):X}";
-        if (key == _lastLogKey) return;
+        if (key == _lastLogKey) return false;
         _lastLogKey = key;
         API.LogInfo($"[SF6Access] Mission guide: id={missionId} type={type} source={source} " +
-                    $"pos=({x:0.0}, {y:0.0}, {z:0.0})");
+                    $"name={FlowHelper.Call(go, "get_Name") as string ?? "?"} pos=({x:0.0}, {y:0.0}, {z:0.0})");
+        return true;
+    }
+
+    /// <summary>Every live target object of the mission, by name and position, and why the HUD
+    /// marker was not used: the first holder is not necessarily the one the player must reach.</summary>
+    private static void LogHolders(ManagedObject sys, uint missionId)
+    {
+        var line = new System.Text.StringBuilder($"[SF6Access] Mission guide: HUD unused ({MissionGuideReader.LastMiss ?? "hit"})");
+        for (int kind = 0; kind < TargetListGetters.Length; kind++)
+        {
+            var list = FlowHelper.Call(sys, TargetListGetters[kind], missionId) as ManagedObject;
+            int n = FlowHelper.GetListCount(list);
+            for (int i = 0; i < n; i++)
+            {
+                var info = FlowHelper.GetListItem(list, i);
+                var holders = FlowHelper.Call(info, "get_ListHolderObj") as ManagedObject
+                              ?? AvatarFieldReader.GetProp(info, "ListHolderObj");
+                int h = FlowHelper.GetListCount(holders);
+                line.Append($"; {MissionGuideReader.TargetTypeName(kind)}[{i}] holders={h}");
+                for (int j = 0; j < h; j++)
+                {
+                    var go = FlowHelper.GetListItem(holders, j);
+                    var p = PositionOf(go);
+                    line.Append($" {FlowHelper.Call(go, "get_Name") as string ?? "?"}@({p.x:0.0}, {p.y:0.0}, {p.z:0.0})");
+                }
+            }
+        }
+        API.LogInfo(line.ToString());
     }
 
     private static (float x, float y, float z, bool ok) PositionOf(ManagedObject go)

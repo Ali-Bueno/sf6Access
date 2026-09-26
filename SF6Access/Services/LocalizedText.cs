@@ -387,4 +387,65 @@ public static class LocalizedText
 
     /// <summary>The sweep could not be run (no field state, no ray API).</summary>
     public static string SweepUnavailable() => LangFile.Get("wt.sweep_unavailable", "Surroundings unavailable");
+
+    // ---------- map selection + aiming (Hooks/WorldTour/MapAimHooks.cs) ----------
+
+    /// <summary>"Following Beat Square, shop" — what the beacon is now guiding to,
+    /// said when the player picks a point on the phone map.</summary>
+    public static string TrackerFollowing(string what)
+        => string.Format(LangFile.Get("wt.track.following", "Following {0}"), what);
+
+    /// <summary>Reaching a point the player picked on the map. The mission objective
+    /// has its own line (<see cref="MissionHere"/>): saying that one on arriving at a
+    /// chosen shop would simply be untrue.</summary>
+    public static string TrackerArrived(string what)
+        => string.Format(LangFile.Get("wt.track.arrived", "At {0}"), what);
+
+    /// <summary>"Entrando en Style Lab Beauty Salon" — the player just walked into
+    /// a shop. Announced at the game's OWN threshold, not one we guessed.</summary>
+    public static string ShopEntering(string what)
+        => string.Format(LangFile.Get("wt.shop.entering", "Entering {0}"), what);
+
+    /// <summary>"Saliendo de Style Lab Beauty Salon" — back out on the street.</summary>
+    public static string ShopLeaving(string what)
+        => string.Format(LangFile.Get("wt.shop.leaving", "Leaving {0}"), what);
+
+    /// <summary>"Toward the foot of X, 40 meters"</summary>
+    public static string AimApproach(string what, int meters)
+        => string.Format(LangFile.Get("wt.aim.approach", "Toward the foot of {0}, {1} meters"),
+                         what, meters);
+
+    /// <summary>"No route on foot to X, 30 meters away" — the engine found no way to
+    /// WALK there, typically a rooftop or an upper floor. The bearing is still given,
+    /// because a direction beats nothing, but the player has to know it is a direction
+    /// and not a way; without this the mod marches them into a wall confidently.</summary>
+    public static string AimNoRoute(string what, int meters)
+        => string.Format(LangFile.Get("wt.aim.no_route", "No route on foot to {0}, {1} meters away"),
+                         what, meters);
+
+    /// <summary>No story objective is active AND nothing is picked on the map, so
+    /// there is nowhere to point.</summary>
+    public static string AimNoSelection()
+        => LangFile.Get("wt.aim.none", "No objective and nothing selected on the map");
+
+    /// <summary>"Toward Beat Square, shop, 40 meters" — the turn happened, and
+    /// forward now means the next leg of the route. Deliberately not "facing X":
+    /// with route guidance on the camera is pointed at the next BEND, not at the
+    /// destination, and the distance is how far there is left to WALK.</summary>
+    public static string AimTurned(string what, int meters)
+        => string.Format(LangFile.Get("wt.aim.turned", "Toward {0}, {1} meters"), what, meters);
+
+    /// <summary>The camera could not be turned (the controller was not reachable),
+    /// so the direction is spoken instead of pointed.</summary>
+    public static string AimUnavailable(string what, int hour, int meters)
+        => string.Format(LangFile.Get("wt.aim.unavailable", "{0} at {1} o'clock, {2} meters"),
+                         what, hour, meters);
+
+    /// <summary>The route pathfinder was switched on: beacons now aim at the next
+    /// corner of a real walkable route instead of straight through the scenery.</summary>
+    public static string PathfinderOn() => LangFile.Get("wt.pathfinder_on", "Route guidance on");
+
+    /// <summary>The route pathfinder was switched off; beacons point straight at
+    /// the target again.</summary>
+    public static string PathfinderOff() => LangFile.Get("wt.pathfinder_off", "Route guidance off");
 }

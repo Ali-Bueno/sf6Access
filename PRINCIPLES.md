@@ -1,155 +1,256 @@
 # Engineering & Accessibility Principles
 
-> **What this file is:** the general working principles that sit *underneath* the playbook in
-> [`CLAUDE.md`](CLAUDE.md). The playbook tells you *how to build an accessibility mod*; this file tells
-> you *how to write the code and treat the codebase* while you do it. These rules are engine-agnostic
-> and apply to every project in this workspace.
+> **Purpose:** This is the authoritative project-level source for
+> engineering, accessibility, testing, documentation,
+> reverse-engineering, and repository-hygiene rules.
 >
-> **If you use an AI coding assistant** (Claude Code, Cursor, etc.): drop this file (and `CLAUDE.md`)
-> into the project so the assistant follows the same rules. You can also copy the sections you like into
-> your own global assistant config.
+> Agent-specific model orchestration belongs in the global `AGENTS.md`
+> or `CLAUDE.md`, not here. When an AI coding assistant works in this
+> repository, it should read this file before making changes.
 
-## Table of contents
+## 1. General engineering principles
 
-1. [General code principles](#1-general-code-principles)
-2. [Scope discipline](#2-scope-discipline)
-3. [Testing & build](#3-testing--build)
-4. [No magic numbers](#4-no-magic-numbers)
-5. [Accessibility library choice (PRISM / Tolk)](#5-accessibility-library-choice-prism--tolk)
-6. [Framework-specific rules](#6-framework-specific-rules)
-7. [Reverse-engineering tools](#7-reverse-engineering-tools)
-8. [Publishing](#8-publishing)
-
----
-
-## 1. General code principles
-
-- **Prefer simple solutions.** Readability over cleverness; composition over inheritance.
-- **Don't duplicate logic.** Factor shared behavior into one place (services, adapters, helpers).
-- **Keep the codebase clean and organized.** Files, folders and naming should stay coherent as the mod
-  grows.
-- **Refactor files that grow past ~200–300 lines.** Long files are a smell — split by responsibility.
-- **Avoid one-off throwaway scripts and files** living in the repo. Temporary/experimental files belong
-  in a scratch location outside the project, and should be deleted once the task is done.
-- **Consider Dev, Test and Prod separately** — don't let debug-only paths or hardcoded test values leak
-  into a release build.
-- **Match the surrounding code.** New code should read like the code already there: same naming,
-  comment density and idioms.
+-   Prefer simple, readable solutions over clever ones. Prefer
+    composition over inheritance.
+-   Do not duplicate logic. Factor shared behavior into one clear
+    service, adapter, helper, or abstraction.
+-   Keep files, folders, names, and responsibilities coherent as the
+    project grows.
+-   Match the surrounding code: naming, idioms, formatting, and comment
+    density.
+-   Refactor files that grow beyond roughly 200--300 lines when they
+    contain multiple responsibilities.
+-   Consider development, testing, and production/release behavior
+    separately. Debug-only paths and test values must not leak into
+    release builds.
+-   Avoid one-off scripts and throwaway files in the repository.
+-   Temporary files must live in the session scratch location, never in
+    the repository root or a general code directory. Delete temporary
+    artifacts created for the task when they are no longer needed.
 
 ## 2. Scope discipline
 
-- **Only change what was requested.** Don't make unrequested changes, even if you spot something you'd
-  do differently.
-- **Fix only the bug you were asked to fix.** Don't introduce a new library, pattern or technology to
-  fix a bug — solve it within the existing architecture.
-- **Avoid major changes to established patterns and architecture** unless that *is* the task.
-- **Think about ripple effects.** Before a change, consider what other methods and areas of the code it
-  could affect.
-- **Never overwrite the `.env` file** (or equivalent local config).
-- **Don't add new DLLs / native dependencies silently.** If a task genuinely needs one, flag it and
-  agree on it first.
+-   Change only what the user requested.
+-   Fix only the requested bug. Do not introduce a new framework,
+    dependency, pattern, or technology merely to solve a local bug.
+-   Avoid changing established architecture unless architecture is
+    explicitly part of the task.
+-   Before changing code, consider likely ripple effects on callers,
+    state, lifecycle, and adjacent systems.
+-   Never overwrite `.env` or equivalent local configuration.
+-   Do not add DLLs, native libraries, packages, or other runtime
+    dependencies silently. If a genuinely new dependency is required,
+    ask first.
 
-## 3. Testing & build
+## 3. Comments and documentation
 
-- **Compile after every code change.** A change that doesn't build isn't done.
-- **Write thorough tests for all major functionality.** Accessibility mods are hard to test blind-first;
-  where you can, cover the state-tracking and formatting logic (the parts that don't need the game
-  running).
-- Use the framework's own build command (see §6) and make the build copy the artifact to the game's mod
-  folder automatically, so the test loop is one step.
+-   **Code should be read, not studied.** Prefer self-explanatory code
+    and short comments.
+-   Comment only when the *reason* cannot be understood from the code
+    itself. Keep normal comments to roughly 1--2 lines.
+-   A `<summary>`, docstring, or equivalent API description should
+    normally be one concise sentence.
+-   Do not put essays, debugging stories, bug history, example traces,
+    rejected approaches, or multi-paragraph justifications inside source
+    files.
+-   Durable explanations belong in `reference/` or another dedicated
+    documentation location. Source code may contain one short comment
+    linking to that documentation when useful.
+-   As a practical warning sign, if comments approach roughly 15--20% of
+    a source file, review whether the explanation belongs in
+    documentation instead.
+-   Keep commit messages concise as well; long engineering narratives
+    belong in project documentation.
 
-## 4. No magic numbers
+### `STATUS.md`
 
-- **Never hardcode unexplained constants** — offsets, IDs, thresholds, indices, timings.
-- **Derive values from the real source**: the game's own data/components/config/APIs, or the library's
-  headers. Read the authoritative value at runtime instead of guessing a literal.
-- If a literal is truly unavoidable, give it a **named, documented constant** stating where it comes
-  from and why.
+-   `STATUS.md` is a dashboard, not a design document.
+-   Keep entries short: current state, known blocker if any, and next
+    step.
+-   Put implementation details, investigation history, rationale, and
+    long explanations in `reference/`, then link to them from
+    `STATUS.md`.
+-   If a status-table row becomes a paragraph, it is too long.
 
-## 5. Accessibility library choice (PRISM / Tolk)
+## 4. Testing and build
 
-- **Default: PRISM** (<https://github.com/ethindp/prism>). Cross-platform C++23 library unifying
-  NVDA/JAWS (Windows), VoiceOver (macOS/iOS), Orca/Speech-dispatcher (Linux), native TTS (Android) and
-  WebSpeech (Web) behind one API. Use it whenever the host is native or allows C++. Integration details
-  for the prebuilt release are in [`CLAUDE.md` §4](CLAUDE.md).
-- **Fallback: Tolk** — only on legacy .NET/BepInEx projects where integrating C++ isn't practical, via
-  `TolkDotNet` (namespace `DavyKager`). `Tolk.dll` + `nvdaControllerClient64.dll` go in the game's root
-  folder; only `TolkDotNet.dll` ships with the mod in the plugins folder.
-- **Route all speech through a single sink** so the backend (PRISM ↔ Tolk ↔ SAPI) can be swapped in one
-  place. The same code must work with NVDA, JAWS, VoiceOver, Orca, etc.
+-   Compile after every code change. A change that does not build is not
+    finished.
+-   Write thorough tests for major functionality where practical.
+-   For accessibility mods, prioritize tests around deterministic logic
+    such as state tracking, navigation calculations,
+    anti-spam/state-change behavior, formatting, filtering, and other
+    code that can run without the game.
+-   Use the framework's normal build command.
+-   Where practical, configure the project build to deploy the resulting
+    mod artifact to the game's mod/plugin directory automatically so the
+    test loop remains one step.
+-   When a build produces a large log, inspect and report the relevant
+    errors rather than preserving huge raw output in project
+    documentation.
 
-## 6. Framework-specific rules
+## 5. No magic numbers
 
-> Identify the engine and framework **before** writing code — see [`CLAUDE.md` §2](CLAUDE.md). These
-> rules apply once you've confirmed the framework.
+-   Never hardcode unexplained offsets, IDs, indices, thresholds,
+    timings, ranges, addresses, or other domain-specific constants.
+-   Derive values from authoritative sources: the game's
+    data/components/configuration/APIs, runtime state, metadata, or the
+    relevant library/framework headers.
+-   Prefer reading the authoritative value at runtime over guessing a
+    literal.
+-   If a literal is genuinely unavoidable, use a named constant and
+    document where it came from and why it is correct.
 
-**BepInEx / Unity (Mono & IL2CPP) — and only these; not native, REFramework, UE4SS or Java mods:**
+## 6. Accessibility architecture and PRISM
 
-- Build with `dotnet build`, and edit the project's `.csproj` so the build copies the DLL to the game's
-  plugin folder.
-- **Harmony is referenced by BepInEx already** — don't add it to the `.csproj`.
-- **Don't modify the BepInEx NuGet package references** in the `.csproj`; the project depends on them as
-  configured.
-- On **IL2CPP** games, use proper C++ reflection methods or you'll get wrong function names or crashes.
-  Avoid calling `FindObjectOfType` every frame — it's terrible for performance; cache references.
+-   **PRISM is the default and authoritative accessibility/screen-reader
+    layer.** Repository: <https://github.com/ethindp/prism>
+-   Use the prebuilt PRISM release; do not compile the PRISM repository
+    merely to consume it.
+-   Route all speech/accessibility output through a single project-owned
+    sink or adapter so backend details do not leak throughout gameplay
+    code.
+-   Do not introduce direct Tolk integration as an alternative
+    accessibility path.
+-   Do not ship a separate `tolk.dll` merely for PRISM. PRISM's
+    supported Windows screen-reader/TTS behavior is provided through
+    `prism.dll` as appropriate.
+-   Prismatoid bindings exist for supported environments. Use the
+    binding appropriate to the host when it can actually load there.
+-   For BepInEx hosts whose target framework cannot load the current
+    .NET Prismatoid package, P/Invoke the stable PRISM C API from
+    `prism.dll` instead of falling back to a separate Tolk architecture.
+-   Accessibility output must remain centralized so platform/backend
+    implementation can change without rewriting gameplay features.
 
-**Other engines** (RE Engine → REFramework, Unreal → UE4SS/native, native C/C++/VB6 → custom hooks): use
-that framework's own hooking system and build process. Harmony/BepInEx do **not** apply. See the table
-in [`CLAUDE.md` §2](CLAUDE.md).
+## 7. Framework-specific rules
 
-## 7. Reverse-engineering tools
+Identify the game engine and modding framework before writing
+implementation code. Do not apply rules from one framework to an
+unrelated engine.
 
-Keep a set of tools handy and pick by binary type. All of these are free.
+### BepInEx / Unity only
 
-### First step — identify what you're looking at
+These rules apply to BepInEx Unity mods, not native mods, REFramework,
+UE4SS, Java mods, or unrelated hosts.
 
-Before decompiling, figure out the engine/language/packer so you pick the right tool (see the engine
-clues in [`CLAUDE.md` §2](CLAUDE.md)).
+-   Build with `dotnet build`.
+-   Configure the current project's `.csproj` to copy the built mod DLL
+    to the game's plugin directory when appropriate.
+-   Harmony is already supplied by BepInEx where configured; do not add
+    a redundant Harmony dependency.
+-   Do not modify the project's established BepInEx NuGet references
+    without a task-specific reason.
+-   For IL2CPP games, use the proper IL2CPP/native reflection and
+    interop mechanisms. Incorrect reflection can produce wrong method
+    names or crashes.
+-   Do not perform expensive global object searches such as
+    `FindObjectOfType` every frame. Cache references and respect object
+    lifecycle.
+-   Before starting a new BepInEx/Unity mod, read the project's BepInEx
+    reference documentation, if present (for example
+    `reference/engines/bepinex/`), covering version selection,
+    Cpp2IL/metadata compatibility, interop generation, Unity-version
+    repairs, Harmony/native safety, deployment, and runtime traps.
 
-| Tool | What it's for | Download |
-|------|---------------|----------|
-| **Detect It Easy (DIE)** | Detects compiler, language, packer and often the engine of a PE/ELF binary. | <https://github.com/horsicq/Detect-It-Easy> |
-| **PE-bear** | Inspect PE headers, imports/exports, sections. | <https://github.com/hasherezade/pe-bear> |
+### Other engines
 
-### Static decompilers — pick by binary type
+-   RE Engine: prefer REFramework and its own hooking/runtime
+    facilities.
+-   Unreal Engine: use UE4SS or the project's established native
+    approach.
+-   Native C/C++ or other native games: use the project's established
+    native hooks/instrumentation.
+-   Do not introduce Harmony or BepInEx into an unrelated engine merely
+    because they are familiar.
 
-| Target | Tool | Notes | Download |
-|--------|------|-------|----------|
-| Native C/C++ / PE binaries | **Ghidra** (the main one) | Enable the MSVC RTTI analyzer + demangler so vtables/classes get real names instead of `FUN_`/`DAT_`. | <https://github.com/NationalSecurityAgency/ghidra> · <https://ghidra-sre.org> |
-| Native C/C++ (alternative) | **IDA Free** | Great decompiler UI; Free edition covers x64. | <https://hex-rays.com/ida-free> |
-| .NET / IL2CPP managed DLLs (read) | **ILSpy** | Self-contained build; clean read-only decompiler. | <https://github.com/icsharpcode/ILSpy> |
-| .NET (inspect **and** edit/debug) | **dnSpyEx** | Maintained fork of dnSpy; can edit IL and debug managed code live. | <https://github.com/dnSpyEx/dnSpy> |
-| Unity **IL2CPP** | **Il2CppDumper** + **Cpp2IL** | Recover method names/metadata from `GameAssembly.dll` + `global-metadata.dat`. | <https://github.com/Perfare/Il2CppDumper> · <https://github.com/SamboyCoding/Cpp2IL> |
-| Unity assets (Mono/IL2CPP) | **AssetRipper** | Extract/inspect Unity assets and scenes. | <https://github.com/AssetRipper/AssetRipper> |
+## 8. Reverse-engineering workflow
 
-### Dynamic / runtime analysis — find offsets and structures live
+### Identify the target first
 
-Often faster than static analysis for finding a struct offset or a live pointer, and the *only* way to
-derive values at runtime (which is what we want — see §4 No magic numbers).
+Before decompiling or hooking, identify the engine, language/runtime,
+architecture, and relevant packaging or protection so the correct tool
+and modding framework are chosen.
 
-| Tool | What it's for | Download |
-|------|---------------|----------|
-| **Cheat Engine** | Scan memory, find structures/pointers/offsets while the game runs, walk pointer chains. | <https://github.com/cheat-engine/cheat-engine> · <https://cheatengine.org> |
-| **x64dbg** | Native user-mode debugger for stepping through the game's code. | <https://github.com/x64dbg/x64dbg> · <https://x64dbg.com> |
-| **ReClass.NET** | Reconstruct in-memory class/struct layouts interactively. | <https://github.com/ReClassNET/ReClass.NET> |
-| **Frida** | Scriptable dynamic instrumentation — hook and trace functions at runtime. | <https://frida.re> · <https://github.com/frida/frida> |
+Useful identification tools include:
 
-### Modding frameworks (the host for your mod)
+  -----------------------------------------------------------------------
+  Tool                                Purpose
+  ----------------------------------- -----------------------------------
+  Detect It Easy (DIE)                Detect compiler, language, packer,
+                                      and often engine clues
 
-Pick per engine (see the table in [`CLAUDE.md` §2](CLAUDE.md)):
+  PE-bear                             Inspect PE headers,
+                                      imports/exports, and sections
+  -----------------------------------------------------------------------
 
-| Engine | Framework | Download |
-|--------|-----------|----------|
-| Unity (Mono → BepInEx 5, IL2CPP → BepInEx 6) | **BepInEx** | <https://github.com/BepInEx/BepInEx> |
-| RE Engine (Capcom) | **REFramework** | <https://github.com/praydog/REFramework> |
-| Unreal Engine | **UE4SS** | <https://github.com/UE4SS-RE/RE-UE4SS> |
+### Static analysis
 
-*(Install paths on your own machine are up to you; the tool choice is what matters.)*
+  -----------------------------------------------------------------------
+  Target                  Preferred tools         Notes
+  ----------------------- ----------------------- -----------------------
+  Native C/C++ / PE       Ghidra; IDA Free as an  Enable useful
+                          alternative             RTTI/demangling
+                                                  analysis where
+                                                  applicable
 
-## 8. Publishing
+  .NET managed assemblies ILSpy; dnSpyEx when     Prefer read-only
+                          editing/debugging is    inspection unless
+                          needed                  modification is
+                                                  intentional
 
-- Ship a clear, documented repo with a `README.md` in English: what the mod does, which parts are
-  accessibilized, and the requirements (framework, PRISM, system screen reader).
-- Avoid committing unnecessary binaries.
-- **Don't create GitHub releases automatically** — only when explicitly asked. This applies to every
-  mod.
+  Unity IL2CPP            Il2CppDumper and Cpp2IL Recover metadata,
+                                                  methods, and interop
+                                                  information
+
+  Unity assets            AssetRipper             Inspect/extract assets
+                                                  and scenes
+  -----------------------------------------------------------------------
+
+### Dynamic/runtime analysis
+
+Use runtime analysis when it is more reliable than guessing static
+values, especially for structures, pointers, state, and authoritative
+runtime data.
+
+Useful tools include Cheat Engine, x64dbg, ReClass.NET, and Frida.
+
+### Tool hygiene
+
+-   Prefer evidence from the actual game/runtime over assumptions.
+-   Record durable discoveries in concise reference documentation
+    instead of rediscovering them repeatedly.
+-   Do not paste enormous decompiler dumps or raw logs into permanent
+    project docs. Preserve the useful symbol, structure, address
+    derivation, call flow, or conclusion with enough provenance to
+    reproduce it.
+
+## 9. Accessibility-mod design defaults
+
+Unless a specific project intentionally chooses otherwise:
+
+-   Preserve player agency. Accessibility should expose information and
+    controls, not play the game for the player.
+-   Prefer manual exploration over automatic pathfinding or
+    auto-solving.
+-   Use audio cues, speech, spatial information, and state-change
+    feedback to communicate information that a sighted player receives
+    visually.
+-   Avoid speech/audio spam. Announce state changes rather than
+    repeating unchanged information every frame.
+-   Keep controls economical and compatible with normal game input;
+    avoid unnecessary extra keys.
+-   Prefer controller/joystick-compatible interaction when the host game
+    supports it.
+-   Derive navigation and interaction information from real game state
+    rather than guessed geometry or hardcoded map knowledge whenever
+    possible.
+
+## 10. Publishing
+
+-   Maintain a clear English `README.md` describing what the mod makes
+    accessible, installation requirements, the modding framework, PRISM
+    requirements, and known limitations.
+-   Avoid committing unnecessary binaries and generated artifacts.
+-   Do not create GitHub releases automatically. Create a release only
+    when the user explicitly requests it.

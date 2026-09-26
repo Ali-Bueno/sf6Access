@@ -28,10 +28,9 @@ namespace SF6Access.Services.WorldTour;
 /// account. What survives from AHC is everything that was never the problem — three
 /// beams, the pan, the approach tone, the turn behaviour, the cadence.</para>
 ///
-/// <para><b>Turning is still the scan.</b> There is no movement gate. Turning sweeps
-/// the LATERALS across the world, so they keep measuring but stay quiet while the FRONT
-/// beam goes on talking — sweeping the camera is how the player aims at an exit
-/// (AHC's <c>ResetAllButFrontRadar</c>).</para>
+/// <para><b>Turning is still the scan.</b> There is no movement or turn gate: every
+/// beam keeps measuring and cueing while the camera turns, sensed faster during the
+/// turn. Laterals were once muted mid-turn; the tester asked for them back (2026-09-26).</para>
 ///
 /// <para><b>Division of labour.</b> This layer owns the CUES. The spoken class
 /// ("wall", "blocked", "wall you can run along") remains
@@ -134,7 +133,6 @@ public static class FieldRadarService
     private static bool ClearancePass(long now, bool canCue)
     {
         float radius = BodyHalfWidth();
-        bool turning = FieldRadarTravel.Turning;
 
         foreach (var beam in EvalOrder)
         {
@@ -163,7 +161,8 @@ public static class FieldRadarService
         foreach (var beam in EvalOrder)
         {
             int b = (int)beam;
-            if (Voice[b] == PassState.Unknown || Muted(beam, turning)) continue;
+            // Every beam may speak while the camera turns (tester request 2026-09-26).
+            if (Voice[b] == PassState.Unknown) continue;
             // Nothing new to say: the beam changed and changed back out of earshot, and
             // the player already holds this verdict.
             if (Voice[b] == Spoken[b]) { Voice[b] = PassState.Unknown; continue; }
@@ -176,28 +175,6 @@ public static class FieldRadarService
         }
         return false;
     }
-
-    /// <summary>A beam that may not speak right now. It is still measured, its verdict
-    /// is still kept, and the voice only WAITS — nothing is discarded.
-    ///
-    /// <para>There is exactly one such case left: while the camera turns, the LATERALS
-    /// are quiet. Mid-sweep, "left" is a direction that has already stopped being left
-    /// by the time the sound arrives, so a panned cue would point at nothing. The FRONT
-    /// keeps talking throughout, which is what makes sweeping the camera a way to aim
-    /// at an exit (AHC's <c>ResetAllButFrontRadar</c>,
-    /// <c>FPExploring.cs:362-366</c>).</para>
-    ///
-    /// <para><b>The beam facing away from travel used to be muted too, and that was
-    /// wrong.</b> It was inherited from the line-memory model, where a receding wall
-    /// behind produced a stream of phantom openings — an artefact of an EVENT detector
-    /// that a state machine cannot have. What it actually did here was break a
-    /// requirement: run past an opening, hear it close, then back up without turning,
-    /// and if the opening had been reported by the FRONT beam that beam was now the
-    /// muted one, so it never came back. An opening must re-announce when it
-    /// reappears, panned to wherever it is, whichever beam holds it and whichever way
-    /// the player is moving.</para></summary>
-    private static bool Muted(RadarBeam beam, bool turning)
-        => turning && beam != RadarBeam.Front;
 
     /// <summary>Pass two: the approach tone and the stairs motif, reached only when no
     /// open/close cue fired.

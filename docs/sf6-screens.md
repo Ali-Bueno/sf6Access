@@ -670,9 +670,10 @@ skip empty results). Fallback name source on the same GameObject: `WTNpcContext`
 `NpcID`, `AvatarNpc` back-reference; `RandomNameUpdate` populates crowd names). Global registries also
 exist if ever needed: `app.GUIAccessDataManager.AccessTargetList`
 (`IDictionary<ContactUIType, IList<AvatarAccessTargetBase>>` + `GetAccessTargetData(type)`) and
-`AvatarManager.AccessTargetList` (untyped). For "which NPC is the current objective", use
-`AvatarBase.GetCurrentAccessTarget()` (returns the full `AccessTargetInfo`, including `NearPos`) or
-`__GetCurrentActionTargetObject()`.
+`AvatarManager.AccessTargetList` (untyped). For the current interaction target, investigate
+`AvatarBase.GetCurrentAccessTarget()` (returns `AccessTargetInfo`, including `NearPos`) or
+`__GetCurrentActionTargetObject()`. These do not establish the selected mission objective;
+match target identity against the mission guide before using them to confirm objective arrival.
 
 ### Kind words
 `HudDef.ContactUIType`: `None = -1`, `NPC = 0`, `Legendary = 1` (a Master), `OM = 2` (object/gimmick),
@@ -2464,3 +2465,727 @@ bindings — see STATUS.md):** `B` one-shot nav radar readout, `Shift+B` toggle 
 `N`/pad Start nearby-avatar radar, `Z` speak current area (+ facing), **`Shift+Z` new: compass sweep**.
 The hands-free compass, aim-at-nearest and camera hold have no keys at all — they run continuously
 while in the field, gated the same way as every other always-on WT reader.
+
+## World Tour minimap tracker + route guidance (2026-09-09) — `NOT YET RUN IN GAME`
+
+Pick any icon the HUD minimap is showing, and have the mission beacon take you to it. Code:
+`Hooks/WorldTour/FieldTrackerHooks.cs` on `Services/WorldTour/{MapIcon, MapIconCatalog,
+TrackerSelection, TrackerButtons, FieldInputMask, BeaconDestination}.cs`, plus the previously inert
+`FieldNavPath.cs`. **Everything below is decompile-derived and compiles; none of it has run in game.**
+
+### 1. The icon source — the HUD minimap publishes world positions
+
+`app.UIMiniMapWindow : app.UIMapWindowBase` (`UIMiniMapWindow.cs:12`) is the live component the mod
+already finds for the compass (`FieldHeadingService.MiniMapWindow()`, one search for it mod-wide). It
+carries the icon set itself:
+
+- `mIconInfoList : IDictionary<eUpdateTargetType, IconInfo_Array1D>` (`:260`)
+- `mInfoCount : IDictionary<eUpdateTargetType, int>` (`:268`) — **the live length of each bucket.
+  The arrays are reused buffers; entries past this count are last frame's leftovers.**
+- `eUpdateTargetType {NPC=0, LEGEND=1, OM=2, ZONE=3, PIN=4, MAX=5, START=0}` (`:63-72`). `START`
+  aliases `NPC`, so buckets are de-duplicated **by value** and bounded by `MAX`.
+- Rebuild methods (not called by the mod, listed so they are not mistaken for accessors):
+  `UpdateIcons()` `:304`, `UpdateIconInfoList()` `:316`, `CheckUseIcon(IconInfo)` `:352`.
+
+`app.UIMapWindowBase` itself holds **no** icon collection — only factories (`MakeIconInfo` `:1008`,
+`MakeMissionIconInfo` `:1032`, `MakeFastTravelIconInfo` `:1044`, `GetIconSetting` `:1026`). The phone
+map keeps its own separate store (`app.UIDeviceMapWindow.mIconInfoList`, keyed by `ICON_GROUP_TYPE`).
+
+`app.UIMapWindowBase.IconInfo` (`UIMapWindowBase.cs:317-477`), all read via `FieldProbeService.Member`
+(it is a **struct**, so `FlowHelper.GetListItem` is useless — it casts to `ManagedObject` and would
+yield null for every entry; call `FlowHelper.Call(array, "Get", i)` and keep the raw object):
+
+| Field | Line | Type | Used for |
+|---|---|---|---|
+| `TitleText` | `:334` | string | already localized — spoken verbatim |
+| `UniqueIndex` | `:342` | **int** (not uint) | part of the pin key — see the warning below |
+| `Type` | `:406` | `ICON_TYPE` (int) | family word via `DeviceMapText.IconType` |
+| `GroupType` | `:422` | `ICON_GROUP_TYPE` (int) | the tracker's categories |
+| `GlobalPos` | `:430` | `via.vec3` | **the world position — what makes this trackable** |
+| `UiPos` | `:350` | `via.vec3` | projected picture position; deliberately unused |
+
+`ICON_GROUP_TYPE {All=0, TRAVEL=1, FACILITY=2, JOB=3, MISSION=4, MASTER=5, PIN=6, MAX=7, START=1}`
+(`:687-698`) is the game's own grouping and is used as the category cycle verbatim. Neither `IconInfo`
+nor `CityPointDataInfoBase` carries a completed/consumed flag — and none is needed: **the game removes
+an icon from the minimap when it is consumed**, so auto-retracking is "the pinned icon stopped
+appearing".
+
+**Do NOT pin a selection on `UniqueIndex` alone.** Only `MakePinIconInfo(PinInfo, int)` (`:1038`) takes
+a unique index; `MakeIconInfo` (`:1008`), `MakeMissionIconInfo` (`:1032`) and
+`MakeFastTravelIconInfo` (`:1044`) do not — so the field may well be 0 for every shop and mission. If
+it is, an index-based pin makes a whole category read as one target: the cursor refuses to move and
+auto-retracking never fires. `MapIcon.Key` is therefore the composite
+`GroupType/Type/UniqueIndex/TitleText`, which also stays stable for an icon that MOVES (a walking NPC),
+unlike a position-based key. **Still worth confirming in game** what `UniqueIndex` actually holds for a
+non-pin icon.
+
+**Dictionary access:** `ContainsKey(key)` then `get_Item(key)`, never `TryGetValue` — its second
+parameter is an **out reference type** (the array), the documented crash family. There was no prior
+IL2CPP-dictionary read anywhere in this codebase; the keys are taken from the enum (via
+`FieldProbeService.ReadEnum`) rather than by enumerating the dictionary.
+
+### 2. Taking the field's input — the game's own lock, no hook
+
+`app.InputManager.RequestMaskLowerAndEqualLayers(app.InputLayerPriority)` (`InputManager.cs:1524`) —
+one static call, one by-value enum argument, no overloads, nothing by reference. **The request lasts
+one frame**, so holding it means asking every frame — which makes it fail safe: if the mod stops
+ticking the player's controls return next frame.
+
+**"AndEqual" is load-bearing, and `RequestMaskLowerLayers` is the trap.** The enum is declared
+`UI=0, Flow=1, Battle=2, Action=3, Other=4` (`InputLayerPriority.cs:3-10`), so "lower" means lower
+PRECEDENCE — a HIGHER number. That is how the phone, on `UI`, silences the field on `Action`. It also
+means `RequestMaskLowerLayers(Action)` masks only `Other` and leaves the avatar walking and the d-pad
+live, while binding and logging exactly as if it had worked. The WT field player is on `Action`, so
+`Action` itself has to be in the mask; `LowerAndEqual` leaves `UI`/`Flow`/`Battle` alive, which is what
+keeps the pause menu and the phone reachable.
+
+Rejected alternatives, recorded: pre-hooking `app.InputLayer.CheckTrigger`/`CheckDown`
+(`InputLayer.cs:64,67`) works and is safe but is the hottest method in the input system and must fake
+a return value; `InputLayer.GetValue` (`:82,85`) has a `ref float` overload and must only ever be
+bound by shape; `AvatarPlayerControll.UpdateLocalPlayerInput` (`:299`) is blunt (kills movement only).
+`app.PadManager` is device assignment, not button state.
+
+**What R3 / L1 / R1 / d-pad do in the field is NOT in the stubs** — the physical→action mapping is
+runtime data (`InputAssign.Digital.ConfigParam.GamePadButton`, `InputAssign.cs:962/970`, applied by
+`InputManager.ApplyFieldGamePadPreset`, `:1371`). The field slots that exist include `ACT_RSB` (R3)
+and `SC_LB`/`SC_RB` (L1/R1 on the shortcut wheel), so those presses do have game meaning; the mask is
+what stops them reaching it. There is no `ACT_PLUS_U/D`: the field d-pad is not a configurable slot.
+
+`via.hid.GamePadButton` values (decompiled, and they agree with `Services/InputNameResolver.cs`):
+`LUp=0x1`, `LDown=0x2`, `LTrigTop`(L1)`=0x100`, `RTrigTop`(R1)`=0x400`, `RStickPush`(R3)`=0x2000`.
+`TrackerButtons` resolves all five **by member name** out of the TDB, so no hex appears in mod code.
+
+### 2b. The minimap window is NOT a scene component — `CONFIRMED IN GAME 2026-09-09`
+
+`via.Scene.findComponents(System.Type)` for `app.UIMiniMapWindow` returns **nothing**, for a whole
+session. The window is owned by a HUD component: **`app.UICityHud_CityMiniMap : UIHudBase`
+(`UICityHud_CityMiniMap.cs:7`) → `MiniMapWindow : UIMiniMapWindow` (`:27`)**. `UICityHud_*` components
+ARE findable in the scene — `MissionGuideReader` finds `app.UICityHud_MissionGuide` exactly that way and
+has always worked — so the obvious fix is to find the HUD component and read its member.
+
+**That fix did NOT work either, and this is still OPEN** (`CONFIRMED IN GAME 2026-09-09`, second pass):
+searching the scene for `app.UICityHud_CityMiniMap` also finds nothing (no `minimap window via ...` line
+was ever logged, and the catalogue kept reporting `the live app.UIMiniMapWindow was not found`). So one
+`UICityHud_*` component is findable and another is not, and we do not know why — it may be built only
+while the minimap is actually displayed, live in a different scene, or under a different concrete type.
+**Do not assume the minimap is reachable until this is solved.** The consequence is recorded here
+because it decided a design: the minimap-icon radar was deleted and the PHONE MAP's cursor selection,
+which demonstrably works, became the selection source instead.
+
+**This had been silently breaking the compass since 2026-09-05.** `FieldHeadingService` derives north
+from the minimap projection and falls back to the world +Z axis when it cannot; the log line
+`Heading: north from fallback axis = (0.00, 1.00) until the minimap binds` was the only symptom, and
+every compass reading in the mod had been running on a *guessed* axis. The scene-component idiom now
+lives in one place, `FieldProbeService.SceneComponents` / `FirstSceneComponent`, instead of the four
+copies it had grown.
+
+### 3. Route guidance — the pathfinder finally has a caller
+
+`FieldNavPath` (mapped 2026-09-08, inert until now) is switched on by **Shift+V** and off again the
+same way; it starts off every session. `BeaconDestination.Resolve` is the only caller: it picks the
+tracked icon over the story objective, then — with route guidance on — replaces the **aim point** with
+the route's first corner while keeping the **destination** for distance, ping cadence and arrival.
+Aiming at a corner but measuring to it would announce arrival at every turn.
+
+**`NavigationSurface` is an AGENT, not the navmesh, and the player has none** —
+`CONFIRMED IN GAME 2026-09-09`. `via.navigation.NavigationSurface` (`NavigationSurface.cs:9`) carries
+`AgentRad` (`:257`), `AgentHeight` (`:265`), `Speed`, `TargetPos`: it is a thing that walks a navmesh.
+The World Tour player is stick-driven and never navigated, so nothing attaches one — in game,
+`AvatarNaviControllBase.NaviSurface` was null AND `getComponent(NavigationSurface)` on the player's own
+GameObject was null, once a second for two minutes, and the beacon fell back to the straight line in
+silence. The whole game declares only two members of that type
+(`AvatarNaviControllBase.cs:430`, `WTEventNpcNavigator.cs:75`), both on NPC controllers, and **no
+accessor anywhere returns one**.
+
+So the surface is **borrowed from a navigating NPC**: ask the scene for
+`via.navigation.NavigationSurface` components and take the first whose `hasValidMap()` is true. Its map
+is the city the player is standing in, which is all the query needs; that it belongs to a passer-by does
+not change whether a route from A to B exists, and crowd NPCs are avatar-sized. The query is READ-ONLY —
+`start()`/`adjust()`/`stop()`, the calls that would actually steer that NPC, are never made. It is never
+cached: the NPC can walk away or despawn, and a wrapper outliving its object is the finalizer crash.
+
+`queryPathSync` is declared only on the three `Navigation` subclasses (`NavigationSurface.cs:556-571`,
+`NavigationVolumeSpace.cs:190-196`, `NavigationWaypoint.cs:364-370`), never on the base and **never on
+`MapHandle`/`MapHandleBase`** — so the whole `AIMap`/`findMapHandle` family that crashed the game in
+2026-09-08 was a dead end on its own terms, not just a dangerous one. `hasValidMap()` is declared once,
+on `via.navigation.Navigation` (`Navigation.cs:1375`).
+
+**A path point is a PORTAL CROSSING, not a waypoint** — `CONFIRMED (decompiled + in game 2026-09-09)`.
+`via.navigation.map.PathInfo.PathPointInfo` (`PathInfo.cs:224-251`) declares exactly three members:
+`NodeInfo PortalNode` (`:228`), `vec3 PortalPos` (`:236`), `bool IsSkiped` (`:244`). There is no
+`Pos`/`Point`/`WayPoint`. A "point" is therefore one boundary between two navmesh polygons — the sibling
+`PortalEdgeInfo.PortalEdge` (`:152`) exposes the same thing as a `LineSegment`, and
+`NodeInfo.LinkBoundaryMinY/MaxY` (`NodeInfo.cs:199/205`) show it is a vertical span. So `PortalPos` sits
+somewhere along an EDGE, not on any line a walker would take, and the count is one per polygon crossed —
+NOT a fixed sample spacing (65 points for 19 m and 170 for 228 m, which is what disproved the
+"30 cm samples" reading recorded here earlier).
+
+**Reading them raw is useless, and this is what "it leads me into a wall" actually was.** In game, two
+completely different destinations produced nearly the same bearing, because both readings were the same
+few edges around the polygon the player was standing in. **The missing step is
+`PathInfo.createTraceLine()`** (`PathInfo.cs:307`) — the string-pulling pass that turns the corridor of
+portals into an optimised line. Call it on the report's `PathInfo` BEFORE reading `PathPointCount` or any
+point. It takes no arguments, returns `void`, and mutates our own `PathQueryReport`, not the borrowed
+NPC's navigation. Also skip any point whose `IsSkiped` is true. Do **not** use the parallel
+`getPathObjectAttribute(uint)` bitmask (`:310`, members at `:117-125`): its bit convention is not
+declared anywhere, and guessing one would be a magic number.
+
+**Index domain and order:** `getPathPointInfo(uint)` (`:274`) is bounded by `PathPointCount` (`:261`) and
+runs START → END (proved in game: walking from i=0 on a 228 m route yielded a point 4 m away, not 228 m).
+Same-domain siblings: `getPortalPos(uint)` `:319`, `getPortalNode(uint)` `:316`,
+`getPortalEdgeInfo(uint)` `:277`. DIFFERENT domain, do not mix: `getLink(int)`/`getLinkCount()`
+`:280/:268`, `getNode(int)`/`getNodeCount()` (`NodeInfoList.cs:18/21`).
+
+**There is no steering API to borrow.** Nothing in `via.navigation` offers `getNextPoint`/`calcNextPos`/
+`getSteerTarget`. `via.navigation.NavigationInfo` has exactly what one would want —
+`CurrentDestination` (`NavigationInfo.cs:48`), `FinalDestination` (`:54`), `DirectionVectorXZ` (`:36`),
+all safe parameterless `vec3` getters — but **nothing returns a `NavigationInfo`**: it only arrives as a
+delegate argument (`AvatarNaviControllBase.cs:633 OnNavigateUpdate(NavigationInfo)`) to an agent actually
+running `start()`. Unreachable from a passive query, and constructing the delegate is the forbidden
+family. `Navigation.queryCurrentNode()`/`queryNextLink()`/`queryNextNode(...)` (`:1378-1390`) are safe
+shapes but describe the BORROWED NPC's own route, not ours.
+
+**`calcDistance`:** `enum DistanceType { Raw, Path }` (`PathInfo.cs:218-222`), `calcDistance()` `:289`,
+`calcDistance(DistanceType)` `:292`. `Raw` = straight start→end, `Path` = summed along the corridor.
+
+**Measured reference values** (Metro City, borrowed NPC agent): `agent radius=0.250 m height=2.000 m`,
+`map=''` (the name reads empty), 14-21 `NavigationSurface` components live in the scene at any time. An
+objective 12 m up a building correctly returned `Exist=False`.
+
+**Path point 0 may be the player, not a turn.** The step-9 trace was written to settle that and it no
+longer has to be settled: `FirstCorner` now walks the points in order and takes the first one farther
+than the navmesh agent's own radius (`NavigationSurface.AgentRad`) from the avatar, on the ground
+plane. Every negative answer — switch off, no navmesh, rate-limited, no route, corner unreadable —
+falls back to the straight line, i.e. to the beacon's previous behaviour, never to silence.
+
+
+## World Tour — multi-level routes through ladders (2026-09-22) — `PENDING RUNTIME VERIFICATION`
+
+**Problem, from the 2026-09-09 log.** Mission 11011's NPC stood at y=12.2 on a roof; the player's
+navmesh node could not reach it (`PathNotFound`, `destNode=10421`: a real node on a DISCONNECTED
+island). `ApproachFinder` then guided to the ground directly beneath it, and the player circled
+there for minutes ("Hacia el pie de objetivo, a 4 metros"). Ground-level route guidance itself
+worked in that session: repeated V presses read 96, 90, 84 … 5, 4 m along real bends.
+
+**Evidence the fix relies on.** The navmesh covers roofs as separate islands, so
+`queryPathSync` can answer "are A and B connected on foot" between ANY two points, not only from
+the player. No ledge-climb mechanic exists in the avatar stubs (`Climb`/`GetOver` are only
+action-guide labels); the explicit vertical connector is the ladder gimmick
+`app.worldtour.om.Om011000` with `GroundPoint`, `EndPoint`, `StartPoint`, `UpVec`,
+`IsInitializeParam` (`Om011000.cs`). Other connector leads, not yet used: `Om026000` warps expose
+`GetPlayerStartPos()`/`PlayerStartPos`; `Om013000.RequestType.CabinetWarp`;
+`Om006000.State {Up, OnDescent, Stop, Under}` (a lift-like gimmick).
+
+**Design (code: `LevelRoutePlanner` pure search, `LevelRoute` runtime driver, `LadderCatalog`).**
+1. The direct query from `BeaconDestination` fails with the player on the mesh → search starts
+   (`Searching`); the beacon is silent meanwhile and V says "searching".
+2. `LadderCatalog` reads every live, initialised ladder (32 per frame): low/high standing points
+   = `GroundPoint`/`EndPoint` ordered by height.
+3. `LevelRoutePlanner` asks one question per free query slot (`FieldNavPath.TryConnect`, shared
+   250 ms limiter), with union-find so answers are reused. One ladder first — its end nearest the
+   target must connect to the target, its other end to the player — then two chained ladders.
+   Candidates are ordered by straight-line detour. Budget: 48 answers, 96 raw queries.
+4. An endpoint the engine reports off-mesh (`StartNodeNotFound`/`DestNodeNotFound`) is retried
+   moved one stride (1 m) along ±X/±Z; a moved spot that answers replaces the ladder end. A target
+   that is itself off-mesh first re-asks the direct walk with the moved target; if no move puts it
+   on the mesh the search aborts.
+5. `Following`: legs are "walk to ladder end" then "walk to target". `Progress` advances only when
+   the player stands within one avatar height (2 m) of the far end's height and 4 m of it
+   horizontally, and goes back the same way at the near end. Failed answers are ignored while
+   the avatar is off-mesh or climbing (within 2 m of a planned ladder and more than 1 m inside
+   both ends). A leg unreachable for 3 s replans (at most 2) and the replan asks the direct walk
+   first, in case the player reached the target's island another way. The last leg follows a
+   drifting target (walking NPC, contact point that moves with the player).
+6. `Failed`: the old `ApproachFinder` point below/above the target, spoken as such. Every 30 s a
+   SILENT retry re-sweeps the ladders and re-asks the direct walk; the full ladder search only
+   reruns if the ladder set changed or the player moved 8 m. It speaks only if it finds a route.
+7. The route belongs to the selection key (map pick or mission object), not to the field
+   session: menus, the phone and dialogue pause it without discarding the plan. The search
+   starts from the player's position when the direct walk failed, so walking meanwhile does not
+   mix two islands. A query that cannot run (no navmesh agent yet) is retried, never read as
+   "not connected"; the 96-query budget bounds it.
+
+**Speech (`RouteNotice`, `wt.route.*` in en/es/pt):** "The destination is N meters above you.
+Searching for a ladder" → "Route found through a ladder, N meters away" → clock/turn lines name
+"ladder" → at 4 m "Ladder here. Climb up" (the game's own action prompt follows) → after climbing
+"Ladder done. Continue to objective, N meters". Failure: "No ladder found that reaches the
+destination", then the approach texts.
+
+**Log lines to read after a test:** `Level route: N of M ladders readable` (N=0 → ladder reads are
+wrong), `Level route: no walk from … (+12.1 m vertical); searching ladders`, `Level route: plan
+after Q questions: ladder up (…) to (…) -> objective`, `Level route: leg 0 -> 1`, or `Level route:
+no plan after … over N ladders; #i low (…) [target yes/no/?, player yes/no/?], high (…) […]` —
+the eight ladders nearest the target, which is what the next iteration needs.
+
+**First run (2026-09-26, mission 11011, same roof NPC as 2026-09-09).** The search ran as designed:
+`7 of 9 ladders readable`, 14 questions, and EVERY ladder end answered `target no` — no loaded ladder
+reaches the objective's island (nearest: #1 at (-245.2, 4.8→10.1, -111.1), #3 at (-244.0, 0.1→5.1,
+-121.6), 16-17 m from it; the target stands at y 12.2, and was also logged at y 14.0 at the same XZ).
+Fallback guided to the ground under it and the periodic line said "objetivo a las 12, a 5 metros": the
+distance was to the approach point, the objective 12 m above. Fixed: approach legs are named "pie de
+<objetivo>" and arrival says the height (`wt.aim.approach_here`). Unknowns for the next run, now logged:
+the two unread ladders (`unread: hidden|uninitialised (x, y, z)`), why the HUD marker was not used
+(`HUD unused (...)`), and every holder object of the mission target by name and position — the
+first holder may be a placeholder, not the NPC the player must reach.
+
+**Second run (2026-09-26): partial plans.** The mission is Chapter 2-2 "Moratones a los Caracartones":
+the target is the boss Boluo (`pNPCAvatarBase`, the `IconNpc_450033` holder floats 1.8 m above him);
+the map icon sits at the same point, so the target is right. Walkthroughs: climb a ladder beside the
+building, a "Chinese Food Restaurant" sign blocks the roof path (break it with any master action,
+hold R2/RT + a face button), then a second ladder leads to Boluo. That matches #3 (0.1→5.1) then #1
+(4.8→10.1); yet Boluo stands at 12.2 and no ladder end connects to his node, so something the navmesh
+does not model (a ledge climb, a jump, or the sign itself) closes the last gap. The planner therefore
+no longer stops at "no plan": `LevelRoutePlanner.Closest` walks ladders outward from the player
+(breadth first, one question per slot, nearest foot with the top nearest the target's height first)
+and returns a PARTIAL plan to the reached spot nearest the target's height (at least one level, 2 m,
+better than the player's). Its last leg stops at that ladder top; reaching it switches to the
+approach finder (`LevelRoute.AtClosest`), which now restarts when the player changes level and
+ignores probes made while off the navmesh. Speech: `wt.route.partial_one/partial_many` when found,
+`wt.route.closest_up/down/level` at the top ("look for a ledge, a jump or something to break with a
+master action"). The failure line now also carries `player yes/no` for every end the partial search
+asked, which says whether the sign cuts the navmesh (#3 high to #1 low `no`) or not.
+
+**Third run (2026-09-26): the partial plan worked, the ladder did not.** 48 questions produced
+`partial plan: ladder up #3 (-244.0, 0.1→5.1, -121.6)`; #1's foot (4.8) answered `player no`, i.e. not
+reachable from the street. The walk to #3 was 126 m for a 28 m straight line (the ladder is round
+the far side of the building, as the guides say). The player stood within 1-2 m of the foot for two
+minutes, "Ladder here" was spoken, and nothing happened: no `leg 0 -> 1`, and the action-prompt reader
+never logged once (`Exploration action HUD` absent — unknown whether the HUD hook fires at all).
+Leading hypothesis: a fire-escape ladder whose lowest rung hangs above the ground (`GuideDef`
+has `Ladder_Catch`/`Ladder_Up_Air`). Added: `LadderCatalog` reads each ladder's `StartPoint` height
+above its floor and its `WTCityOM.AccessTarget`; the sweep line now ends with `lowest rung above the
+floor: +x.x m` per ladder; at a planned ladder `Ladder contact:` logs every 3 s what
+`CurrentAccessInfoList` holds (`(this ladder)` marks a match), "Ya puedes agarrar la escalera" is
+spoken when the game starts offering it, and a rung ≥ 1 m up says "salta hacia ella para agarrarla";
+`Exploration action HUD hook fired; IsShow=` logs once. The mission beacon's far gap went from 2.5 s to
+0.5 s (near 0.1 s), and it keeps pinging under other readers' speech (tester: impossible to follow).
+
+**Fourth run (2026-09-26): climbing works; the partial plan picked the wrong building.** All 9 ladders
+read, every `StartPoint` equals its `GroundPoint` (lowest rung +0.0 m: no fire-escape ladders here).
+`Ladder contact:` shows the game offering the ladder as `app.worldtour.om.WTOmAccessTarget (this
+ladder) at 0.50 m` only when the avatar stands at it, facing it; "Ya puedes agarrar la escalera"
+fired at that moment and the tester climbed with the action button. `Exploration action HUD hook
+fired; IsShow=False` — the prompt HUD is reached, but its `IsShow` never read true all session.
+Two faults: (1) gap-only ranking chose a ladder 85 m from the boss (top 7.9, gap 4.3) over #5 23 m
+away (top 5.1), and the 30 s retry then sent the player back down toward a 133 m-away tower (top
+18.7). Partial ends are now limited to `LevelRoutePlanner.NeighbourhoodM` (32 m flat from the
+target) and questions go to ladders whose top is nearest the target first. (2) The mission
+target's single holder alternates between `IconNpc_450033` (y 14.0, the NPC's map icon while the
+NPC is streamed out) and `pNPCAvatarBase` (y 12.2), and the route was keyed on the object address,
+so every swap restarted the search. The key is now the objective's slot (mission id, kind, index)
+plus a generation bumped when the target jumps more than 8 m. Also: the partial end is reached only
+standing within 1 m of the ladder top's height (it fired at y 6.0 of 7.9, mid-climb).
+
+**Fifth run (2026-09-26): right ladder, wrong hand-over.** The plan chose #5 (-244.0, 0.1→5.1, -121.6)
+as intended. "Climbed" fired at (-244.0, 4.5, -121.5) — still ON the ladder, 0.6 m below its top — and
+the approach finder probed from there: the avatar's navmesh node was the street below, so the point
+under the boss "routed" 131 m along the streets and the beacon led the player back down into walls.
+Now the partial end is declared only when a route from the player to the last ladder's top EXISTS
+(`LevelRoute.LegResult`), i.e. the player stands on the roof the ladder serves; until then the leg
+stays the ladder's (no new speech), holding within 2 m of the top.
+
+**Sixth run (2026-09-26): on the 5 m roof, nowhere to go.** Climbed #4 (the (-244.0, 0.1→5.1) ladder;
+indices change per sweep). The hand-over still fired at the ladder's XZ (4.7 of 5.1): a route to the top
+existed from there, so the navmesh check alone does not prove stepping off. The approach again chose a
+133 m route (the point under the boss, reached through the streets), and the tester tried breaking
+everything without result. The second ladder's foot (-245.2, 4.8, -111.1) is 10.5 m from #4's top,
+level with it, and answered NOT connected: the signature of the sign. Added **blocked legs**:
+`LevelRoutePlanner.BlockedHop` takes one ladder whose foot is level with (< 2 m) and within
+`BlockedHopM` (16 m) of a reached spot the answers say does not connect, when its top is at least a
+level nearer the target. The leg is guided straight at the foot (no route, never "broken"), spoken as
+`wt.route.blocked_ladder` ("…no hay paso libre…acción de maestro, o un salto…"), and
+`wt.route.path_open` when a route appears. On entering it, `ObstacleProbe` logs every
+`WTCityOM` within 3 m of the straight walk (`Level route: blocked walk … city objects within 3 m`),
+which should name the sign's type. Up a partial route, approach stand-ins whose walk exceeds the
+straight distance plus `NeighbourhoodM` are rejected (the beacon points at the destination).
+
+**Seventh run (2026-09-26): both ladders climbed, stopped 16 m from the boss.** Plan: #4 up → blocked #2
+up → stop at (-245.2, 10.1, -111.1). The corridor probe found only the ladder itself among 456
+`WTCityOM` objects (the sign is not a city object, or stands outside 3 m); 14 s later a route to #2's
+foot existed ("Ya hay paso") and the tester climbed it. On the 10 m roof the approach finder's
+under-target and 8 m ring probes all failed; ring-B probe 15 (-240.6, 9.4, -115.6), 16 m from Boluo,
+routed. So Boluo's spot (y 12.2) is its own island ~3 m above the roof, joined by something the NPC
+agent's navmesh does not model (probably a ledge the avatar climbs: `GuideDef.Climb`). The tester
+then circled the stand-in against a "pared alta". Changes: once the player stands at the stand-in
+(`ApproachFinder.Arrived`), the beacon aims at the destination itself and says `wt.route.at_foot`
+("…El sonido apunta ahora a él: acércate buscando por dónde subir"). The prompt HUD's `IsShow` never
+read true, so `FieldExplorationHooks` now also hooks `UIHud_PlayerActionGuide.RequestShowFromPlayer` /
+`RequestShowFromOM` (args[2] = `GuideDef`): each request is announced as "Disponible: <acción>"
+(Trepar, Saltar por encima…) and each distinct action logged once as `the game requested action
+prompt <GuideDef>`.
+
+**Eighth run (2026-09-26): mission completed.** The route led up both ladders; from the 10 m roof the
+tester got up to Boluo. How is not in the log: the `RequestShowFromPlayer`/`RequestShowFromOM` pre-hooks
+were installed (`request hooks=2`) but never fired, not even at ladders, so those methods are not how
+this build raises its prompts (or the hook does not reach them). Next lead for context actions: the
+widget side (`UIWidgetPlayerActionGuide`) or `AvatarPlayerControll.CancelableActionInfo`
+(`UIHud_PlayerActionGuide.ActionInfo` / `SetActionInfo`).
+
+**Open questions for the first run:** are `GroundPoint`/`EndPoint` on the navmesh (count of
+nudges), does the ladder top connect to the roof island, does the avatar read off-mesh while
+climbing, and are there roofs whose only access is not a ladder (then the failure line shows
+every nearby ladder answering `target no`).
+
+
+## World Tour — turning the camera to face a world point (2026-09-09) — `NOT YET RUN IN GAME`
+
+`Services/WorldTour/CameraAimService.cs`, driven by `Hooks/WorldTour/MapAimHooks.cs` (**R3 / V**).
+
+**Turn the CAMERA, not the avatar.** World Tour movement is camera-relative, so rotating the avatar
+leaves "forward" pointing the old way — useless. The avatar's rotation is also rewritten every frame by
+`AvatarFieldParam_Common.ApplyDefaultRot(Transform, float, AvatarFieldParam_Volatile)`
+(`AvatarFieldParam_Common.cs:565`), so a `via.Transform.set_Rotation` write does not survive. (`AxisZ`
+is getter-only, `Transform.cs:112`.)
+
+**What to write:** `app.worldtour.WTFollowCameraController.CurrentRotation` — a `via.vec3` of euler
+angles, get+set (`WTFollowCameraController.cs:20`), consumed by `updateRotation(float)` (`:68`). It is a
+value-type field write: no engine call, nothing by reference, nothing constructed. Hold it for a few
+frames (the follow layer interpolates) and freeze look input meanwhile via the existing
+`CameraHoldService`. Controller chain: `WTPlayerCameraController → WTFollowCameraController →
+WTFixedCameraController → WTCameraControllerBase → WTBaseBehavior`
+(`WTPlayerCameraController.cs:12`), and it IS findable with `via.Scene.findComponents`.
+
+**Two things the stubs cannot answer, and must be derived at runtime rather than guessed:** which euler
+component is the yaw (the base class has BOTH `deg2_to_rad3_xy` and `_xz` converters,
+`WTCameraControllerBase.cs:452/458`) and whether the stored value is radians or degrees. Ground truth is
+already available — the camera's true bearing from `FieldDirectionService.GetCameraForward()` — so every
+component is compared against it under both units and both signs, and the match wins. The write is then
+read back: `FieldProbeService.Member` may hand back a COPY rather than a view into the controller, and
+the read-back is what distinguishes "it worked" from "it silently did nothing". On any failure the
+feature speaks the clock direction instead of turning. A wrong guess would spin a blind player's camera
+to an arbitrary heading, which is worse than not turning at all.
+
+**Other routes, ranked and recorded so they are not re-derived:** `followPlayer(vec3, bool)`
+(`WTPlayerCameraController.cs:665`) is shape-safe but its semantics are unverified; there is **no**
+named camera-reset method (the reset is state — `_IsReset`, `_ResetStartRotation`, `_ResetTargetRotation`,
+`_ResetCameraTimer`, `WTPlayerCameraController.cs:329-367` — almost certainly begun inside
+`camera_input_proc`); `AvatarInputController.SetMove(vec3)` (`AvatarInputController.cs:1126`) is
+shape-safe but moves without turning, so the compass stays wrong; `AvatarFieldParam_Volatile.RotationInfo
+.AngleControllTargetVec` (`AvatarFieldParam_Common.cs:580`) turns the avatar only. **UNSAFE, excluded:**
+`SetAngleControllParam(ref vec3, ref float)` (`:589`) and `AvatarBase.RequestSetRot(ref Quaternion)`
+(`AvatarBase.cs:1539`) need a `FieldOutBuffer`, never `CreateValueType`;
+`_GetCurrentInput(ref AvatarInputData_Array1D)` (`AvatarInputController.cs:1120`) is a by-ref REFERENCE
+type — the documented crash family.
+
+
+## World Tour — naming WHERE THE PLAYER IS (2026-09-10)
+
+What the game models between "Metro City" and "that shop over there", and what it does not.
+
+### The good: the game announces sub-areas itself
+
+**`app.UICityHud_SectionNotice`** — the on-screen banner a sighted player sees on crossing into a named
+part of the city. `mTextSection` (`UICityHud_SectionNotice.cs:147`) is the already-localized, already-
+worded string ("Hong Hu Lu Chinatown - Calle principal"); `mLastReuestedSectionId` (`:139`) is the id it
+last announced; `RequestSectionNotice(CitySectionInfo, bool)` (`:184`) is the entry point, mirrored by
+`CitySectionManager.RequestSectionNotice` (`:68`). **This is the best source by a distance**: the game
+decides WHEN a crossing counts and has already resolved WHAT to call it, so nothing has to be inferred.
+It is a `UICityHud_*` component and so IS reachable with `via.Scene.findComponents` — the same route
+`MissionGuideReader` has always used. Implemented as `Hooks/WorldTour/SectionNoticeHooks.cs`.
+
+**Sections, in the field:** `CitySectionManager.SectionInfoList` (`CitySectionManager.cs:29`) is the set
+the player is currently INSIDE, maintained by `AddSectionInfo`/`RemoveSectionInfo` (`:44/:47`);
+`CurrentSectionId` (`:37`), `UpdateCurrentSectionId()` (`:65`). Fed by `CitySectionZoneGroup`
+(`CitySectionZoneGroup.cs`) — a world Component with `onContact`/`onOverlapping`/`onSeparate`
+(`:112/:114/:117`). `CitySectionZone.cs:8` and `via.physics/Zone.cs:6` are **empty stubs**: there is no
+point-in-zone test to call. Per-section world AABBs do exist:
+`SectionMapSettingCatalogUserDataHolder.GetSectionMapSettingData(uint)` (`:16`, static) →
+`SectionMapSetting.SectionId` + `MapSettingBase.MinPos/MaxPos` (`:53/:61`).
+
+**`CitySectionDataUserDataDict` is ENUMERABLE** (`TableDataManager.cs:960`, an `IDictionary<uint,object>`
+on a resident table, `ResidentTableData.cs:134`). `ZoneNameService` currently does a keyed `get_Item`
+plus a `ManageId` cross-check (`ZoneNameService.cs:130`) that **can reject a good record** — enumerating
+the dict once per city and building `id → name` is both safer and cheaper. Avoid
+`TryGetCitySectionDataUserData(uint, out ...)` (`:3079`): an `out` parameter.
+
+### The good: interiors are nameable
+
+`GUIAccessDataManager.GetWTCityOMSetterData_OM(OMType.Shop)` (`:126`, dict at `:90`) returns the
+registered facility setters. Each `WTCityOMSetter` gives `GetDispName() : Guid` (`WTCityOMSetter.cs:929`
+— feed the existing Guid resolver, yields e.g. "salón de belleza"), `GetShopCategory()` (`:908`),
+`GetFacilityIconType()` (`:926`) and `SpawnedObject` (`:792`) for a transform. Skip
+`GetShopId(out uint)` (`:911`). **The game's own "you went in":**
+`Om008000.CallShopInSoundTrigger()` / `CallShopOutSoundTrigger()` (`Om008000.cs:241/:244`), with
+`ShopId` (`:17`) and `IsBodyShop` (`:25`). There is **no** `IsInside`/`CurrentShop` member anywhere.
+
+### The bad: street names and intersections DO NOT EXIST
+
+Searched the whole tree. The only `Street` is `WTDefine.BattleType.Street` (`WTDefine.cs:5540`) and
+`HudDef.BATTLE_TYPE.STREET` (`HudDef.cs:661`) — a fight type, not a road. There is no `Road`, `Cross`,
+`Intersection`, `Corner`, `Block`, `Plaza` or `Avenue` type or member. **"Cruce entre X e Y" cannot be
+read from the game**; it could only be synthesised from two named points, or derived geometrically from
+navmesh nodes with three or more exits — our invention either way, and it must be labelled as such.
+
+Named-place-with-position sources are exactly three: fast-travel points
+(`FastTravelPointUserDataRecord.PointNameID.GUID`, confirmed in game), OM setters (above), and section
+AABBs. `PointDataCityInfo` has an id and a `Position` but **no name** (`CityPointDataInfoBase.cs:12,20`).
+
+### Also dead ends
+
+`IconInfo.ZoneInfo` is `ZoneInfoData { float Radius }` and nothing else (`UIMapWindowBase.cs:319-323`);
+there is no ZONE member in `ICON_TYPE` or `ICON_GROUP_TYPE`, and the radius decorates icons like
+`BH_RAID_COOPACTION_AREA`. `WTAreaManager.getActiveAreaList()` (`:1573`) → `AreaControl.AreaName`
+(`:341`) resolves to streaming FOLDER names (`wtc0400_*`), never localized — usable as a change trigger,
+never as something to speak.
+
+## World Tour — native navigation infrastructure leads (from stubs, 2026-09-12) — `NOT YET RUN IN GAME`
+
+### Follow-up: independent exploration radar (2026-09-14)
+
+**Implemented prototype, later 2026-09-14 — pending runtime verification.**
+`FieldExplorationHooks` installs a dynamic pre-hook on
+`UIHud_PlayerActionGuide.FlowEvent_LateUpdate`: read already active widget data, copy
+strings/IDs, and announce from `LateUpdateBehavior.Post`. `FieldActionReader` requires
+HUD/widget `IsShow`, excludes manual hides, reads `InputGuideParts.Control` visible text
+before localized action-name fallbacks, and expires snapshots after 500 ms. It never
+retains native HUD wrappers. New `MemberAccess.ReadFieldsFirst` checks concrete and
+backing fields before getters, caching only metadata; existing consumers are unchanged.
+
+`FieldAccessCatalog` samples `Om011000`, `Om016000`, `Om017000`, one family per 500 ms
+and at most 32 objects per pass, rotating large lists. It retains only ID/text/position
+snapshots for 6 s and reports within 12 m. Ladder `GroundPoint`/`EndPoint` require
+`IsInitializeParam`; the nearest endpoint determines up/down description. Doors use
+their int-width open-state enum; byte-width `Lock=AlwaysLock` describes a blocked door.
+Other lock configurations do not claim the player lacks a key. Discovery does not claim
+walkability and does not select a destination. Repeated announcements use identity,
+state, approach-distance bands and alignment, with a 4 s speech gap. Area/field changes
+clear the memory. Active action prompts take priority over access discovery; the existing
+field, battle, dialogue and tutorial gates apply. An aligned discovery adds a two-note
+cue using existing tone synthesis, without new audio files.
+
+`AccessPointReader` now calls `GetNearPos` on enabled, non-dynamically-disabled shapes
+from the target's `CheckSetting.ShapeData`, using the access component's own transform.
+It honors the bool return and checks finite output before choosing the nearest point.
+Global/default access must be enabled. This is still geometric proximity, not a guarantee
+of reachability. Mission contact confirmation matches the HUD objective access-target
+identity against the existing `CurrentAccessInfoList`.
+
+`FieldNavPath` is split into query, binding, reading and diagnostics partial files.
+`RouteLookAhead` preserves bends outside half the borrowed agent's radius instead of
+skipping everything within 4 m. Four metres now bounds straight look-ahead only; point
+reads are capped at 64. It reports left/right bends using the calibrated XZ basis.
+`MissionBeaconHooks` refreshes at 500 ms, announces approaching/near turns, changes in
+route availability, and nearby versus interaction-range states. The mission sound keeps
+guiding inside 4 m and uses route distance when known. `BeaconDestination` preserves
+approach metadata on failure, resets on goal identity change, and reuses same-destination
+answers for throttled queries for at most 500 ms; actual failures invalidate that answer.
+No automatic movement, interaction, camera turn or goal switching was added.
+
+Radar continuous mode now defaults on; tutorial panels suppress it along with dialogue.
+The front debounce ignores lateral-state changes. Its one-shot formatting was moved to
+`FieldNavRadarReadout.cs`. The existing sensor/filter split and disabled navmesh-exit
+finder remain; this prototype does not claim to find every alley or connect all floors.
+All new captions have English, Spanish and Portuguese entries. Twenty-seven pure-logic
+checks pass (`dotnet run --project tests/Navigation.Tests`); native semantics/audio still
+need the runtime sequence below. The review findings that follow describe the pre-fix
+implementation where stated.
+
+Read-only review of the local generated game interfaces and current mod. These files
+expose signatures and metadata, not native method bodies. Findings below are declaration
+evidence and design implications, not runtime confirmation. No new native calls were made.
+
+**Interaction-position binding mismatch.** In
+`app.worldtour.avatar/AvatarAccessTargetBase.cs:467`, `bool GetNearPos(ref vec3,
+Transform, ref vec3)` belongs to the NESTED `AvatarAccessTargetBase.AccessCheckShape`,
+not to `AvatarAccessTargetBase` itself. Current `AccessPointReader.Bind` searches the
+target component and parents, so it cannot find this declared method there unless a
+runtime subtype adds another method. `MissionTargetService` calls that reader, but its
+successful binding has not been verified. Correct investigation chain:
+`target.CheckSetting.ShapeData` (or `target.GetShapeData(index)`) -> an enabled shape
+-> `GetNearPos` on THAT shape, respecting the bool return. Existing reader ignores the
+return as well. A nearest geometric access point is not necessarily reachable, nor an
+entrance to a disconnected floor; the reader's existing comments overstate that guarantee.
+
+`AccessCheckShape` includes `DistanceXZ`, `DistanceY`, the open-detail variants,
+`ToAvatarAngle_Degree`, `CustomAvatarAngle_Degree`, and option names `Enable`,
+`CheckCapsule`, `CheckToAvatarAngle`, `CheckAvatarAngle`, `CheckRayCast`,
+`CalcWhenAreaOut`, `LandAccess`, `AirAccess`. Target has `DynamicDisableShapeIndexList`
+and `Enable_AllAccess`/`Enable_DefaultAccess`. Do not treat every configured shape as
+currently usable. Prefer already computed contact data over replaying `AccessCheck`.
+
+**Final approach uses an existing successful runtime lead.** The earlier field-awareness
+capture above confirms `AvatarManager.CurrentAccessInfoList` becomes populated at
+interaction range (example 1.54 m); entries expose `AccessInfo.TargetInfo` with `Target`,
+`ShapeIndex`, `NearPos`, `Distance`, `Angle`. This is a stronger starting point than a
+fixed 4 m arrival sphere. Match the intended target and action availability; list presence
+alone must not be assumed to prove mission completion. Additional declaration leads:
+`AvatarBase.GetCurrentAccessTarget()` and
+`PlayerAccessTargetSearcher.CurrentTargetInfo` / `CalclatedList`. Do not confuse the
+currently selected contact target with the mission target.
+
+**Action vocabulary already exists.** `app/UIWidgetPlayerActionGuide.cs:118` declares
+`GuideDef`: `Ladder_Up`, `Ladder_Down`, `Ladder_UpDown`, `Ladder_Slide`, `Ladder_Catch`,
+`Ladder_Up_Air`, `Open_TreasureChest`, `Open`, `Close`, `EnterShop`, `GetOutCity`,
+`Climb`, `GetOver`, among others. Widget has `GuideType`, `AccessTarget`, `DispPosition`,
+`ViewType`, `InputGuideParts`. `UIHud_PlayerActionGuide` has `_widgetList`, `ActionInfo`,
+`RequestShowFromOM(GuideDef, WTOmAccessTarget, vec3)` and `RequestShowFromPlayer`.
+Use active widgets, their localized GUI/input-guide text and target identity to announce
+available actions. Confirm world versus screen coordinates before interpreting position.
+No current mod code references this guide family. `PadGuideHooks` covers tutorial panels,
+not this native context-action surface. Seeing a widget does not prove it is active.
+
+**Ladder geometry is explicit.** `app.worldtour.om/Om011000.cs` declares `StartPoint`,
+`EndPoint`, `GroundPoint`, `UpVec`, `AllLength`, `AllStepNum`, `IsInitializeParam`,
+`GetBothEndPoints(out vec3, out vec3, out vec3)` and `GetNearStepPos`. The avatar exposes
+`CalcNearLadderSelfPos(Om011000, out vec3, out vec3, out int)` and `CalcLadderSelfPos`.
+Together these identify a ladder-specific component and possible approach geometry;
+verify live instances and which endpoint is accessible from the player's floor. Merely
+knowing the upper endpoint does not prove it connects to the objective's walkable region.
+Read existing fields first; do not invoke contact actions or ladder-control actions.
+
+**Door-like objects carry access restrictions.** `app.worldtour.om/Om016000.cs` exposes
+`State` (`Close`, `UnlockKey`, `LockRequesting`, `LockRequestingReverse`, `Opened`,
+`OpenedReverse`), `Side` (`BothSides`, `DefaultSide`, `ReverseSide`), `Lock`
+(`NoLock`, `NeedKey`, `SwitchOm`, `AlwaysLock`), `Move` (`OpenOnly`, `CityChange`),
+`CityId`, `FastTravelPointId`, `IsNeedKey`, `IsEnableExecute`, and `IsLightDoor`.
+`Om017000` additionally has `PointID`, `CurrentState` (`Open`, `Close`), and
+`ActionType` (`None`, `DoorTouch`). These are concrete door/transition leads, not a
+confirmed catalogue of every entrance. Configuration `NeedKey` alone does not tell us
+whether the player currently has the key. Do not call `RequestOpen`, `UnlockKey`,
+`RequestAction` or script executors to discover state.
+
+**Route corridor information can refine the radar.** `via.navigation.map/PathInfo.cs`
+already offers `getPortalEdgeInfo(uint)` -> `{ PortalEdge, IsValid }`, `getPortalNode`,
+`getLink`, `checkWallOverFloor` and `queryWallOverFloor`. `LinkInfo` has `Enabled`,
+`Extra`, `Attribute`, `queryFromNode`, `queryToNode`; wall-over enum is
+`NoWall/Up/Down/Same/Invalid`. Inspect OUR query report, not the borrowed NPC's
+`NavigationInfo`, whose movement vector and next link describe that NPC. This may let
+us inspect relevant corridor boundaries without the older `AIMap.findMapHandle` path,
+but each additional native binding still needs a bounded runtime probe. A portal is a
+polygon boundary, not automatically a physical doorway; wall-over is not proof of a
+ladder, staircase or action the player can perform. Do not guess attribute bit encodings.
+
+**Borrowed-agent caveat.** `NavigationSurface` exposes `AgentRad`, `AgentHeight`,
+`PortalOffset`, `CornerCloseRad`, `UseLowerOnly`, `DisableUseWallSameLevel`, and
+`AvoidSideSmallNode`; `PathQueryInfo` exposes `FilterTarget`/`FilterGroup`. A valid
+NPC surface proves a loaded map, not equivalence to the player's body and traversal
+permissions. Compare dimensions/constraints in diagnostics; do not modify the NPC.
+
+**Runtime sequence:** automatically log only changing relevant records in exploration:
+(1) contact-list target + active action widget for final approach; (2) one ladder's
+endpoints + prompt from both ends; (3) a closed/open/restricted door and access side;
+(4) a short route's portal edges and observed clearance. No diagnostic hotkey should
+be required. Preserve current battle/menu/dialogue gates and native lifetime rules.
+The available game log is dated 2026-09-09; it confirms old ground-level approach probes,
+not the new ladder/door/guide bindings. No current runtime verification is claimed.
+
+Result of a systematic sweep of `sf6 code/` for what the game itself has for navigation. Everything
+below is **declaration evidence only** (signatures, no bodies) unless marked otherwise; each item
+lists the type, the members that matter, and the caveat. Feeds `docs/wt-radar-improvements.md`.
+
+**Navmesh node API (for the exit finder).** `via.navigation.MapHandleBase`: `queryClosestNode(vec3)`,
+`queryClosestNode(vec3, NodeQueryInfo)`, `queryNode()` / `queryNode(NodeQueryInfo)` (city-wide —
+banned), `checkOutOfMap(NodeQueryInfo)`, `queryAttributeBitNo(string)`. **`via.navigation.
+NodeQueryInfo`** (concrete class): `setRegion(Sphere | AABB | OBB | Capsule)`, `clearRegion()`,
+`EnabledOnly`, `ExcludeShapes`, `setFilter(string, FilterType[, bool])` — the bounded search.
+**`via.navigation.map.NodeInfo`**: `Pos`, `Normal`, `Wall`, `WallHeight`, `ShapeType`,
+`LinkBoundaryEdgeCount`, `LinkBoundary`, `LinkBoundaryMinY/MaxY`, `getGlobalVertexCount()` /
+`getGlobalVertex(uint)`, **`queryLinkBoundaryEdge(uint) : via.LineSegment`**,
+**`queryClosestLinkBoundaryEdge(vec3) : LineSegment`**, `queryLinkToNodes()`, `queryLinks()`,
+`findIntersection(ref vec3, LineSegment)`, `hasAttribute(string)`. `via.LineSegment` is a value
+type with `start`/`end` (`p0`/`p1`). No navmesh raycast exists anywhere in `via.navigation`
+(exhaustive grep). Physics shape casts: `via.physics.System.castCapsule(Capsule, vec3, vec3,
+FilterInfo, ShapeCastResult)` and `castSphere(...)` (+ `uint options` overloads).
+
+> **Do not build auto-walk / teleport, and do not replace the radar (user decisions 2026-09-12).**
+> The player-movement leads in the next three paragraphs are recorded as facts only; nothing may
+> move the avatar. The navigation direction is "keep the radar, improve it" —
+> `docs/wt-radar-improvements.md`.
+
+**Player is driven by a navigation controller.** `app.worldtour.avatar.AvatarPlayerControll :
+AvatarNaviControllBase : AvatarControllBase` (the only other subclasses are `WTNpcAI` and
+`npc.WTNpcAIController`). Reached through `AvatarBase.Components` (`AvatarComponent.Controll`).
+`AvatarPlayerControll.UpdateLocalPlayerInput(AvatarInputController, bool isNavigationWorking)` —
+the game threads a "navigation is working" flag into the *player's* input update. CONFIRMED IN GAME
+(2026-09-09, above): the player's `NaviSurface` is null, so `queryPathSync` must still borrow an
+NPC's surface. `AvatarBase.StartNavi(PriorityType, NaviRequestData)` / `ForceEndNavi()` exist, but
+`NaviRequestData` has no factory (only `WTNpcAI.Get*NaviData_ForBehaviorTree(out ...)`), so using it
+means `CreateInstance` of a concrete class — legal but the crash-prone family; last resort.
+Escape hatch: `AvatarNaviControllBase.IsDontUseAIMap` + `NaviControllInfo.OnUpdateWithoutAIMap`
+(straight-line mode) and `SetSlaveMoveVec(vec3)` / `SetSlaveMoveRate` / `SetSlaveAngleRate`.
+
+**Input synthesis (preferred auto-walk route).** `AvatarBase.CreateInputController(PriorityType)`
+(+ `(PriorityType, bool destroyOnRequest, bool destroyOnRequestSuccess)`),
+`CreateSingleRequestInputController`, `DestroyInputController(PriorityType)`,
+`GetCurrentInputControllerPriority()`, `InputManager` (`AvatarInputControllerManager`:
+`DefaultInputController`, `AddedInputControllerList`, `CurrentTargetController`, `MoveVec`,
+`IsEnableInput()`). `AvatarInputController.PriorityType : byte { _Invalid, Default,
+__DebugDefault, FieldEvent, MenuUI, Flow, BattleIn, __DebugForce }`. Setters: `SetMove(vec3)`,
+`SetMoveRate(float)`, `SetAngleRate(float)`, `SetDoContact()`, `SetDashTurbo()`. **Space of the
+`SetMove` vec3 is UNKNOWN** (world vs stick); discriminator: compare
+`AvatarBase.GetCurrentInputMoveVec(out vec3)` with `GetMoveVec()` while pushing the stick under a
+rotated camera. Nothing in the game ever auto-moves the free-roam player (cutscenes use a separate
+`WTEventPlayer` actor and then warp: `ApplyEndPosition(out vec3, out Quaternion)`).
+
+**Teleport.** `AvatarBase.WarpImmediately(ref vec3)`, `(ref vec3, ref Quaternion)`,
+`(ref vec3, vec3 dir)`, `RequestWarp(ref vec3, ref Quaternion)`, `IsRequestingWarp()`.
+
+**Camera.** `AvatarPlayer.RequestResetCamera(vec3 cameraDir)` / `(bool isforce, bool useDir,
+ref vec3 dir)` / `()` — the game's own interpolated reset (`_ResetTargetRotation` on
+`WTPlayerCameraController`), cleaner than writing `WTFollowCameraController.CurrentRotation`.
+`app.helper.hWT.ResetPlayerCamera` — **native signature is `(System.Nullable<via.vec3>)`**, not a
+bare `vec3`; `hWT.CtrlPlayerInput(bool)` gates player input. `WTPlayerCameraController` has no
+target-yaw setter (only `followPlayer(vec3 rotation, bool)`, `followReset()`,
+`calcTargetRotation(vec3, vec3)`, `getCurrentRotation()`). `WTCameraManager.CurrentActualPosition`
+/ `CurrentActualRotation`.
+
+**Authoritative interactable registry.** `app.GUIAccessDataManager` (GuiManagerLayerBase):
+`IDictionary<HudDef.ContactUIType, IList<AvatarAccessTargetBase>> AccessTargetList`,
+`GetAccessTargetData(ContactUIType)`, `IDictionary<OMType, IList<WTCityOMSetter>> OMSetterInfoList`,
+`GetScenarioZoneData()`, `GetNpcDummyAccessTargetData(ContactUIType)`, `SectionManager`.
+`HudDef.ContactUIType { None=-1, NPC=0, Legendary=1, OM=2, OtherPlayer=3 }`.
+`AvatarAccessTargetBase`: `GetDispName()`, `GetContactUIType()`, `GetShopCategory()`,
+`TryGetShopIdFromMyShopComp(out uint)`, `GetUIPanelBasePos(ref vec3)`, `GetMissionTargetInfo()`,
+`IsMissionTarget`, `IsRelationToMaster()`, `AccessCheckSetting.ShapeData[i]` (`AccessCheckShape`:
+`DistanceXZ`, `DistanceY`, `ToAvatarAngle_Degree`, `GetNearPos(ref vec3, Transform, ref vec3)`).
+Concrete: `WTNpcAccessTarget` (`ObjectPos`, `IsLegendaryNPC`, `ShopComponent`),
+`om.WTOmAccessTarget` (`DispName`, `IsFastTravelOpenOM()`, `IsHome()`, `IsBodyShop()`,
+`TryGetContactIconDistance(out float)`). Gimmicks: `om.WTOMManager.AllOmList`, `OmWithId`,
+`OmSetterWithId`; `WTCityOM` (`InstanceId`, `AreaId`, `AccessTarget`); `WTCityOMSetter`
+(`SetAreaName`, `MissionTargetInfo`). Which `OmNNNNNN` is which gimmick is unverified beyond the
+five breakable families already in `BreakableCatalog`.
+
+**"Can I interact now".** `avatar.IAccessTargetSearcher.GetCurrentTarget()` →
+`AccessTargetInfo { Target, Type, ShapeIndex, NearPos, Distance, Angle, BasePriority }`;
+`AvatarManager.GetAccessableTarget(AvatarBase, ref IList<AccessTargetInfo>, ref IList<...>)`
+(by-ref reference type: do NOT call). Prompt UI: `app.UICityHud_ContactPanel.mActivePanelList`,
+`TargetPanel`, `static CheckForward(vec3, float)`; `UIWidgetContactPanel { TargetCtrl, Distance,
+Priority, DispState, AssetType }`.
+
+**Mission targets.** `app.UICityHud_MissionGuide`: `targetList`, `missionTarget`,
+`GetNeareastTarget(vec3 playerPos)` (selection is nearest-only, no priority field),
+`dispDistance` (straight-line — nothing in the UI layer touches `PathInfo`), `showArrow`,
+`IsOutSideScreen`, `CheckHitTerrian(vec3)`, `NEAR_DISTANCE` / `FAR_DISTANCE`.
+`ProgressMisionInfo { MissionTargetInfo, TargetObject, AccessTarget, NpcDummyTargetData,
+TargetType (NPC|OM|ZONE), UIPos }`. Zone objectives: `worldtour.ScenarioZoneGroup`
+(`ZoneTargetInfo { mTargetInfo, mListZoneTarget }`, `OnContactPos`, `ContactZoneID`),
+`MissionZoneTarget.mRadius`, `WTMissionZoneSystem` (`mDicScenarioZone`,
+`GetScenarioZoneGroup(uint)`, `CheckContactScenarioZone(vec3 start, vec3 end)`).
+
+**Map icon registries.** `app.UIMapWindowBase`: `ICON_TYPE` (SHOP_APPAREL … MASTER_TALK_SP),
+`ICON_GROUP_TYPE { All, TRAVEL, FACILITY, JOB, MISSION, MASTER, PIN, MAX }`, `IconInfo { GlobalPos,
+UiPos, TitleText, Type, GroupType, Pattern, IsFastTravelPoint, Priority, ZoneInfo }`, `PinInfo {
+CityId, PinTypeId, Position }`, `ConvertTo_UIPos(vec3)` / `ConvertTo_GlobalPos(vec3)`.
+`app.UIDeviceMapWindow`: `IDictionary<ICON_GROUP_TYPE, IList<IconInfo>> mIconInfoList`,
+`PinInfoList`, `TravelPoint`, `AddPinIcon(vec3 cursorPos, int colorTypeId)`, `RemovePinIcon(...)`,
+`SetupIconInfo_Travel/_FacilityNPC/_FacilityOM/_Mission/_Master/_Job/_Pin()` (probably only
+populated while the map is open — verify). Persistent pins: `worldtour.WTPlayerDataUI.
+GetCityPinInfoList(uint cityId)` / `AddCityPinInfo` / `RemoveCityPinInfo`. **No compass type and no
+route-guide line/arrow exist in the game** (exhaustive grep); the only directional HUD element is
+the mission-guide arrow.
+
+**World structure.** Fast travel: `worldtour.udCityPointList { CityPoints, FastTravelPoints }`
+(`CityPointDataInfoBase { mPointId, Position, Rotation }`, `PointDataFastTravelInfo.
+mAttachedData`), `CityPointHolder.PointList`, `WTFastTravelCtrl` (`PointID`, `UnlockPointIDArray`,
+`CurrentState`). Streaming graph: `WTAreaManager._AreaCtrlDict`, `_ActiveAreaHashList`,
+`OnAreaTransition`, `AreaData.NeighborhoodAreaList`. Physics: `via.physics.System.castRay /
+castSphere / castCapsule / castShape / closestSphere / queryAabb` with `CastRayQuery
+{ setRay(start,end) | (origin,dir,dist), enableNearSort(), enableOneHitBreak() }`.
+
+**Audio.** `soundlib.SoundManager.postRequestInfo(RequestInfo)` is the single play entry;
+`RequestInfo { SrcGameObj, TargetGameObj, Container, Positioned, ... }` — positional playback is a
+GameObject + `Positioned`; still only existing soundbank events (see § Game audio in
+`sf6-architecture.md`). `via.simplewwise.Driver.PlayerPosition` / `setListenerPosition`.
+`app.sound.Accessibility` holds only battle gauge/side SEs; `app.Option.ValueType` has no
+navigation-assist option (relevant: `MiniMapDisp=150`, `MiniMapRotate=151`, `CityHudAreaName=141`,
+`CameraAssist=313`, `CameraResetDirection=316`, `SoundSpatial=516`).

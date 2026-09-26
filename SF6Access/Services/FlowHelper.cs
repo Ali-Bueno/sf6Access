@@ -612,7 +612,7 @@ public static partial class FlowHelper
             {
                 var field = vt.GetTypeDefinition()?.GetField(name);
                 if (field != null)
-                    return Convert.ToSingle(field.GetDataBoxed(typeof(float), vt.GetAddress(), true));
+                    return Convert.ToSingle(PinnedValue.Field(field, vt, typeof(float)));
             }
         }
         catch { }
@@ -970,6 +970,24 @@ public static partial class FlowHelper
     }
 
     private static ManagedObject _tableDataMgr;
+
+    /// <summary>A <c>TableDataManager</c> user-data dictionary itself, for callers
+    /// that need to ENUMERATE it rather than look one record up. Keyed by
+    /// <c>ManageId</c> — which is not always the caller's own domain id, and is
+    /// exactly why enumerating and indexing by each record's own <c>id</c> is the
+    /// robust way to build an id-to-name map.</summary>
+    public static ManagedObject GetTableDict(string dictFieldName)
+    {
+        try
+        {
+            _tableDataMgr ??= API.GetManagedSingleton("app.TableDataManager");
+            if (_tableDataMgr == null) return null;
+            // Interface property getters don't dispatch on IL2CPP concrete types —
+            // read the backing field directly.
+            return GetObjectField(_tableDataMgr, dictFieldName);
+        }
+        catch { return null; }
+    }
 
     /// <summary>
     /// One record of a <c>TableDataManager</c> user-data dictionary, unwrapped

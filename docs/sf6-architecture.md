@@ -208,6 +208,19 @@ keeps the adapter active).
   rounded up to and aligned on the engine's own vector-register width read from the TDB (`via.vec4`),
   zeroed per call, wrapped in `NativeObject.FromAddress` — whose `Ptr()` returns that stable address
   verbatim.
+- **To WRITE a struct field on a live object, you MUST go through `Field.GetDataRaw`.** The corollary of
+  the bullet above, learned the hard way over three test sessions (2026-09-09, the camera aim): since
+  `REFrameworkNET.ValueType` is a managed `byte[]` COPY, *every* route that hands you one hands you
+  detached bytes — the untyped getter, `IObject.Call("get_X")`, and `Field.GetDataBoxed(..., objAddr,
+  false)` alike. Writing into that copy succeeds, and **reading it straight back returns exactly what you
+  wrote**, so the write appears verified while the engine never sees it. The camera aim shipped twice on
+  that false green light. The live address is `field.GetDataRaw(objectAddress, isValueType: false)`;
+  store into it with the STRUCT's own field metadata and `isValueType: true`
+  (`vec3Type.GetField("y").SetDataBoxed(rawAddr, value, true)`), which is the contract
+  `FieldOutBuffer.SetComponent` has always used. `Field` also publishes `OffsetFromBase` /
+  `GetOffsetFromBase()` if the offset is wanted directly. **A read-back through the same wrapper you
+  wrote through is not a verification** — re-read the raw address, or you are only testing your own
+  copy. Working example: `Services/WorldTour/CameraAimService.cs`.
 - **NEVER call a method whose `out` / `ref` parameter is a REFERENCE type.** For a value type the by-ref
   address is a struct buffer we can shape correctly. For a reference type there is no buffer that can be
   shown correct: the engine either stores an object pointer *through* the address (trampling the header
@@ -222,6 +235,24 @@ keeps the adapter active).
   `CreateInstance(0)` and **not** globalized. It also returns strictly more —
   `NumContactPoints` + `getContactPoint(i)` → `via.physics.ContactPoint` (Position/Normal/Distance/
   TimeOfImpact), returned BY VALUE and boxed by REFramework, so no caller buffer is involved at all.
+  Second case (2026-09-26): `AvatarEmoteHooks` invoked `TableDataManager.TryGetEquipEmoteNameMessage
+  (uint, out string)` with a null slot from inside the `SetEmote` pre-hook; each emote faulted in game
+  code (`RDX=0`, "Exception thrown in REMethodDefinition::invoke"), 10 times. The call was removed. It
+  was first blamed for that session's crash, but the Windows event log (.NET Runtime, event 1026) showed
+  the real one: the unpinned `ValueType` read below. Read that event before attributing a crash.
+- **Read a REFramework `ValueType` only while it is pinned — `Services/PinnedValue.cs`.** A struct
+  returned BY VALUE (`getContactPoint(i)` → `ContactPoint`, a `via.vec3` field) is a
+  `REFrameworkNET.ValueType` whose bytes live in a private managed `byte[] m_data`; `GetAddress()`
+  returns their address from a `fixed` block that has already ended (decompiled 2026-09-26). Every
+  `Field.GetDataBoxed(..., vt.GetAddress(), true)`, `vt.GetField(...)` or method call on it therefore
+  races the .NET GC: reading a vec3 field allocates the result first, a GC moves the array, and the
+  copy reads freed memory — `AccessViolationException` in `Utility.BoxData` → `Memmove`, uncatchable,
+  from `FieldRayContacts.Read` at radar rate (crash 2026-09-26 16:29, stack in the event log).
+  `PinnedValue.Use(vt, address => ...)` pins `m_data` for the duration (and falls back, with one
+  warning, if a REFramework update renames it); `PinnedValue.Field` reads one field. The hot paths use
+  it: radar contacts, `FlowHelper.ReadVecComponent`, `MemberAccess.ReadFieldsFirst`,
+  `FieldProbeService.Member`. Still unpinned, low-rate: menu Guid reads (`FlowHelper.ResolveGuid`,
+  `FlowHelperStructs`, `AvatarColorWatcher`).
 - **Never `CreateInstance` an interface, abstract class or generic instantiation.** REFramework's
   `CreateInstance` has no guard: it hands the type to the game's `System.Activator` and wraps whatever
   qword comes back in a `ManagedObject` (see the object-lifetime entry below for what that object's

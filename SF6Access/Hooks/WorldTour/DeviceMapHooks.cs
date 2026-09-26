@@ -84,6 +84,10 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
 
     private const int UNKNOWN = int.MinValue;
 
+    /// <summary>The free cursor's GUI control (the game's own spelling). Checked only when the
+    /// type declares it, so a renamed field cannot silence the cursor.</summary>
+    private const string FREE_CURSOR_FIELD = "mCtrlFreeeCursor";
+
     /// <summary>How many polls the entry announcement waits for the location
     /// texts to be filled in before giving up (~2 s at ReadInterval 4).</summary>
     private const int ENTRY_RETRY_POLLS = 30;
@@ -96,6 +100,7 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
     private bool _groupFocusLogged;
     private int _entryPolls;
     private bool _entryDone;
+    private bool _cursorField;
 
     protected override void OnBind()
     {
@@ -107,6 +112,7 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
         _groupFocusLogged = false;
         _entryPolls = 0;
         _entryDone = false;
+        _cursorField = Param?.GetTypeDefinition()?.GetField(FREE_CURSOR_FIELD) != null;
 
         AnnounceEntry();
         API.LogInfo("[SF6Access] World Tour map active");
@@ -168,6 +174,9 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
     /// name plus the mod's word for its kind.</summary>
     private void AnnounceCursorIcon()
     {
+        // While the map closes its cursor control goes first, and asking then threw a
+        // NullReferenceException inside the game 11 times in 0.7 s (2026-09-26).
+        if (_cursorField && FlowHelper.GetObjectField(Param, FREE_CURSOR_FIELD) == null) return;
         var item = FlowHelper.Call(Param, "GetCursorSelectedItem") as ManagedObject;
         if (item == null)
         {
@@ -189,6 +198,14 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
 
         string kind = DeviceMapText.IconType(FlowHelper.ReadIntField(info, "Type", UNKNOWN));
         string spoken = DeviceMapText.Icon(title, kind);
+
+        // Whatever the cursor is on becomes the point the beacon guides to and the
+        // camera can be turned toward. Every kind of thing on the map arrives
+        // through this one branch — missions, shops, masters, NPCs, fast-travel
+        // points and the player's own pins — so this is the only capture the
+        // feature needs. Remembered on every poll, not only when the announcement
+        // changes: the spoken line dedupes, the selection must not.
+        MapSelectionMemory.RememberIcon(info, spoken);
 
         if (spoken == _lastIcon) return;
         _lastIcon = spoken;

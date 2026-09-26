@@ -26,8 +26,6 @@ namespace SF6Access.Hooks;
 public class AvatarEmoteHooks
 {
     private static Method _getEmoteName;          // hGUI.GetEmoteName(uint) — fallback
-    private static Method _tryGetEmoteNameMessage; // TableDataManager.TryGetEquipEmoteNameMessage(uint, out string)
-    private static ManagedObject _tableDataMgr;
 
     private static readonly List<string> _pending = new();
     private static readonly object _lock = new();
@@ -44,8 +42,6 @@ public class AvatarEmoteHooks
         try
         {
             _getEmoteName = TDB.Get().FindType("app.helper.hGUI")?.GetMethod("GetEmoteName(System.UInt32)");
-            _tryGetEmoteNameMessage = TDB.Get().FindType("app.TableDataManager")
-                ?.GetMethod("TryGetEquipEmoteNameMessage(System.UInt32, System.String)");
 
             var td = TDB.Get().FindType("app.worldtour.avatar.AvatarInputController");
             if (td == null)
@@ -104,26 +100,9 @@ public class AvatarEmoteHooks
         string invName = ResolveViaInventory(id);
         if (!string.IsNullOrWhiteSpace(invName)) return invName;
 
-        // Next: TableDataManager.TryGetEquipEmoteNameMessage(id, out message).
-        // REFramework.NET writes the out-string back into the args array.
-        if (_tryGetEmoteNameMessage != null)
-        {
-            try
-            {
-                _tableDataMgr ??= API.GetManagedSingleton("app.TableDataManager");
-                if (_tableDataMgr != null)
-                {
-                    var args = new object[] { id, null };
-                    var ok = _tryGetEmoteNameMessage.InvokeBoxed(typeof(bool), _tableDataMgr, args);
-                    if (ok is bool b && b)
-                    {
-                        string msg = FlowHelper.CleanTags(args[1] as string);
-                        if (!string.IsNullOrWhiteSpace(msg)) return msg;
-                    }
-                }
-            }
-            catch { }
-        }
+        // TableDataManager.TryGetEquipEmoteNameMessage(uint, out string) is NOT called: its
+        // by-ref string faulted inside the game on every emote and preceded a hard crash
+        // (2026-09-26 log). By-ref reference-type parameters are banned in this mod.
 
         // Fallback: hGUI.GetEmoteName(uint).
         if (_getEmoteName != null)
