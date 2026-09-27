@@ -7,100 +7,143 @@ using SF6Access.Services.WorldTour;
 namespace SF6Access.Hooks.WorldTour;
 
 /// <summary>
-/// Speaks the sub-area you have just walked into — "Hong Hu Lu Chinatown - Calle
-/// principal" — by reading the game's OWN on-screen section notice.
-///
-/// <para><b>Why this and not our own zone logic.</b> The mod already names the
-/// district (<see cref="ZoneNameService"/>), but only on demand and only at district
-/// grain, and it derives the name itself from a keyed table lookup. The game
-/// meanwhile has <c>app.UICityHud_SectionNotice</c>: the little banner a sighted
-/// player sees appear when they cross into a named part of the city. It decides
-/// WHEN the crossing happened and it has already resolved WHAT to call it, in the
-/// player's own language, in <c>mTextSection</c> (<c>UICityHud_SectionNotice.cs:147</c>).
-/// Reading that is reading exactly what is on screen — no guessing about section
-/// ids, no table lookup that might reject a good record, and no risk of announcing
-/// a boundary the game does not consider one.</para>
-///
-/// <para><b>Found the way every other HUD reader in this mod finds its component.</b>
-/// <c>UICityHud_*</c> objects ARE in the scene — <see cref="MissionGuideReader"/>
-/// has relied on that since 2026-09-07. (The MINIMAP is the exception that proved
-/// unreachable, twice, on 2026-09-09; nothing here goes near it.)</para>
-///
-/// <para><b>Announced once per change, never repeated.</b> The banner lingers on
-/// screen and its text stays put, so speaking whatever it currently says would
-/// repeat the same sentence every poll. Only a change is news.</para>
+/// Catches the moment the game itself announces a city section (the on-screen banner
+/// "Hong Hu Lu Chinatown - Plaza") and hands it to <see cref="ZoneHooks"/>, which is the
+/// only speaker for zones. The banner component is not reachable through the scene
+/// (never found in game), so the requests are hooked instead; the banner's own text is
+/// read on the following frames, the section id is kept as the fallback.
 /// </summary>
 public class SectionNoticeHooks
 {
-    private const string NOTICE_COMPONENT = "app.UICityHud_SectionNotice";
+    private const string MANAGER = "app.worldtour.CitySectionManager";
+    private const string HUD = "app.UICityHud_SectionNotice";
+    private const string REQUEST = "RequestSectionNotice";
+    private const string SETUP = "SetupNotice";
 
-    /// <summary>The banner's own text object, already localized and already
-    /// formatted the way the game words it.</summary>
     private const string F_TEXT = "mTextSection";
+    private const string F_SECTION_ID = "SectionId";
+    private const string F_REQUEST_SECTION = "SectionInfo";
 
-    /// <summary>Poll cadence in LateUpdate ticks — 15 at 60 fps, about four times a
-    /// second. Crossing a boundary is not a fast event and the read is a scene walk;
-    /// this is the same order the zone reader already uses.</summary>
-    private const int POLL_TICKS = 15;
+    /// <summary>How long the banner text is waited for after a request, in frames (about a second).</summary>
+    private const int TEXT_WAIT_FRAMES = 60;
 
-    /// <summary>Hold after the reader speaks with an interrupt: an area name is
-    /// useful but never worth cutting off a line the player is still hearing.</summary>
-    private const long READER_HOLD_MS = 1200;
+    /// <summary>Frames between banner reads while waiting — each read creates engine wrappers.</summary>
+    private const int TEXT_READ_EVERY = 6;
 
-    private static int _tick;
-    private static string _lastSpoken;
-    private static bool _wasInField;
-    private static bool _logged;
+    private static uint _requestedId;
+    private static ManagedObject _hud;
+    private static string _staleText;
+    private static int _waitFrames;
+    private static int _hookCount;
+    private static bool _firedLogged;
 
     [PluginEntryPoint]
     public static void Initialize()
     {
-        API.LogInfo("[SF6Access] SectionNoticeHooks initialized (speaks the game's own sub-area banner)");
+        Hook(MANAGER, REQUEST, args => Requested(args, infoArg: 2, hud: false));
+        Hook(HUD, REQUEST, args => Requested(args, infoArg: 2, hud: true));
+        Hook(HUD, SETUP, args => SetupRequested(args));
+        API.LogInfo($"[SF6Access] SectionNoticeHooks initialized ({_hookCount} of 3 section notice hooks)");
+    }
+
+    private static void Hook(string type, string method, System.Action<System.Span<ulong>> onCall)
+    {
+        var m = TDB.Get().FindType(type)?.GetMethod(method);
+        if (m == null)
+        {
+            API.LogWarning($"[SF6Access] SectionNoticeHooks: {type}.{method} not found");
+            return;
+        }
+        m.AddHook(false).AddPre(args => { try { onCall(args); } catch { } return PreHookResult.Continue; });
+        _hookCount++;
+    }
+
+    /// <summary>args[1] is `this`, args[infoArg] the <c>CitySectionInfo</c>.</summary>
+    private static void Requested(System.Span<ulong> args, int infoArg, bool hud)
+    {
+        if (args.Length <= infoArg) return;
+        var info = ManagedObject.ToManagedObject(args[infoArg]);
+        uint id = FlowHelper.ReadUIntField(info, F_SECTION_ID);
+        if (hud) Watch(ManagedObject.ToManagedObject(args[1]), id);
+        else Request(id);
+        LogFirst($"{(hud ? HUD : MANAGER)}.{REQUEST} section {id}");
+    }
+
+    private static void SetupRequested(System.Span<ulong> args)
+    {
+        if (args.Length < 3) return;
+        var request = ManagedObject.ToManagedObject(args[2]);
+        var info = FlowHelper.GetObjectField(request, F_REQUEST_SECTION);
+        uint id = FlowHelper.ReadUIntField(info, F_SECTION_ID);
+        Watch(ManagedObject.ToManagedObject(args[1]), id);
+        LogFirst($"{HUD}.{SETUP} section {id}");
+    }
+
+    /// <summary>A new section replaces one still waiting (the player has already left it),
+    /// and whatever the banner shows at that moment belongs to the section left.</summary>
+    private static void Request(uint id)
+    {
+        if (id == 0 || id == _requestedId) return;
+        _requestedId = id;
+        if (_hud != null) _staleText = BannerText(_hud);
+    }
+
+    /// <summary>Waits for the banner to show a text it did not show when the request came.</summary>
+    private static void Watch(ManagedObject hud, uint id)
+    {
+        if (hud != null)
+        {
+            if (_hud == null) _staleText = BannerText(hud);
+            _hud = hud;
+            _waitFrames = TEXT_WAIT_FRAMES;
+        }
+        Request(id);
+    }
+
+    private static string BannerText(ManagedObject hud)
+    {
+        try { return FlowHelper.CleanTags(FlowHelper.ReadGuiText(FlowHelper.GetObjectField(hud, F_TEXT)))?.Trim(); }
+        catch { return null; }
+    }
+
+    private static void LogFirst(string what)
+    {
+        if (_firedLogged) return;
+        _firedLogged = true;
+        API.LogInfo($"[SF6Access] Section notice hook fired: {what}");
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void Tick()
     {
+        if (_requestedId == 0 && _hud == null) return;
+
+        // The banner's text control goes with the field (battle, loading): never read it then.
         FieldPresenceService.Refresh();
-        if (!FieldPresenceService.CanSpeak)
+        if (!FieldPresenceService.InField || FieldPresenceService.Fighting)
         {
-            if (_wasInField) { _wasInField = false; _lastSpoken = null; }
+            _hud = null;
+            _requestedId = 0;
             return;
         }
-        _wasInField = true;
 
-        if (--_tick > 0) return;
-        _tick = POLL_TICKS;
-
-        if (SF6Access.Hooks.SpTalkNovelHooks.DialogueActive) return;
-        if (System.Environment.TickCount64 - ScreenReaderService.LastInterruptTick < READER_HOLD_MS) return;
-
-        string area = Read();
-        if (string.IsNullOrWhiteSpace(area) || area == _lastSpoken) return;
-
-        _lastSpoken = area;
-        ScreenReaderService.Speak(area, interrupt: false);
-        API.LogInfo($"[SF6Access] Section notice: '{area}'");
-    }
-
-    /// <summary>The banner's current text, or null when the notice component is not
-    /// in the scene (which is the normal state outside a city).</summary>
-    private static string Read()
-    {
-        try
+        string text = null;
+        if (_hud != null)
         {
-            var notice = FieldProbeService.FirstSceneComponent(NOTICE_COMPONENT);
-            if (notice == null) return null;
-
-            if (!_logged)
-            {
-                _logged = true;
-                API.LogInfo($"[SF6Access] Section notice: {NOTICE_COMPONENT} found in the scene");
-            }
-
-            return FlowHelper.CleanTags(
-                FlowHelper.ReadGuiText(FlowHelper.GetObjectField(notice, F_TEXT)))?.Trim();
+            if (--_waitFrames % TEXT_READ_EVERY != 0 && _waitFrames > 0) return;
+            text = BannerText(_hud);
+            if (text == _staleText) text = null;
+            // Keep waiting while the banner is still being set up, then let the object go.
+            if (string.IsNullOrEmpty(text) && _waitFrames > 0) return;
+            _hud = null;
         }
-        catch { return null; }
+
+        uint id = _requestedId;
+        _requestedId = 0;
+        if (string.IsNullOrEmpty(text)) text = ZoneNameService.SectionName(id);
+        if (string.IsNullOrEmpty(text)) return;
+
+        API.LogInfo($"[SF6Access] Section notice: '{text}' (section {id})");
+        ZoneHooks.OnSectionNotice(id, text);
     }
 }

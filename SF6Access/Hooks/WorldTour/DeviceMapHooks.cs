@@ -123,6 +123,7 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
         if (!_entryDone) AnnounceEntry();
 
         AnnounceFlowState();
+        if (MapIconSnapshot.Due && !Closing) MapIconSnapshot.Capture(Param);
         AnnounceCursorIcon();
         AnnounceTravelPoint();
         AnnouncePinPanel();
@@ -170,13 +171,15 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
 
     // ----------------------------------------------------------- map cursor
 
+    /// <summary>While the map closes its cursor control goes first, and asking the map for
+    /// icons then threw a NullReferenceException inside the game 11 times in 0.7 s (2026-09-26).</summary>
+    private bool Closing => _cursorField && FlowHelper.GetObjectField(Param, FREE_CURSOR_FIELD) == null;
+
     /// <summary>The icon the free cursor is over: its own (already localized)
     /// name plus the mod's word for its kind.</summary>
     private void AnnounceCursorIcon()
     {
-        // While the map closes its cursor control goes first, and asking then threw a
-        // NullReferenceException inside the game 11 times in 0.7 s (2026-09-26).
-        if (_cursorField && FlowHelper.GetObjectField(Param, FREE_CURSOR_FIELD) == null) return;
+        if (Closing) return;
         var item = FlowHelper.Call(Param, "GetCursorSelectedItem") as ManagedObject;
         if (item == null)
         {

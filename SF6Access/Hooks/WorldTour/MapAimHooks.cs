@@ -8,6 +8,7 @@ namespace SF6Access.Hooks.WorldTour;
 
 /// <summary>
 /// <b>R3 (or V): point me down the next leg of the route to where I am going.</b>
+/// Holding it instead opens the destination picker (<see cref="DestinationPickerHooks"/>).
 ///
 /// <para><b>Press, walk, press again.</b> Each press turns the camera down the NEXT
 /// LEG OF THE ROUTE — not at the destination in a straight line — so the player
@@ -51,6 +52,9 @@ public class MapAimHooks
 
     private static ReadoutShortcut _shortcut;
 
+    /// <summary>R3/V tap = aim (on release), hold = the destination picker.</summary>
+    private static HoldTapDetector _gesture;
+
     /// <summary>Shift+V: the route pathfinder's kill switch. Keyboard only — there is
     /// no chord on a pad, and this is a rescue control, not a control the player is
     /// expected to reach for. It lives here because this hook owns V.</summary>
@@ -62,7 +66,7 @@ public class MapAimHooks
     [PluginEntryPoint]
     public static void Initialize()
     {
-        API.LogInfo("[SF6Access] MapAimHooks initialized (R3 / V = face the point selected on the map, Shift+V = route guidance on/off)");
+        API.LogInfo("[SF6Access] MapAimHooks initialized (tap R3 / V = face the destination, hold = destination picker, Shift+V = route guidance on/off)");
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
@@ -71,12 +75,11 @@ public class MapAimHooks
         FieldPresenceService.Refresh();
         if (!FieldPresenceService.CanSpeak)
         {
-            // A city's coordinates are not the next city's, and a selection left
-            // over from the last one would aim the player at nothing.
+            // A press held into a fight or menu must not aim when control comes back.
+            _gesture?.Swallow();
             if (_wasInField)
             {
                 _wasInField = false;
-                MapSelectionMemory.Reset();
                 CameraAimService.Reset();
                 FieldNavPath.Reset();
                 AccessPointReader.Reset();
@@ -84,25 +87,40 @@ public class MapAimHooks
             }
             return;
         }
+        if (!_wasInField) ForgetOtherCity();
         _wasInField = true;
 
         // Built on first use, not in a static initialiser: the button's bit has to
         // be read out of the TDB, which is not ready when the plugin loads.
         _shortcut ??= new ReadoutShortcut(VK_V, PadFlag());
+        _gesture ??= new HoldTapDetector(ReadoutShortcut.SystemHoldDelayMs());
 
-        // Polled every frame — a press shorter than one poll is a press the player
-        // would have to repeat.
-        // BOTH are polled every frame, even though only one can act: each keeps its
-        // own edge state, and a detector that is skipped for a frame remembers a
-        // key as still-up and invents a press later.
+        // Both are polled every frame, even though only one can act: each keeps its
+        // own edge state, and a skipped detector would invent a press later.
         bool route = RouteSwitch.Pressed();
-        bool aim = _shortcut.Pressed();
-        if (route) ToggleRouteGuidance();
-        else if (aim) Aim();
+        var gesture = _gesture.Update(_shortcut.Down(), System.Environment.TickCount64);
+        // The picker owns R3/V while open; the press that closes it must not aim on release.
+        if (DestinationPickerHooks.IsOpen) _gesture.Swallow();
+        else if (route) ToggleRouteGuidance();
+        else if (gesture == HoldTapDetector.Gesture.Tap) Aim();
+        else if (gesture == HoldTapDetector.Gesture.Hold) DestinationPickerHooks.Open();
 
         // Holds the yaw for its brief window against the controller's own update.
         CameraAimService.Tick();
     }
+
+    /// <summary>A city's coordinates are not the next city's: the destination is forgotten
+    /// when control comes back in a different city. A menu, the phone or a street fight
+    /// keeps it — the destination picker's choice has to survive them.</summary>
+    private static void ForgetOtherCity()
+    {
+        uint city = WorldTourStateService.CityId;
+        if (city == 0) return;
+        if (_city != 0 && city != _city) MapSelectionMemory.Reset();
+        _city = city;
+    }
+
+    private static uint _city;
 
     /// <summary>Turn route guidance off (or back on). With it on, the beacon aims at
     /// the next bend of a real walkable route instead of straight through the scenery;

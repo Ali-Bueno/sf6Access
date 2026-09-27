@@ -22,6 +22,8 @@ public static class WorldTourStateService
 {
     private const string CITY_MANAGER = "app.worldtour.WTCityManager";
     private const string SECTION_MANAGER = "app.worldtour.CitySectionManager";
+    private const string GUI_MANAGER = "app.GuiManager";
+    private const string KPI_WT = "app.Kpi.WT";
     private const string AVATAR_MANAGER = "app.worldtour.avatar.AvatarManager";
     // Global (not WT-specific) camera singleton; consumed here by the WT field
     // radar for camera-relative clock directions.
@@ -70,14 +72,62 @@ public static class WorldTourStateService
     {
         get
         {
-            var mgr = GetSectionManager();
-            if (mgr == null) return 0;
-            uint id = (uint)FlowHelper.ReadIntField(mgr, "CurrentSectionId", 0);
-            if (id != 0) return id;
-            var boxed = FlowHelper.Call(mgr, "get_CurrentSectionId");
-            return boxed != null ? System.Convert.ToUInt32(boxed) : 0;
+            // Read at most every SECTION_REFRESH_MS: some callers ask every frame, and each
+            // read creates engine wrappers (the GC-thread crash family).
+            long now = System.Environment.TickCount64;
+            if (now - _sectionReadAt < SECTION_REFRESH_MS) return _sectionId;
+            _sectionReadAt = now;
+            return _sectionId = ReadSectionId();
         }
     }
+
+    // A quarter second: the zone reader's own poll cadence (ZoneHooks.POLL_INTERVAL at 60 fps).
+    private const long SECTION_REFRESH_MS = 250;
+    private static long _sectionReadAt;
+    private static uint _sectionId;
+
+    private static uint ReadSectionId()
+    {
+        uint id = 0;
+        string route = "manager";
+        var mgr = GetSectionManager();
+        if (mgr != null)
+        {
+            id = (uint)FlowHelper.ReadIntField(mgr, "CurrentSectionId", 0);
+            if (id == 0 && FlowHelper.Call(mgr, "get_CurrentSectionId") is object boxed)
+                id = System.Convert.ToUInt32(boxed);
+        }
+        if (id == 0) { id = KpiSectionId(); route = "Kpi.WT"; }
+        if (id != 0 && !_sectionRouteLogged)
+        {
+            _sectionRouteLogged = true;
+            API.LogInfo($"[SF6Access] Section id {id} read through {route}");
+        }
+        return id;
+    }
+
+    private static bool _sectionRouteLogged;
+    private static REFrameworkNET.Method _kpiSection;
+    private static bool _kpiSectionResolved;
+
+    /// <summary><c>app.Kpi.WT.GetCurrentSectionId()</c> — a static the game's telemetry uses.</summary>
+    private static uint KpiSectionId()
+    {
+        if (!_kpiSectionResolved)
+        {
+            _kpiSectionResolved = true;
+            _kpiSection = TDB.Get().FindType(KPI_WT)?.GetMethod("GetCurrentSectionId()");
+            API.LogInfo($"[SF6Access] {KPI_WT}.GetCurrentSectionId {(_kpiSection == null ? "not found" : "bound")}");
+        }
+        if (_kpiSection == null) return 0;
+        try { return System.Convert.ToUInt32(_kpiSection.InvokeBoxed(typeof(uint), null, null)); }
+        catch { return 0; }
+    }
+
+    /// <summary><c>app.GuiManager.AccessData</c> — the game's registry of map-visible NPCs,
+    /// facilities and the section manager. Not a singleton itself.</summary>
+    public static ManagedObject GetAccessData() =>
+        FlowHelper.GetObjectField(Singleton(GUI_MANAGER, ref _guiManager), "AccessData");
 
     /// <summary>The AvatarManager singleton (owner of the interactable-access
     /// list) for the field radar reader. Null outside the field.</summary>
@@ -86,8 +136,10 @@ public static class WorldTourStateService
     /// <summary>The WTCityManager singleton, cached.</summary>
     public static ManagedObject GetCityManager() => Singleton(CITY_MANAGER, ref _cityManager);
 
-    /// <summary>The CitySectionManager singleton, cached.</summary>
-    public static ManagedObject GetSectionManager() => Singleton(SECTION_MANAGER, ref _sectionManager);
+    /// <summary>The CitySectionManager. It is owned by <see cref="GetAccessData"/>, not a
+    /// singleton; the singleton lookup is kept only as a fallback.</summary>
+    public static ManagedObject GetSectionManager() =>
+        FlowHelper.GetObjectField(GetAccessData(), "SectionManager") ?? Singleton(SECTION_MANAGER, ref _sectionManager);
 
     /// <summary>The global <c>app.CameraManager</c> singleton (camera position /
     /// look-at / rotation), for camera-relative direction announcements.</summary>
@@ -95,6 +147,7 @@ public static class WorldTourStateService
 
     private static ManagedObject _cityManager;
     private static ManagedObject _sectionManager;
+    private static ManagedObject _guiManager;
     private static ManagedObject _avatarManager;
     private static ManagedObject _cameraManager;
 

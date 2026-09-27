@@ -95,7 +95,7 @@ public static class MapSelectionMemory
     /// would aim the player at nothing.</summary>
     public static void Reset()
     {
-        if (_current.Ok) API.LogInfo("[SF6Access] Map selection cleared (left the field)");
+        if (_current.Ok) API.LogInfo("[SF6Access] Map selection cleared (another city)");
         _current = default;
     }
 }

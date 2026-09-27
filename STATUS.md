@@ -2,12 +2,27 @@
 
 > Per-mod status ledger / dashboard. Open this first when resuming the mod so progress isn't re-derived from the code each session. Keep it short — a dashboard, not docs. Update the **Next step** line and the section table whenever you finish a chunk. Derive every value from the game's real data — no guessed offsets.
 
-**Last updated:** 2026-09-26
+**Last updated:** 2026-09-27
 
-**Next step (tester request, 2026-09-26): a better way to know where I am and to choose where to go
-in the open world.** Mission 11011 (Chapter 2-2) was finally completed with the ladder route, but the
-tester still finds free navigation hard. Design session first (orientation readout, choosing a
-destination from nearby/known places, not only map icons) before more beacon tuning.
+**Next step (2026-09-27): test the orientation pass** (`docs/wt-orientation.md`, checklist §6). Built,
+0 warnings, 93 pure checks pass, adversarially reviewed (9 findings fixed), **nothing verified in game**. (1) Zones announced while walking: the
+section id was 0 in every session because `CitySectionManager` is not a singleton (it lives in
+`GuiManager.AccessData`); now read there, the game's section banner is hooked, and a landmark region
+("zona de Beat Square", with hysteresis) is the fallback. (2) Z = where am I: zone, nearest landmark with
+direction, facing, destination. (3) **Hold R3 / V = destination picker** (tap still aims, on release):
+categories nearest-first from the mission, fast-travel points, nearby people, the game's map registry,
+a saved snapshot of the phone map and the player's own saved spots; choosing one drives the existing
+beacon, route and ladder guidance, and now survives menus and street fights (it used to be cleared).
+Report the log lines listed in the checklist.
+
+**Test 2026-09-27 (orientation pass): WORKS, needs polish** (tester: "está bien, hay que pulirlo").
+Confirmed in game: section id through `GuiManager.AccessData` (`Section id 410 read through manager`),
+the banner hook (`UICityHud_SectionNotice.RequestSectionNotice`), 110 of 110 section names, banners
+spoken ("Faith Avenue", "Distrito central - Zona central", "South Street - Zona de Beat Square"), the
+picker and the input mask (`Action=3`), choosing shops/people/mission. Registry: 14 NPCs, 1 facility,
+0 masters. Seen: banners flapping at a boundary (Seaside Street ↔ Servicios de seguridad Buckler, 6 in
+14 s); the phone map was not opened (no snapshot yet); R3 tapped about once a second while walking —
+it has become the steering control.
 
 **Test 2026-09-26, eighth run: PASSED.** The tester reached Boluo: partial plan #4 → blocked #2 → 10 m
 roof, then got up to him. The new `RequestShowFromPlayer`/`RequestShowFromOM` hooks installed (2) but
@@ -144,6 +159,7 @@ Analysis/documentation only; no code changes, build or new in-game verification.
 | World Tour — phone map | wip | Built 2026-09-07 from the F8 capture `sf6access_autodump_154237.txt` (lines 770-965): `Hooks/WorldTour/DeviceMapHooks.cs` + `Services/WorldTour/DeviceMapText.cs` on `app.UIFlowWTDeviceMap.MapParam`. Speaks the location + guide message on entry, then flow-state changes ("Map" / "Fast travel list"), the icon under the free cursor ("Beat Square, shop"), the highlighted fast-travel point ("name, 2 of 7") and the marker info panel. Icon kinds come from `ICON_TYPE` member NAMES mapped to nine family words (`wt.map.icon_*` in `lang/en.txt` + `es.txt`). **PENDING IN-GAME VERIFICATION** — checklist below. The world map (`app.UIFlowWorldMap`) is still untouched |
 | World Tour — map-selection aiming + route guidance | wip | Built 2026-09-09, **NOTHING VERIFIED IN GAME**. `Hooks/WorldTour/FieldTrackerHooks.cs` on `Services/WorldTour/{MapIcon, MapIconCatalog, TrackerSelection, TrackerButtons, FieldInputMask, BeaconDestination}.cs`. R3/V opens a modal list of everything the HUD minimap is showing (`app.UIMiniMapWindow.mIconInfoList`, real `IconInfo.GlobalPos` world positions); d-pad up/down or the arrows cycle targets nearest-first, L1/R1 or PageUp/PageDown cycle the game's own `ICON_GROUP_TYPE` categories. The chosen icon takes over the mission beacon; the game removing its icon is what triggers auto-retracking to the next of the same category. **Shift+V turns on `FieldNavPath`** (inert since 2026-09-08) so the beacon aims at the route's first corner. See `docs/sf6-screens.md` § World Tour minimap tracker + route guidance |
 | World Tour — multi-level routes (ladders) | wip | Built 2026-09-22, NOT verified in game. `LevelRoute` + `LevelRoutePlanner` + `LadderCatalog`: walk → ladder → walk when the objective's navmesh island is disconnected. `docs/sf6-screens.md` § multi-level routes |
+| World Tour — orientation (zones, where am I, destination picker) | wip | Built 2026-09-27, NOT verified in game. `ZoneHooks`, `SectionNoticeHooks`, `DestinationPickerHooks`; `docs/wt-orientation.md` |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
 
 ## Derived facts (so we never re-RE them)
@@ -221,7 +237,8 @@ records that survive a machine change.)
   - [ ] Walk out: "Saliendo de <name>"?
   - [ ] Do any shops stay silent? Name them — that tells us which OM families are missing.
 - **Sub-area announcements, 2026-09-10 (tester asked: "algo que nos pueda leer subzonas... salón,
-  restaurante, calle tal").** `Hooks/WorldTour/SectionNoticeHooks.cs` speaks
+  restaurante, calle tal").** *Superseded 2026-09-27: the banner component was never found in any
+  session; its requests are hooked instead and the section id route is fixed — `docs/wt-orientation.md`.* `Hooks/WorldTour/SectionNoticeHooks.cs` speaks
   `app.UICityHud_SectionNotice.mTextSection` — the game's OWN on-screen banner, already localized and
   already worded ("Hong Hu Lu Chinatown - Calle principal"), announced once per change and queued rather
   than interrupting. The game decides when a crossing counts, so nothing is inferred. Full survey of what

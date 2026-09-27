@@ -10,5 +10,10 @@
     <Compile Include="../../SF6Access/Services/WorldTour/NavigationNoticeMemory.cs" Link="NavigationNoticeMemory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/NavReading.cs" Link="NavReading.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/LevelRoutePlanner.cs" Link="LevelRoutePlanner.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/Destination.cs" Link="Destination.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/DestinationPicker.cs" Link="DestinationPicker.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/HoldTapDetector.cs" Link="HoldTapDetector.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RegionTracker.cs" Link="RegionTracker.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/PlaceFile.cs" Link="PlaceFile.cs" />
   </ItemGroup>
 </Project>

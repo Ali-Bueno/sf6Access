@@ -170,7 +170,8 @@ public class FieldAwarenessHooks
         if (count == 0) return;
 
         _lastArrivalTick = System.Environment.TickCount64;
-        ScreenReaderService.Speak(LocalizedText.NearbyCount(count), interrupt: true);
+        // Queued: the same crossing makes ZoneHooks name the new zone, which must not be cut off.
+        ScreenReaderService.Speak(LocalizedText.NearbyCount(count), interrupt: false);
     }
 
     /// <summary>Whether the automatic arrival readout may speak right now. The

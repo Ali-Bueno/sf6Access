@@ -7,66 +7,55 @@ using SF6Access.Services.WorldTour;
 namespace SF6Access.Hooks.WorldTour;
 
 /// <summary>
-/// "Where am I?" for the World Tour field — the RE7 mod's room announcements
-/// ported to an open city, where knowing which part of town you are in is half of
-/// orientation.
-///
-/// <list type="bullet">
-/// <item>The area is announced automatically, hands-free, whenever it CHANGES —
-///   but only for real containment: a game district (<see cref="ZoneSource.Section"/>)
-///   or the city fallback (<see cref="ZoneSource.City"/>). The nearest-landmark
-///   route (<see cref="ZoneSource.NearestPoint"/>) is NOT announced automatically
-///   (2026-09-05): in dense areas the nearest landmark flips every few steps, and
-///   an automatic "near X, N metres" for every flip was constant chatter, not
-///   orientation.</item>
-/// <item><b>Z</b> speaks the current reading on demand, at any time, from
-///   whichever route resolved — landmark included. It stays the only way to hear
-///   a landmark reading.</item>
-/// </list>
-///
-/// <para>The name itself is resolved by <see cref="ZoneNameService"/>, which
-/// prefers the game's own district and falls back to the nearest named landmark.
-/// This hook only decides WHEN to say it — and the difference matters, because a
-/// landmark answer is spoken as "near X, N metres away" rather than as a district
-/// the player is inside. Being told you are somewhere you are not is worse than
-/// being told nothing.</para>
-///
-/// <para>Gated like every other hands-free World Tour reader: nothing in menus,
-/// nothing during a fight, nothing over dialogue or the panel tutorial, and
-/// nothing on top of an announcement still being spoken. Arriving somewhere is
-/// exactly when the game is most likely to be talking, so a change noticed while
-/// muted is REMEMBERED and spoken as soon as it is allowed — consuming it on the
-/// spot would lose the announcement outright. The key deliberately bypasses all of
-/// it: an explicit press is a request, and a request must always be answered.</para>
+/// The single speaker for "which part of town is this": announces a zone hands-free when
+/// the player walks into it (the game's own section banner when it fires, else the section
+/// or landmark region from <see cref="ZoneNameService"/>), and Z answers "where am I" on
+/// demand (<see cref="WhereAmIReadout"/>). Design: <c>docs/wt-orientation.md</c>.
 /// </summary>
 public class ZoneHooks
 {
-    private const string ZONE_KEY = "wt_zone";
-
-    // Roughly 4x/second, matching the field radar's target poll. The service
-    // behind it refreshes on its own clock, so this is only how often the answer
-    // is compared, not how often the game is queried.
+    // About four times a second; the service refreshes on its own slower clock.
     private const int POLL_INTERVAL = 15;
     private static int _pollCounter;
 
-    // Hold after the reader speaks, so the zone announcement does not cut off an
-    // announcement still in progress (same value and reason as the arrival
-    // readout in FieldAwarenessHooks).
+    // Hold after an interrupting line so a zone name does not cut it off.
     private const long READER_HOLD_MS = 1200;
 
-    // On-demand "say the area again" key. Keyboard only: every gamepad button the
-    // testers tried in the field turned out to be a game action, and Start is
-    // already the nearby radar's. A zero button mask binds no pad button at all.
+    // A section crossing is also seen by the game's banner, whose text arrives up to a
+    // second later (SectionNoticeHooks.TEXT_WAIT_FRAMES); wait that long plus one poll
+    // for the richer banner wording before speaking the table name.
+    private const long BANNER_GRACE_MS = 1500;
+
     private const int VK_Z = 0x5A;
     private static readonly ReadoutShortcut ZoneKey = new(VK_Z, ReadoutShortcut.PAD_NONE);
 
-    // The change noticed while the reader was not allowed to speak.
-    private static ZoneReading _pending;
+    /// <summary>A zone waiting to be spoken: its key name, the spoken line and when it is due.</summary>
+    private readonly record struct Pending(string Name, string Text, uint SectionId, long DueAt);
+
+    private static Pending _pending;
+    private static uint _announcedSection;
+    private static string _announcedName;
+    private static bool _bannersSeen;
 
     [PluginEntryPoint]
     public static void Initialize()
     {
-        API.LogInfo("[SF6Access] ZoneHooks initialized (Z = speak current area)");
+        API.LogInfo("[SF6Access] ZoneHooks initialized (Z = where am I)");
+    }
+
+    /// <summary>The game raised its section banner (from <see cref="SectionNoticeHooks"/>).</summary>
+    internal static void OnSectionNotice(uint sectionId, string text)
+    {
+        _bannersSeen = true;
+        // A banner whose id could not be read belongs to the section the player is in now.
+        if (sectionId == 0) sectionId = WorldTourStateService.CurrentSectionId;
+        if (sectionId != 0 && sectionId == _announcedSection)
+        {
+            // Back in the section already announced: whatever was waiting is stale.
+            _pending = default;
+            return;
+        }
+        _pending = new Pending(text, text, sectionId, 0);
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
@@ -78,12 +67,12 @@ public class ZoneHooks
         FieldPresenceService.Refresh();
         if (!FieldPresenceService.InField)
         {
-            if (wantsZone)
-                API.LogInfo("[SF6Access] Zone key pressed outside the World Tour field");
             // Re-entering the field re-announces where the player has landed.
-            GameStateTracker.Remove(ZONE_KEY);
             ZoneNameService.Reset();
             _pending = default;
+            _announcedSection = 0;
+            _announcedName = null;
+            _bannersSeen = false;
             _pollCounter = 0;
             return;
         }
@@ -91,80 +80,67 @@ public class ZoneHooks
         if (wantsZone)
         {
             _pending = default;
-            Announce(ZoneNameService.Current(), manual: true);
+            var zone = ZoneNameService.Current();
+            MarkAnnounced(zone.Name, zone.SectionId);
+            ScreenReaderService.Speak(WhereAmIReadout.Compose(zone), interrupt: true);
         }
 
         if (++_pollCounter >= POLL_INTERVAL)
         {
             _pollCounter = 0;
-            var zone = ZoneNameService.Current();
-            // Keyed on the NAME, not on the section id or the landmark id: two
-            // fast-travel points share the name 'Beat Square', and walking from one
-            // to the other has not changed which area the player is in.
-            //
-            // The tracker is updated on every change regardless of source, so a
-            // section re-entered after a run of landmark flips still reads as
-            // "changed" — but only a Section or City change is actually QUEUED for
-            // the automatic announcement; the landmark route stays Z-only.
-            bool changed = zone.Ok && GameStateTracker.HasChanged(ZONE_KEY, zone.Name);
-            if (changed && zone.Source != ZoneSource.NearestPoint)
-                _pending = zone;
+            Queue(ZoneNameService.Current());
         }
 
-        if (_pending.Ok && MayAnnounce())
+        long now = System.Environment.TickCount64;
+        if (_pending.Text != null && now >= _pending.DueAt && MayAnnounce())
         {
-            var zone = _pending;
+            var p = _pending;
             _pending = default;
-            Announce(zone, manual: false);
+            MarkAnnounced(p.Name, p.SectionId);
+            ScreenReaderService.Speak(p.Text, interrupt: false);
         }
     }
 
-    /// <summary>Whether the automatic announcement may speak right now.</summary>
+    /// <summary>Queues a zone the player has just walked into, if it is news. A newer zone
+    /// replaces one still waiting, except the game's banner for the same section.</summary>
+    private static void Queue(ZoneReading zone)
+    {
+        if (!zone.Ok) return;
+        if (zone.Source == ZoneSource.Section)
+        {
+            // Id 0 is a held-over name (a gap between sections): never news.
+            if (zone.SectionId == 0 || zone.SectionId == _pending.SectionId) return;
+            if (zone.SectionId == _announcedSection)
+            {
+                // Stepped back before a table-name announcement came due: drop it. A banner
+                // (due at once) is the game's own word and is kept.
+                if (_pending.DueAt != 0) _pending = default;
+                return;
+            }
+            _pending = new Pending(zone.Name, zone.Name, zone.SectionId,
+                                   System.Environment.TickCount64 + BANNER_GRACE_MS);
+            return;
+        }
+
+        if (zone.Name == _announcedName) return;
+        // Keyed now, not when spoken, so a region is queued once however long speech waits.
+        _announcedName = zone.Name;
+        if (zone.Source == ZoneSource.Region && _bannersSeen) return;
+        string text = zone.Source == ZoneSource.Region ? LocalizedText.RegionOf(zone.Name) : zone.Name;
+        _pending = new Pending(zone.Name, text, 0, 0);
+    }
+
+    private static void MarkAnnounced(string name, uint sectionId)
+    {
+        if (sectionId != 0) _announcedSection = sectionId;
+        if (!string.IsNullOrEmpty(name)) _announcedName = name;
+    }
+
     private static bool MayAnnounce()
     {
         if (!FieldPresenceService.CanSpeak) return false;
         if (SF6Access.Hooks.SpTalkNovelHooks.DialogueActive) return false;
-        // The panel guide owns the mic while its tutorial is running.
-        if (PadGuideHooks.Active) return false;
+        if (PadGuideHooks.Active || DestinationPickerHooks.IsOpen) return false;
         return System.Environment.TickCount64 - ScreenReaderService.LastInterruptTick >= READER_HOLD_MS;
-    }
-
-    /// <summary>Say where the player is, in wording that matches how confidently
-    /// it is known.</summary>
-    private static void Announce(ZoneReading zone, bool manual)
-    {
-        if (!zone.Ok)
-        {
-            // "I don't know" is an ANSWER: only ever said to someone who asked.
-            if (manual) ScreenReaderService.Speak(WithFacing(LocalizedText.ZoneUnknown(), manual), interrupt: true);
-            return;
-        }
-
-        string spoken = zone.Source == ZoneSource.NearestPoint
-            // NOT containment — the nearest landmark, with its distance, so the
-            // player can judge for themselves how much it tells them.
-            ? LocalizedText.AtMeters(LocalizedText.ZoneNear(zone.Name),
-                                     (int)System.Math.Round(zone.Distance))
-            : LocalizedText.ZoneHere(zone.Name);
-
-        // The automatic one queues behind whatever is being said; the requested one
-        // takes the floor.
-        ScreenReaderService.Speak(WithFacing(spoken, manual), interrupt: manual);
-        if (!manual) return;
-        // A manual read counts as having announced this area, so walking on does
-        // not immediately repeat it.
-        GameStateTracker.HasChanged(ZONE_KEY, zone.Name);
-    }
-
-    /// <summary>The on-demand answer also says which way the camera faces
-    /// ("In Beat Street, facing north"): the same key answers both "where am I"
-    /// and "which way am I looking". The automatic announcement stays bare —
-    /// the hands-free compass (<see cref="FieldHeadingHooks"/>) already covers
-    /// turning.</summary>
-    private static string WithFacing(string spoken, bool manual)
-    {
-        if (!manual) return spoken;
-        string facing = FieldHeadingHooks.CurrentFacing();
-        return facing == null ? spoken : spoken + ", " + LocalizedText.Facing(facing);
     }
 }

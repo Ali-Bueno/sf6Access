@@ -51,6 +51,35 @@ public sealed class ReadoutShortcut
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
 
+    /// <summary>Whether the shortcut is held right now (key only while the game is foreground).</summary>
+    public bool Down()
+    {
+        bool key = KeyDown(_vk) && KeyDown(VK_SHIFT) == _shift && IsGameForeground();
+        return key || (_padFlag != 0 && (ReadPadButtons() & _padFlag) != 0);
+    }
+
+    /// <summary>Raw state of one virtual key, regardless of window focus.</summary>
+    public static bool KeyDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+
+    [DllImport("user32.dll")]
+    private static extern bool SystemParametersInfo(uint action, uint param, out uint value, uint winIni);
+    private const uint SPI_GETKEYBOARDDELAY = 0x0016;
+    // The setting is 0..3, documented as roughly 250 ms steps starting at 250 ms.
+    private const long KEYBOARD_DELAY_STEP_MS = 250;
+
+    /// <summary>How long a key must be held before Windows treats it as held (the user's own
+    /// keyboard repeat-delay setting) — used as the long-press threshold.</summary>
+    public static long SystemHoldDelayMs()
+    {
+        try
+        {
+            if (SystemParametersInfo(SPI_GETKEYBOARDDELAY, 0, out uint setting, 0))
+                return (setting + 1) * KEYBOARD_DELAY_STEP_MS;
+        }
+        catch { }
+        return 2 * KEYBOARD_DELAY_STEP_MS;   // Windows' default setting (1)
+    }
+
     /// <summary>True exactly once per key/button press.</summary>
     public bool Pressed()
     {

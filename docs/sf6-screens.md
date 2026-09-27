@@ -2908,6 +2908,16 @@ registered facility setters. Each `WTCityOMSetter` gives `GetDispName() : Guid` 
 `Om008000.CallShopInSoundTrigger()` / `CallShopOutSoundTrigger()` (`Om008000.cs:241/:244`), with
 `ShopId` (`:17`) and `IsBodyShop` (`:25`). There is **no** `IsInside`/`CurrentShop` member anywhere.
 
+### Correction (2026-09-27): why the section id always read 0
+
+`app.worldtour.CitySectionManager` is **not a managed singleton**: it is owned by
+`app.GuiManager.AccessData` (`GUIAccessDataManager.SectionManager`, `GuiManager.cs:4653`,
+`GUIAccessDataManager.cs:74`), so `API.GetManagedSingleton("app.worldtour.CitySectionManager")` found
+nothing and `CurrentSectionId` was 0 in every session. Also available: static
+`app.Kpi.WT.GetCurrentSectionId()` (`Kpi.cs:397`). The banner component is unreachable through the scene
+(never found in game), so its requests are hooked instead. Full design and checklist:
+[`wt-orientation.md`](wt-orientation.md). `UNVERIFIED` until the next test.
+
 ### The bad: street names and intersections DO NOT EXIST
 
 Searched the whole tree. The only `Street` is `WTDefine.BattleType.Street` (`WTDefine.cs:5540`) and

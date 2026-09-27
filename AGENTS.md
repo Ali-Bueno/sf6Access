@@ -35,8 +35,10 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
   re-entry pattern, localization rules, dump tools (F7/F8/F9), release packaging.
 - [`docs/sf6-screens.md`](docs/sf6-screens.md) — per-screen technical reference: confirmed type
   FullNames, fields, enums, and read recipes for every menu/screen we've accessibilized.
+- [`docs/wt-orientation.md`](docs/wt-orientation.md) — World Tour orientation: zone announcements,
+  "where am I" (Z), the destination picker (hold R3/V), its data sources and test checklist.
 
-> These two docs are the durable, version-controlled record of what we learned reverse-engineering
+> These docs are the durable, version-controlled record of what we learned reverse-engineering
 > SF6's UI. **When you discover something new about a screen, add it here** — don't leave it only in
 > notes/memory. Prefer updating the relevant section over duplicating.
 

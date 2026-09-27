@@ -1,33 +1,29 @@
 namespace SF6Access.Services.WorldTour;
 
-/// <summary>Where a zone name came from, because the three routes are NOT equally
-/// precise and the player must not be told otherwise.</summary>
+/// <summary>Where a zone name came from, which decides how confidently it is worded.</summary>
 public enum ZoneSource
 {
-    /// <summary>Nothing resolved.</summary>
     None,
-    /// <summary>The game's own district/section the player is standing in — real
-    /// containment.</summary>
+    /// <summary>The game's own city section — the player is inside it.</summary>
     Section,
-    /// <summary>The nearest named fast-travel landmark. A direction-less
-    /// proximity answer, not containment, so it is spoken as "near X".</summary>
-    NearestPoint,
-    /// <summary>The city. Last resort — true, but coarse.</summary>
+    /// <summary>The area around the nearest fast-travel landmark (our own division).</summary>
+    Region,
+    /// <summary>Only the city is known.</summary>
     City,
 }
 
-/// <summary>One answer to "where am I?".</summary>
+/// <summary>One answer to "which part of town is this".</summary>
 public readonly struct ZoneReading
 {
     public readonly string Name;
     public readonly ZoneSource Source;
-    /// <summary>Ground-plane metres to the named landmark. Only meaningful for
-    /// <see cref="ZoneSource.NearestPoint"/>; the other routes are containment.</summary>
     public readonly float Distance;
+    /// <summary>The game's section id for a <see cref="ZoneSource.Section"/> reading, else 0.</summary>
+    public readonly uint SectionId;
 
-    public ZoneReading(string name, ZoneSource source, float distance)
+    public ZoneReading(string name, ZoneSource source, float distance, uint sectionId = 0)
     {
-        Name = name; Source = source; Distance = distance;
+        Name = name; Source = source; Distance = distance; SectionId = sectionId;
     }
 
     public bool Ok => Source != ZoneSource.None && !string.IsNullOrEmpty(Name);

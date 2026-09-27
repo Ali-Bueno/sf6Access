@@ -336,6 +336,11 @@ public static class LocalizedText
     public static string ZoneNear(string name)
         => string.Format(LangFile.Get("wt.zone_near", "Near {0}"), name);
 
+    /// <summary>"Beat Square area" — the part of town nearest to a landmark: our own
+    /// division, so worded as an area rather than as a place the player is inside.</summary>
+    public static string RegionOf(string name)
+        => string.Format(LangFile.Get("wt.zone_region", "{0} area"), name);
+
     /// <summary>Answer to the on-demand key when the place cannot be named at
     /// all. Silence would read as a broken key.</summary>
     public static string ZoneUnknown() => LangFile.Get("wt.zone_unknown", "Location unknown");

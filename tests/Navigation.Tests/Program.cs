@@ -169,4 +169,88 @@ var shortLadder = new[]
     new LevelRoutePlanner.Leg(new(3, 4, 3), new(3, 4, 3), -1, false),
 };
 Check(LevelRoutePlanner.Progress(shortLadder, 0, new(6, 2.5f, 0), 4, 2) == 0, "a ramp beside a short ladder is not its top");
+
+// --- Orientation: destination picker ---
+var places = new[]
+{
+    new Destination("Save", null!, DestinationCategory.Saved, 0, 0, 0, DestinationAction.SaveHere),
+    new Destination("Far shop", "shop", DestinationCategory.Shops, 100, 0, 0),
+    new Destination("Near shop", "shop", DestinationCategory.Shops, 10, 0, 0),
+    new Destination("Near shop", "shop", DestinationCategory.Shops, 12, 0, 1),
+    new Destination("Beat Square", null!, DestinationCategory.Places, 0, 0, 50),
+    new Destination("Beat Square", null!, DestinationCategory.Places, 0, 0, -80),
+    new Destination("My spot", null!, DestinationCategory.Saved, 5, 0, 5),
+    new Destination("  ", null!, DestinationCategory.People, 1, 0, 1),
+};
+var groups = DestinationPicker.Build(places, 0, 0, 8);
+Check(groups.Count == 3, "empty names are dropped and only non-empty categories remain");
+Check(groups[0].Category == DestinationCategory.Places && groups[2].Category == DestinationCategory.Saved,
+      "categories follow the enum order");
+Check(groups[1].Items.Count == 2 && groups[1].Items[0].Name == "Near shop", "same name within the merge radius is one place, nearest first");
+Check(groups[0].Items.Count == 2 && groups[0].Items[0].Z == 50, "same name far apart stays two places");
+Check(groups[2].Items[0].Action == DestinationAction.SaveHere, "position-less actions sort on top");
+var picker = new DestinationPicker();
+picker.Load(groups, DestinationCategory.Shops);
+Check(picker.Category == DestinationCategory.Shops && picker.Index == 0, "opens on the preferred category, nearest item");
+picker.MoveItem(-1);
+Check(picker.Index == 1, "moving up from the first item wraps to the last");
+picker.MoveCategory(1);
+Check(picker.Category == DestinationCategory.Saved && picker.Index == 0, "next category resets to its first item");
+picker.MoveCategory(1);
+Check(picker.Category == DestinationCategory.Places, "categories wrap around");
+picker.Load(groups, DestinationCategory.Masters);
+Check(picker.Category == DestinationCategory.Places, "a missing preferred category falls back to the first");
+picker.Load(new List<DestinationPicker.Group>(), DestinationCategory.Places);
+picker.MoveItem(1); picker.MoveCategory(1);
+Check(picker.IsEmpty, "an empty picker ignores movement");
+Check(new Destination("x", "shop", DestinationCategory.Shops, 1, 0, 0).Label == "x, shop", "label joins the kind word");
+Check(!new Destination("x", null!, DestinationCategory.Shops, 0, 0, 0).HasPosition, "an exact origin is no position");
+Check(DestinationPicker.Build(new[] { new Destination("Lost", null!, DestinationCategory.Shops, 0, 0, 0) }, 0, 0, 8).Count == 0,
+      "a place whose position failed to read is not offered");
+
+// --- Orientation: tap versus hold ---
+var gesture = new HoldTapDetector(500);
+Check(gesture.Update(true, 0) == HoldTapDetector.Gesture.None, "press starts silently");
+Check(gesture.Update(false, 200) == HoldTapDetector.Gesture.Tap, "short press is a tap on release");
+gesture.Update(true, 1000);
+Check(gesture.Update(true, 1499) == HoldTapDetector.Gesture.None, "not held long enough yet");
+Check(gesture.Update(true, 1500) == HoldTapDetector.Gesture.Hold, "hold fires once at the threshold");
+Check(gesture.Update(true, 3000) == HoldTapDetector.Gesture.None, "hold does not repeat");
+Check(gesture.Update(false, 3100) == HoldTapDetector.Gesture.None, "release after a hold is not a tap");
+gesture.Update(true, 4000);
+gesture.Swallow();
+Check(gesture.Update(false, 4100) == HoldTapDetector.Gesture.None, "a swallowed press does not tap");
+gesture.Swallow();
+Check(gesture.Update(false, 4200) == HoldTapDetector.Gesture.None && gesture.Update(true, 4300) == HoldTapDetector.Gesture.None
+      && gesture.Update(false, 4400) == HoldTapDetector.Gesture.Tap, "swallowing ends at the next release");
+
+// --- Orientation: landmark regions with hysteresis ---
+var landmarks = new[]
+{
+    new RegionTracker.Landmark("A", 0, 0),
+    new RegionTracker.Landmark("B", 100, 0),
+    new RegionTracker.Landmark("A", -200, 0),
+};
+var region = new RegionTracker(4, 0.2f, 1000);
+Check(region.Update(landmarks, 10, 0, 0) && region.Current == "A", "first reading is immediate");
+Check(!region.Update(landmarks, 52, 0, 100), "just past the midpoint is not a change");
+Check(!region.Update(landmarks, 60, 0, 200) && region.Current == "A", "a clear lead must also hold for a while");
+Check(!region.Update(landmarks, 60, 0, 900), "still within the dwell");
+Check(region.Update(landmarks, 60, 0, 1200) && region.Current == "B", "a held clear lead changes the region");
+Check(!region.Update(landmarks, 45, 0, 1300) && region.Current == "B", "walking back a little does not flip back");
+Check(!region.Update(landmarks, 20, 0, 1400), "a lead that appears restarts the dwell");
+Check(!region.Update(landmarks, 60, 0, 2000) && region.Current == "B", "a lead that vanished resets the candidate");
+region.Update(landmarks, -150, 0, 3000);
+Check(region.Update(landmarks, -150, 0, 4100) && region.Current == "A", "a shared name counts its nearest copy");
+region.Reset();
+Check(region.Current == null && !region.Update(Array.Empty<RegionTracker.Landmark>(), 0, 0, 0), "no landmarks, no region");
+
+// --- Orientation: place file ---
+var entry = new PlaceFile.Entry(400, 2, 7, "Style Lab", -36.25f, 0.1f, -110f);
+Check(PlaceFile.TryParse(PlaceFile.Format(entry), out var parsed) && parsed == entry, "a place survives a round trip");
+Check(PlaceFile.TryParse(PlaceFile.Format(entry with { Name = "a\tb\nc" }), out parsed) && parsed.Name == "a b c",
+      "tabs and newlines in names cannot break the file");
+Check(!PlaceFile.TryParse("400\t2\t7\tName\tx\t0\t0", out _), "a bad number is refused");
+Check(!PlaceFile.TryParse("400\t2\t7\t \t1\t0\t0", out _), "an empty name is refused");
+Check(!PlaceFile.TryParse("400\t2\tName\t1\t0\t0", out _), "a short line is refused");
 Console.WriteLine($"Passed {passed} navigation checks.");
