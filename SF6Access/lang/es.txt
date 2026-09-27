@@ -1030,3 +1030,4 @@ wt.dest.cat_pins=Marcadores del mapa
 wt.dest.cat_saved=Mis lugares
 wt.dest.learn_hint=Para añadir tiendas, maestros y misiones, abre una vez el mapa del teléfono
 wt.dest.unavailable=Destinos no disponibles aquí
+wt.dest.cat_access=Escaleras y puertas

@@ -2,7 +2,7 @@
 namespace SF6Access.Services.WorldTour;
 
 /// <summary>The destination picker's categories, in the order it cycles them.</summary>
-public enum DestinationCategory { Mission, Places, Shops, Masters, Missions, Jobs, People, Pins, Saved }
+public enum DestinationCategory { Mission, Places, Access, Shops, Masters, Missions, Jobs, People, Pins, Saved }
 
 /// <summary>What choosing an entry does: guide to it, hand guidance back to the story, or save the spot.</summary>
 public enum DestinationAction { Go, FollowMission, SaveHere }

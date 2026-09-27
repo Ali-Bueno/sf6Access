@@ -27,6 +27,7 @@ public static class DestinationCatalog
         foreach (var p in FastTravelCatalog.Points())
             all.Add(new Destination(p.Name, null, DestinationCategory.Places, p.X, p.Y, p.Z));
 
+        AddAccesses(all);
         if (people) AddNearbyAvatars(all);
         AccessTargetCatalog.AddTo(all, people);
 
@@ -45,6 +46,14 @@ public static class DestinationCatalog
             all.Add(new Destination(s.Name, null, DestinationCategory.Saved, s.X, s.Y, s.Z));
 
         return DestinationPicker.Build(all, px, pz, MergeM);
+    }
+
+    /// <summary>Ladders and doors around the player (the loaded scene only, within the beacons' range).</summary>
+    private static void AddAccesses(List<Destination> into)
+    {
+        var me = FieldPresenceService.PlayerPos;
+        foreach (var a in FieldAccessCatalog.Nearby(me.X, me.Y, me.Z, System.Environment.TickCount64))
+            into.Add(new Destination(a.Text, null, DestinationCategory.Access, a.X, a.Y, a.Z));
     }
 
     /// <summary>The named avatars the N key reads: masters and people near the player.</summary>

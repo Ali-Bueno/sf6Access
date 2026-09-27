@@ -62,7 +62,9 @@ public class FieldPassingHooks
         foreach (var place in PlaceCache.Places())
         {
             var d = place.Destination;
-            if (d.Action != DestinationAction.Go || d.Category == DestinationCategory.Masters) continue;
+            // Masters are people; ladders and doors are spoken by the exploration reader.
+            if (d.Action != DestinationAction.Go || d.Category is DestinationCategory.Masters or DestinationCategory.Access)
+                continue;
             float dx = d.X - me.X, dz = d.Z - me.Z;
             float m = (float)System.Math.Sqrt(dx * dx + dz * dz);
             if (!_memory.IsNews(place.Key, m)) continue;

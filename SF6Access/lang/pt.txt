@@ -925,3 +925,4 @@ wt.map.icon_other=ponto de interesse
 wt.map.icon_entry={0}, {1}
 wt.dest.learn_hint=Para adicionar lojas, mestres e missões, abra o mapa do celular uma vez
 wt.dest.unavailable=Destinos indisponíveis aqui
+wt.dest.cat_access=Escadas e portas

@@ -303,4 +303,13 @@ turnDetector.Reset();
 Check(!turnDetector.Sample(1, 0, 1200), "after a reset the next sample is not a turn");
 Check(!turnDetector.Sample(0, 1, 1300, 1250), "a turn that started inside the mod's own aim is not a look");
 Check(turnDetector.Sample(1, 0, 1400, 1250), "the next turn after the aim window is a look");
+
+// --- Soundscape: access sonar rota ---
+Check(SonarRota.Pick(0, 3, 5) == -1, "nothing near, nothing plays");
+Check(SonarRota.Pick(1, 3, 7) == 0, "a single access plays every turn");
+Check(SonarRota.Pick(5, 3, 0) == 0 && SonarRota.Pick(5, 3, 1) == 1 && SonarRota.Pick(5, 3, 2) == 2
+      && SonarRota.Pick(5, 3, 3) == 0, "only the three nearest take turns");
+Check(SonarRota.Volume(2, 4, 25, 0.4f, 0.12f) == 0.4f, "inside the arrival band the cue is loudest");
+Check(Math.Abs(SonarRota.Volume(25, 4, 25, 0.4f, 0.12f) - 0.12f) < 1e-6f, "at the edge of range it is quiet, not silent");
+Check(SonarRota.Volume(14.5f, 4, 25, 0.4f, 0.12f) is > 0.12f and < 0.4f, "in between it fades with distance");
 Console.WriteLine($"Passed {passed} navigation checks.");

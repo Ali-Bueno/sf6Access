@@ -1068,3 +1068,4 @@ wt.dest.cat_pins=Map markers
 wt.dest.cat_saved=My places
 wt.dest.learn_hint=To add shops, masters and missions, open the phone map once
 wt.dest.unavailable=Destinations unavailable here
+wt.dest.cat_access=Ladders and doors

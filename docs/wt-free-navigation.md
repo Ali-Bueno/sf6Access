@@ -82,6 +82,9 @@ branching at the player's polygon. Worth a probe first.
 some metres ahead in the camera's direction and aim at its first leg, so pushing forward follows the
 street round a corner instead of into a wall. Shares its machinery with C; only after C is settled.
 
+**F. Hear the ways through — BUILT (2026-09-27, later).** Ladders and doors now sound (see
+[`wt-soundscape.md`](wt-soundscape.md), the audio design this navigation is built on).
+
 ## 4. Recommendation
 
 A + B now (built, off nothing: no new keys, nothing to open), C next if you want it, D as a probe. A and B

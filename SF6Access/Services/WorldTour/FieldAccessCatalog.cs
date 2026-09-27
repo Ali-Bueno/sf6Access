@@ -4,10 +4,13 @@ using REFrameworkNET;
 
 namespace SF6Access.Services.WorldTour;
 
+/// <summary>What kind of way through an access is.</summary>
+internal enum AccessKind { Ladder, Door }
+
 /// <summary>Nearby ladder/door geometry, independent of the selected goal. Copied world positions only.</summary>
 internal static class FieldAccessCatalog
 {
-    internal readonly record struct Access(string Key, string Text, float X, float Y, float Z, long SeenAt);
+    internal readonly record struct Access(string Key, string Text, float X, float Y, float Z, long SeenAt, AccessKind Kind);
     private static readonly string[] Types = {
         "app.worldtour.om.Om011000", "app.worldtour.om.Om016000", "app.worldtour.om.Om017000"
     };
@@ -15,6 +18,8 @@ internal static class FieldAccessCatalog
     private const long ScanMs = 500;
     private const int BatchSize = 32;
     internal const float RangeM = 12f; // Local discovery range, not a claim of walkability.
+    // Kept (not spoken) out to the beacons' felt range, for the access sonar and the look sweep.
+    private static float KeepRangeM => Hooks.WorldTour.FieldBeaconHooks.HOME_RANGE_M;
     private const long LifetimeMs = 6000;
     private static readonly int[] Cursors = new int[Types.Length];
     private static readonly Dictionary<string, Access> Entries = new();
@@ -85,8 +90,8 @@ internal static class FieldAccessCatalog
                 string name = FlowHelper.Call(access, "GetDispName") as string;
                 if (!string.IsNullOrWhiteSpace(name)) text += ", " + FlowHelper.CleanTags(name);
             }
-            if (DistanceSq(x, y, z, px, py, pz) > RangeM * RangeM) continue;
-            Entries[key] = new Access(key, text, x, y, z, now);
+            if (DistanceSq(x, y, z, px, py, pz) > KeepRangeM * KeepRangeM) continue;
+            Entries[key] = new Access(key, text, x, y, z, now, _family == 0 ? AccessKind.Ladder : AccessKind.Door);
             if (Logged.Add(Types[_family]))
                 API.LogInfo(FormattableString.Invariant($"[SF6Access] Exploration access: {Types[_family]}, {text}, ({x:F2}, {y:F2}, {z:F2})"));
         }

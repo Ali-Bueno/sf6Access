@@ -11,6 +11,7 @@ public static class DestinationText
     {
         DestinationCategory.Mission => LangFile.Get("wt.dest.cat_mission", "Story objective"),
         DestinationCategory.Places => LangFile.Get("wt.dest.cat_places", "Places"),
+        DestinationCategory.Access => LangFile.Get("wt.dest.cat_access", "Ladders and doors"),
         DestinationCategory.Shops => LangFile.Get("wt.dest.cat_shops", "Shops and services"),
         DestinationCategory.Masters => LangFile.Get("wt.dest.cat_masters", "Masters"),
         DestinationCategory.Missions => LangFile.Get("wt.dest.cat_missions", "Missions"),

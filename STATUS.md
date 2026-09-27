@@ -4,6 +4,13 @@
 
 **Last updated:** 2026-09-27
 
+**Next step (2026-09-27, latest): test the soundscape pass** (`docs/wt-soundscape.md` §8, analysis and
+roadmap there). Built, 119 pure checks, NOT verified in game: ladders and doors within 25 m give short
+earcons (`AccessSonarHooks`, new `sounds/ladder.mp3` and `sounds/door knock.mp3`, replaceable), one cue at a
+time over the 3 nearest; ladders/doors are named by the look sweep, lockable with R3 and listed in the
+picker ("Escaleras y puertas"). Decisions pending: breakable beacon as awareness lane, "Alrededor",
+reachability-muffled cues, continuous guidance.
+
 **Next step (2026-09-27): test navigating without a menu** (`docs/wt-free-navigation.md`, §6).
 Built, 113 pure checks, adversarially reviewed (8 fixes), NOT verified in game: turning the camera while standing names places ahead
 (`FieldPlaceSweepHooks`), a tap of R3 right after makes that place the destination; walking past a place
@@ -158,6 +165,7 @@ Analysis/documentation only; no code changes, build or new in-game verification.
 | World Tour — multi-level routes (ladders) | wip | Built 2026-09-22, NOT verified in game. `LevelRoute` + `LevelRoutePlanner` + `LadderCatalog`: walk → ladder → walk when the objective's navmesh island is disconnected. `docs/sf6-screens.md` § multi-level routes |
 | World Tour — orientation (zones, where am I, destination picker) | wip | Confirmed working in game 2026-09-27 (needs polish). `ZoneHooks`, `SectionNoticeHooks`, `DestinationPickerHooks`; `docs/wt-orientation.md` |
 | World Tour — free navigation (look sweep for places, passing by) | wip | Built 2026-09-27, NOT verified in game. `FieldPlaceSweepHooks`, `FieldPassingHooks`; `docs/wt-free-navigation.md` |
+| World Tour — soundscape (ladder/door earcons) | wip | Built 2026-09-27, NOT verified in game. `AccessSonarHooks`; `docs/wt-soundscape.md` |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
 
 ## Derived facts (so we never re-RE them)

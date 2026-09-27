@@ -19,5 +19,6 @@
     <Compile Include="../../SF6Access/Services/WorldTour/ConeSweep.cs" Link="ConeSweep.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/ProximityMemory.cs" Link="ProximityMemory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/CameraTurnDetector.cs" Link="CameraTurnDetector.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/SonarRota.cs" Link="SonarRota.cs" />
   </ItemGroup>
 </Project>
