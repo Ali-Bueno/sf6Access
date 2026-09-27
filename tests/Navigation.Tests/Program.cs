@@ -253,4 +253,54 @@ Check(PlaceFile.TryParse(PlaceFile.Format(entry with { Name = "a\tb\nc" }), out 
 Check(!PlaceFile.TryParse("400\t2\t7\tName\tx\t0\t0", out _), "a bad number is refused");
 Check(!PlaceFile.TryParse("400\t2\t7\t \t1\t0\t0", out _), "an empty name is refused");
 Check(!PlaceFile.TryParse("400\t2\tName\t1\t0\t0", out _), "a short line is refused");
+
+// --- Orientation: zone bounce gate (Seaside Street / Buckler edge, 2026-09-27) ---
+var zoneGate = new ZoneAnnounceGate(30000, 3000);
+Check(!zoneGate.IsBounce(408, 5000) && zoneGate.DueAt(408, 5000) == 5000, "a section entered for the first time is announced at once");
+zoneGate.Spoke(408, 5000);
+zoneGate.Spoke(409, 11000);
+Check(zoneGate.IsBounce(408, 14700) && zoneGate.DueAt(408, 14700) == 17700, "walking back within the window waits for a stay");
+Check(!zoneGate.IsBounce(408, 35001), "after the window a section is fresh again");
+Check(!zoneGate.IsBounce(0, 100), "no section is never a bounce");
+zoneGate.Clear();
+Check(zoneGate.DueAt(409, 7000) == 7000, "clearing forgets what was heard");
+
+// --- Free navigation: look sweep cone ---
+var cone = new ConeSweep(15, 30);
+cone.BeginPoll();
+Check(cone.Offer("shop", 10) && !cone.Offer("park", 20), "a place enters within half an hour, not beyond");
+cone.EndPoll();
+cone.BeginPoll();
+Check(!cone.Offer("shop", 25) && cone.Contains("shop"), "wobbling inside the leave angle is not a new entry");
+cone.EndPoll();
+cone.BeginPoll();
+Check(!cone.Offer("shop", 40) && !cone.Contains("shop"), "turning a full hour away leaves the cone");
+cone.EndPoll();
+cone.BeginPoll();
+cone.Offer("park", 0);
+cone.EndPoll();
+cone.BeginPoll();
+cone.EndPoll();
+Check(!cone.Contains("park"), "a place no longer offered is forgotten");
+cone.BeginPoll();
+Check(cone.Offer("park", 0) && !cone.Offer("park", 0), "a forgotten place enters again, but once");
+cone.EndPoll();
+
+// --- Free navigation: passing by ---
+var passing = new ProximityMemory(12, 24);
+Check(!passing.IsNews("salon", 30), "far away is not news");
+Check(passing.IsNews("salon", 11), "coming within range is news");
+passing.Announced("salon");
+Check(!passing.IsNews("salon", 5) && !passing.IsNews("salon", 20), "announced once, silent at the edge");
+Check(!passing.IsNews("salon", 25) && passing.IsNews("salon", 10), "walking well away re-arms it");
+
+// --- Free navigation: look-around versus drift ---
+var turnDetector = new CameraTurnDetector(15);
+Check(!turnDetector.Sample(0, 1, 0), "the first sample is never a turn");
+Check(!turnDetector.Sample(0.0349f, 0.9994f, 1000), "two degrees in a second is drift");
+Check(turnDetector.Sample(0.5f, 0.866f, 1100), "about twenty-eight degrees in a tenth of a second is a look");
+turnDetector.Reset();
+Check(!turnDetector.Sample(1, 0, 1200), "after a reset the next sample is not a turn");
+Check(!turnDetector.Sample(0, 1, 1300, 1250), "a turn that started inside the mod's own aim is not a look");
+Check(turnDetector.Sample(1, 0, 1400, 1250), "the next turn after the aim window is a look");
 Console.WriteLine($"Passed {passed} navigation checks.");

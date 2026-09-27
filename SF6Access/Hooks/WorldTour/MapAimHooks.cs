@@ -80,7 +80,9 @@ public class MapAimHooks
             if (_wasInField)
             {
                 _wasInField = false;
-                CameraAimService.Reset();
+                // Calibration survives menus, the phone and fights (it used to be lost each time,
+                // and R3 then only spoke until the player turned the camera again).
+                CameraAimService.Release();
                 FieldNavPath.Reset();
                 AccessPointReader.Reset();
                 ApproachFinder.Reset();
@@ -102,7 +104,7 @@ public class MapAimHooks
         // The picker owns R3/V while open; the press that closes it must not aim on release.
         if (DestinationPickerHooks.IsOpen) _gesture.Swallow();
         else if (route) ToggleRouteGuidance();
-        else if (gesture == HoldTapDetector.Gesture.Tap) Aim();
+        else if (gesture == HoldTapDetector.Gesture.Tap) { TakeLookedAtPlace(); Aim(); }
         else if (gesture == HoldTapDetector.Gesture.Hold) DestinationPickerHooks.Open();
 
         // Holds the yaw for its brief window against the controller's own update.
@@ -116,7 +118,11 @@ public class MapAimHooks
     {
         uint city = WorldTourStateService.CityId;
         if (city == 0) return;
-        if (_city != 0 && city != _city) MapSelectionMemory.Reset();
+        if (_city != 0 && city != _city)
+        {
+            MapSelectionMemory.Reset("another city");
+            CameraAimService.Reset();
+        }
         _city = city;
     }
 
@@ -133,6 +139,17 @@ public class MapAimHooks
             interrupt: true);
         API.LogInfo($"[SF6Access] Route guidance {(FieldNavPath.Enabled ? "ON" : "off")} — " +
                     FieldNavPath.RouteDescription);
+    }
+
+    /// <summary>A place the look sweep has just named, still faced, becomes the destination
+    /// (<see cref="FieldPlaceSweepHooks"/>): look, hear it, tap R3 — no menu.</summary>
+    private static void TakeLookedAtPlace()
+    {
+        if (!FieldPlaceSweepHooks.TryTakeCandidate(out var place)) return;
+        if (place.Action == DestinationAction.FollowMission)
+            MapSelectionMemory.Reset("back to the story objective");
+        else
+            MapSelectionMemory.Remember(place.Label, place.X, place.Y, place.Z);
     }
 
     private static void Aim()
@@ -166,7 +183,7 @@ public class MapAimHooks
         // to finish.
         if (dest.IsTracked && !dest.Ladder && !dest.IsApproach && straight <= MissionBeaconHooks.ARRIVED_M)
         {
-            MapSelectionMemory.Reset();
+            MapSelectionMemory.Reset("arrived");
             ScreenReaderService.Speak(LocalizedText.TrackerArrived(dest.Word), interrupt: true);
             return;
         }

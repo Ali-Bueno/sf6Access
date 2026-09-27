@@ -113,10 +113,13 @@ public class DestinationPickerHooks
         {
             case DestinationAction.SaveHere:
                 string name = SavedPlaces.SaveHere(ZoneNameService.Current().Name);
+                // The new spot is where the player stands: known, not something to pass by.
+                PlaceCache.Reset();
+                FieldPassingHooks.Prime();
                 Speak(name == null ? DestinationText.NotSaved() : DestinationText.Saved(name));
                 return;
             case DestinationAction.FollowMission:
-                MapSelectionMemory.Reset();
+                MapSelectionMemory.Reset("back to the story objective");
                 Speak(DestinationText.FollowMission());
                 return;
         }

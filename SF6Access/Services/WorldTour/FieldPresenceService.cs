@@ -51,6 +51,11 @@ public static class FieldPresenceService
     /// field — the opening tutorial included, menus excluded.</summary>
     public static bool InField { get; private set; }
 
+    /// <summary>The player's position from the last sample (every SAMPLE_MS), valid while
+    /// <see cref="InField"/>: readers polling several times a second use it instead of
+    /// reading the avatar again.</summary>
+    public static (float X, float Y, float Z) PlayerPos => (_lastX, _lastY, _lastZ);
+
     /// <summary>True while the player is walking (or stopped only a moment ago).</summary>
     public static bool Moving { get; private set; }
 

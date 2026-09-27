@@ -13,7 +13,9 @@ public static class DestinationCatalog
     /// <summary>Two sources naming the same thing this close together are one place.</summary>
     private static float MergeM => 2f * MissionBeaconHooks.ARRIVED_M;
 
-    public static List<DestinationPicker.Group> Build(float px, float pz)
+    /// <param name="people">False leaves out the crowd (avatars around the player and the
+    /// registry's plain NPCs): the places-only view the look sweep and "passing by" use.</param>
+    public static List<DestinationPicker.Group> Build(float px, float pz, bool people = true)
     {
         var all = new List<Destination>();
 
@@ -25,8 +27,8 @@ public static class DestinationCatalog
         foreach (var p in FastTravelCatalog.Points())
             all.Add(new Destination(p.Name, null, DestinationCategory.Places, p.X, p.Y, p.Z));
 
-        AddNearbyAvatars(all);
-        AccessTargetCatalog.AddTo(all);
+        if (people) AddNearbyAvatars(all);
+        AccessTargetCatalog.AddTo(all, people);
 
         uint city = WorldTourStateService.CityId;
         foreach (var e in MapIconSnapshot.For(city))

@@ -93,9 +93,9 @@ public static class MapSelectionMemory
     /// <summary>Forget the selection. Called when the field unloads: another city's
     /// coordinates are not this one's, and a point left over from the last city
     /// would aim the player at nothing.</summary>
-    public static void Reset()
+    public static void Reset(string reason)
     {
-        if (_current.Ok) API.LogInfo("[SF6Access] Map selection cleared (another city)");
+        if (_current.Ok) API.LogInfo($"[SF6Access] Map selection cleared ({reason})");
         _current = default;
     }
 }

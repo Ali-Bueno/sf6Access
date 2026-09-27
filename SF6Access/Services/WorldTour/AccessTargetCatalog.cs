@@ -24,25 +24,28 @@ public static class AccessTargetCatalog
     private static uint _facilitiesCity;
     private static long _facilitiesAt;
 
-    private static bool _logged;
+    private static bool _logged, _unreadableLogged;
 
-    public static void AddTo(List<Destination> into)
+    /// <param name="npcs">False skips the plain NPC list (masters and facilities only).</param>
+    public static void AddTo(List<Destination> into, bool npcs = true)
     {
         var data = WorldTourStateService.GetAccessData();
         if (data == null)
         {
-            LogOnce("app.GuiManager.AccessData not readable");
+            if (!_unreadableLogged) API.LogInfo("[SF6Access] Destinations: app.GuiManager.AccessData not readable");
+            _unreadableLogged = true;
             return;
         }
 
-        int masters = AddTargets(data, AvatarFieldReader.CONTACT_LEGENDARY, into);
-        int npcs = AddTargets(data, AvatarFieldReader.CONTACT_NPC, into);
+        int masters = AddTargets(data, AvatarFieldReader.CONTACT_LEGENDARY, into, shopsOnly: false);
+        // Without the crowd, NPC shopkeepers still count: they are places to go.
+        int people = AddTargets(data, AvatarFieldReader.CONTACT_NPC, into, shopsOnly: !npcs);
         var facilities = Facilities(data);
         into.AddRange(facilities);
-        LogOnce($"{masters} masters, {npcs} NPCs, {facilities.Count} facilities");
+        if (npcs) LogOnce($"{masters} masters, {people} NPCs, {facilities.Count} facilities");
     }
 
-    private static int AddTargets(ManagedObject data, int contactType, List<Destination> into)
+    private static int AddTargets(ManagedObject data, int contactType, List<Destination> into, bool shopsOnly)
     {
         var list = FlowHelper.Call(data, "GetAccessTargetData", contactType) as ManagedObject;
         int n = System.Math.Min(FlowHelper.GetListCount(list), MAX_READ), added = 0;
@@ -56,6 +59,7 @@ public static class AccessTargetCatalog
             var category = contactType == AvatarFieldReader.CONTACT_LEGENDARY ? DestinationCategory.Masters
                 : FlowHelper.GetObjectField(target, "ShopComponent") != null ? DestinationCategory.Shops
                 : DestinationCategory.People;
+            if (shopsOnly && category == DestinationCategory.People) continue;
             into.Add(new Destination(name, null, category, x, y, z));
             added++;
         }

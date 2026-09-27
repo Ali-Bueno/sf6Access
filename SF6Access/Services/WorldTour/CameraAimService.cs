@@ -145,6 +145,24 @@ public static class CameraAimService
     }
 
     /// <summary>Forget everything measured. The controller is rebuilt per city.</summary>
+    /// <summary>After an aim the follow camera may still be finishing the turn.</summary>
+    private const long SETTLE_MS = 250;
+
+    /// <summary>Until when a camera turn is the mod's own (an aim plus its settling), so look
+    /// readers do not take it for the player looking around.</summary>
+    public static long OwnTurnUntil => _aimUntil + SETTLE_MS;
+
+    /// <summary>Stops any aim in progress and gives a failed write another chance, but keeps
+    /// the calibration: which component is the yaw is a property of the controller type, and
+    /// the controller is looked up afresh on every aim.</summary>
+    public static void Release()
+    {
+        _aimUntil = 0;
+        // A calibration still collecting evidence must not pair a sample from before with one after.
+        _haveSample = false;
+        if (_writeFailed) { _writeFailed = false; Status = $"{ROTATION_FIELD}.{_yawComponent} (retrying)"; }
+    }
+
     public static void Reset()
     {
         _calibrated = _writeFailed = _haveSample = _fieldMissingLogged = false;

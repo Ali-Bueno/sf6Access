@@ -4,16 +4,13 @@
 
 **Last updated:** 2026-09-27
 
-**Next step (2026-09-27): test the orientation pass** (`docs/wt-orientation.md`, checklist §6). Built,
-0 warnings, 93 pure checks pass, adversarially reviewed (9 findings fixed), **nothing verified in game**. (1) Zones announced while walking: the
-section id was 0 in every session because `CitySectionManager` is not a singleton (it lives in
-`GuiManager.AccessData`); now read there, the game's section banner is hooked, and a landmark region
-("zona de Beat Square", with hysteresis) is the fallback. (2) Z = where am I: zone, nearest landmark with
-direction, facing, destination. (3) **Hold R3 / V = destination picker** (tap still aims, on release):
-categories nearest-first from the mission, fast-travel points, nearby people, the game's map registry,
-a saved snapshot of the phone map and the player's own saved spots; choosing one drives the existing
-beacon, route and ladder guidance, and now survives menus and street fights (it used to be cleared).
-Report the log lines listed in the checklist.
+**Next step (2026-09-27): test navigating without a menu** (`docs/wt-free-navigation.md`, §6).
+Built, 113 pure checks, adversarially reviewed (8 fixes), NOT verified in game: turning the camera while standing names places ahead
+(`FieldPlaceSweepHooks`), a tap of R3 right after makes that place the destination; walking past a place
+within 12 m names it once (`FieldPassingHooks`). Polish from the test: zone banners no longer bounce at
+an edge (`ZoneAnnounceGate`), R3 keeps its camera calibration across menus and fights. Proposed, needs
+the tester's decision: continuous guidance (the camera follows the route while walking, replacing the
+R3-every-second habit seen in the log).
 
 **Test 2026-09-27 (orientation pass): WORKS, needs polish** (tester: "está bien, hay que pulirlo").
 Confirmed in game: section id through `GuiManager.AccessData` (`Section id 410 read through manager`),
@@ -159,7 +156,8 @@ Analysis/documentation only; no code changes, build or new in-game verification.
 | World Tour — phone map | wip | Built 2026-09-07 from the F8 capture `sf6access_autodump_154237.txt` (lines 770-965): `Hooks/WorldTour/DeviceMapHooks.cs` + `Services/WorldTour/DeviceMapText.cs` on `app.UIFlowWTDeviceMap.MapParam`. Speaks the location + guide message on entry, then flow-state changes ("Map" / "Fast travel list"), the icon under the free cursor ("Beat Square, shop"), the highlighted fast-travel point ("name, 2 of 7") and the marker info panel. Icon kinds come from `ICON_TYPE` member NAMES mapped to nine family words (`wt.map.icon_*` in `lang/en.txt` + `es.txt`). **PENDING IN-GAME VERIFICATION** — checklist below. The world map (`app.UIFlowWorldMap`) is still untouched |
 | World Tour — map-selection aiming + route guidance | wip | Built 2026-09-09, **NOTHING VERIFIED IN GAME**. `Hooks/WorldTour/FieldTrackerHooks.cs` on `Services/WorldTour/{MapIcon, MapIconCatalog, TrackerSelection, TrackerButtons, FieldInputMask, BeaconDestination}.cs`. R3/V opens a modal list of everything the HUD minimap is showing (`app.UIMiniMapWindow.mIconInfoList`, real `IconInfo.GlobalPos` world positions); d-pad up/down or the arrows cycle targets nearest-first, L1/R1 or PageUp/PageDown cycle the game's own `ICON_GROUP_TYPE` categories. The chosen icon takes over the mission beacon; the game removing its icon is what triggers auto-retracking to the next of the same category. **Shift+V turns on `FieldNavPath`** (inert since 2026-09-08) so the beacon aims at the route's first corner. See `docs/sf6-screens.md` § World Tour minimap tracker + route guidance |
 | World Tour — multi-level routes (ladders) | wip | Built 2026-09-22, NOT verified in game. `LevelRoute` + `LevelRoutePlanner` + `LadderCatalog`: walk → ladder → walk when the objective's navmesh island is disconnected. `docs/sf6-screens.md` § multi-level routes |
-| World Tour — orientation (zones, where am I, destination picker) | wip | Built 2026-09-27, NOT verified in game. `ZoneHooks`, `SectionNoticeHooks`, `DestinationPickerHooks`; `docs/wt-orientation.md` |
+| World Tour — orientation (zones, where am I, destination picker) | wip | Confirmed working in game 2026-09-27 (needs polish). `ZoneHooks`, `SectionNoticeHooks`, `DestinationPickerHooks`; `docs/wt-orientation.md` |
+| World Tour — free navigation (look sweep for places, passing by) | wip | Built 2026-09-27, NOT verified in game. `FieldPlaceSweepHooks`, `FieldPassingHooks`; `docs/wt-free-navigation.md` |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
 
 ## Derived facts (so we never re-RE them)

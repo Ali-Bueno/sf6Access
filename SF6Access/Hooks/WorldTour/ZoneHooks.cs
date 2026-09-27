@@ -26,6 +26,13 @@ public class ZoneHooks
     // for the richer banner wording before speaking the table name.
     private const long BANNER_GRACE_MS = 1500;
 
+    // At the Seaside Street / Buckler edge the game re-raised its banner every 0.4-6 s
+    // (2026-09-27 log). Walking back into a section heard within half a minute is a bounce:
+    // it is only announced once the player has stayed there for 3 s.
+    private const long REPEAT_WINDOW_MS = 30000;
+    private const long BOUNCE_DWELL_MS = 3000;
+    private static readonly ZoneAnnounceGate _gate = new(REPEAT_WINDOW_MS, BOUNCE_DWELL_MS);
+
     private const int VK_Z = 0x5A;
     private static readonly ReadoutShortcut ZoneKey = new(VK_Z, ReadoutShortcut.PAD_NONE);
 
@@ -55,7 +62,9 @@ public class ZoneHooks
             _pending = default;
             return;
         }
-        _pending = new Pending(text, text, sectionId, 0);
+        // Due at once (0) unless it is a bounce back, which waits for the player to stay.
+        long now = System.Environment.TickCount64;
+        _pending = new Pending(text, text, sectionId, _gate.IsBounce(sectionId, now) ? _gate.DueAt(sectionId, now) : 0);
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
@@ -69,10 +78,12 @@ public class ZoneHooks
         {
             // Re-entering the field re-announces where the player has landed.
             ZoneNameService.Reset();
+            PlaceCache.Reset();
             _pending = default;
             _announcedSection = 0;
             _announcedName = null;
             _bannersSeen = false;
+            _gate.Clear();
             _pollCounter = 0;
             return;
         }
@@ -96,13 +107,15 @@ public class ZoneHooks
         {
             var p = _pending;
             _pending = default;
+            if (!StillThere(p)) return;
             MarkAnnounced(p.Name, p.SectionId);
             ScreenReaderService.Speak(p.Text, interrupt: false);
         }
     }
 
     /// <summary>Queues a zone the player has just walked into, if it is news. A newer zone
-    /// replaces one still waiting, except the game's banner for the same section.</summary>
+    /// replaces one still waiting, except the game's banner for the same section. A section
+    /// heard recently waits for the player to stay (<see cref="ZoneAnnounceGate"/>).</summary>
     private static void Queue(ZoneReading zone)
     {
         if (!zone.Ok) return;
@@ -112,13 +125,14 @@ public class ZoneHooks
             if (zone.SectionId == 0 || zone.SectionId == _pending.SectionId) return;
             if (zone.SectionId == _announcedSection)
             {
-                // Stepped back before a table-name announcement came due: drop it. A banner
-                // (due at once) is the game's own word and is kept.
+                    // Stepped back before a waiting line came due (grace or bounce): drop it.
+                // A banner due at once is the game's own word and is kept.
                 if (_pending.DueAt != 0) _pending = default;
                 return;
             }
+            long now = System.Environment.TickCount64;
             _pending = new Pending(zone.Name, zone.Name, zone.SectionId,
-                                   System.Environment.TickCount64 + BANNER_GRACE_MS);
+                                   System.Math.Max(now + BANNER_GRACE_MS, _gate.DueAt(zone.SectionId, now)));
             return;
         }
 
@@ -130,8 +144,18 @@ public class ZoneHooks
         _pending = new Pending(zone.Name, text, 0, 0);
     }
 
+    /// <summary>A section line that had to wait is only spoken if the player is still in it
+    /// (id 0 = between sections, not a contradiction).</summary>
+    private static bool StillThere(Pending p)
+    {
+        if (p.SectionId == 0 || p.DueAt == 0) return true;
+        uint now = WorldTourStateService.CurrentSectionId;
+        return now == 0 || now == p.SectionId;
+    }
+
     private static void MarkAnnounced(string name, uint sectionId)
     {
+        _gate.Spoke(sectionId, System.Environment.TickCount64);
         if (sectionId != 0) _announcedSection = sectionId;
         if (!string.IsNullOrEmpty(name)) _announcedName = name;
     }

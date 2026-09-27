@@ -38,6 +38,8 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
 
 - [`docs/wt-orientation.md`](docs/wt-orientation.md) — World Tour orientation: zone announcements,
   "where am I" (Z), the destination picker (hold R3/V), its data sources and test checklist.
+- [`docs/wt-free-navigation.md`](docs/wt-free-navigation.md) — navigating without a menu: look sweep
+  for places + R3 to go, "passing by", and the proposed next steps (continuous guidance, streets).
 
 > These docs are the durable, version-controlled record of what we learned reverse-engineering
 > SF6's UI. **When you discover something new about a screen, add it here** — don't leave it only in

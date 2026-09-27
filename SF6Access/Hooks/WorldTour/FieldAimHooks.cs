@@ -84,8 +84,7 @@ public class FieldAimHooks
 
     private static int _tick;
     private static ulong _lastTarget;
-    private static FieldDirectionService.FlatDir _lastForward;
-    private static long _lastForwardTick;
+    private static readonly CameraTurnDetector _turn = new(SCAN_TURN_DEG_PER_S);
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -114,7 +113,9 @@ public class FieldAimHooks
 
         var forward = FieldDirectionService.GetCameraForward();
         if (!forward.Ok) return;
-        bool turning = IsTurning(forward);
+        // A turn the mod makes itself (R3 aiming) is not the player looking around.
+        bool turning = _turn.Sample(forward.X, forward.Z, System.Environment.TickCount64,
+                                    CameraAimService.OwnTurnUntil);
 
         var others = AvatarFieldReader.ReadOthers(mgr);
         if (others.Count == 0) { Reset(); return; }
@@ -192,25 +193,6 @@ public class FieldAimHooks
         ScreenReaderService.Speak(LocalizedText.AtMeters(toSpeakName, meters), interrupt: false);
     }
 
-    /// <summary>Whether the camera turned faster than <see cref="SCAN_TURN_DEG_PER_S"/>
-    /// since the previous poll. The first poll after a reset is not a turn.</summary>
-    private static bool IsTurning(FieldDirectionService.FlatDir forward)
-    {
-        long now = System.Environment.TickCount64;
-        bool turning = false;
-        if (_lastForward.Ok && now > _lastForwardTick)
-        {
-            double dot = forward.X * _lastForward.X + forward.Z * _lastForward.Z;
-            double cross = forward.Z * _lastForward.X - forward.X * _lastForward.Z;
-            double deg = System.Math.Abs(System.Math.Atan2(cross, dot) * 180.0 / System.Math.PI);
-            double seconds = (now - _lastForwardTick) / 1000.0;
-            turning = deg / seconds >= SCAN_TURN_DEG_PER_S;
-        }
-        _lastForward = forward;
-        _lastForwardTick = now;
-        return turning;
-    }
-
     /// <summary>Forget people who are no longer in the field's avatar list.</summary>
     private static void Prune()
     {
@@ -226,7 +208,6 @@ public class FieldAimHooks
         InCone.Clear();
         _tick = 0;
         _lastTarget = 0;
-        _lastForward = default;
-        _lastForwardTick = 0;
+        _turn.Reset();
     }
 }

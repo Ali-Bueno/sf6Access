@@ -15,5 +15,9 @@
     <Compile Include="../../SF6Access/Services/WorldTour/HoldTapDetector.cs" Link="HoldTapDetector.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/RegionTracker.cs" Link="RegionTracker.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/PlaceFile.cs" Link="PlaceFile.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ZoneAnnounceGate.cs" Link="ZoneAnnounceGate.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ConeSweep.cs" Link="ConeSweep.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ProximityMemory.cs" Link="ProximityMemory.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/CameraTurnDetector.cs" Link="CameraTurnDetector.cs" />
   </ItemGroup>
 </Project>
