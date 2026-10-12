@@ -233,13 +233,33 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   (`app.network.MsgLeaguePoint`), `PlayerData.mInputType`, `PlayerData.mIsPlayer`.
 - `MsgLeaguePoint` fields: `character_id` (uint), `league_point` (int), `league_rank` (uint),
   `master_league` (uint), `master_rating` (int), `master_rating_ranking` (int).
-- **Rank (data-driven):** `league_rank` IS an `app.AppDefine.LeagueRankWithLevel`. Resolve via
-  `Services/LeagueRankResolver` (`GetRecord` uses `app.helper.hGUI.GetLeagueRankWithLevelUserData`;
-  `Format(record, tierOnly)` → "Diamond 3" from `leagueRank.messageId.GUID` + `rankLevel`). Reject when
-  `IsMaster && master_rating <= 0` (unranked sentinel); non-master → "Tier Level {league_point} LP"
-  (LP skipped when ≤ 0 — pre-placement is -1); master → "Tier {master_rating} MR" (tester request:
-  the point values are announced alongside the rank). `league_rank=39` is a VALID rank
-  ("New Challenger 1"), not a sentinel.
+- **Rank (data-driven):** `league_rank` and `master_league` are both `app.AppDefine.LeagueRankWithLevel`
+  values; the full rank is `master_league` when non-zero, else `league_rank`
+  (`LeagueRankResolver.RankOf` — identical to `hGUI.GetLeagueRankWithLevel(league_rank, master_league)`,
+  probed for every pair 1..15 × 0..6). `LeagueRankResolver.Describe(lp)` names it from the record's
+  own full label `record.messageId.GUID` (building tier + `rankLevel` said "New Challenger 1"); non-master →
+  "Tier Level, {league_point} LP" (LP skipped when ≤ 0 — pre-placement is -1); master-league →
+  "Name, {master_rating} MR" (MR skipped when ≤ 0). Each side's details are comma-joined and the
+  sides split by ". vs " so the screen reader pauses between items. `league_rank=39` is a VALID rank (New
+  Challenger), not a sentinel. See "League rank table" below for the Master sub-tiers and Legend.
+
+### League rank table (probed in game 2026-10-12, `hGUI.GetLeagueRankWithLevelUserData`)
+- 1–35: Rookie, Iron, Bronze, Silver, Gold, Platinum, Diamond × divisions 1–5 (`rankLevel`). LP
+  thresholds (`arrivalLeaguePoint`): Rookie 0/200/400/600/800, Iron from 1000 (+400), Bronze from 3000
+  (+400), Silver from 5000 (+800), Gold from 9000 (+800), Platinum from 13000 (+1200), Diamond from
+  19000 (+1200).
+- 36 Master (25000 LP) · 40 High Master (1600 MR) · 41 Grand Master (1700 MR) · 42 Ultimate Master
+  (1800 MR) — `arrivalRating` holds the MR threshold. 39 New Challenger. 38 has no record.
+- **37 = Legend** (top 500 by MR at the end of a Master League phase): `isMasterLeague=True`, sorts
+  above Ultimate Master (`leagueRank.sortNumber` 13 vs 12), but its record has NO name message (the
+  word is part of the icon image; `UIPartsRankIconBase.MessageLegendConvert(text, rankingNum)` only
+  writes the ranking number). The mod says `LocalizedText.Legend()` plus `master_rating_ranking`
+  ("Legend, ranked 123"). Not yet seen on a real Legend player.
+- **Master test = `hGUI.IsMasterRateRank(record)`** (true for 36, 37, 40–42). Do NOT use the record's
+  `isMasterLeague` field: it is FALSE for plain Master (36), which made the VS screen say "Master 1
+  83006 LP" while the screen showed 1313 MR.
+- Name messages are `LeagueRankMessageN` (1 New Challenger, 2–36 tier+division, 37 Master, 38–44 bare
+  tier names, 45–47 High/Grand/Ultimate Master). No Legend message exists in that family.
 - **Control type:** `PlayerData.mInputType` (`app.EConfigInputType` sbyte; NOT_SPECIFIED=-1 reads as
   byte 255 → reject). Gate on `mIsPlayer` (CPU sides default NORMAL). `Services/ControlTypeNames`.
 
@@ -273,7 +293,13 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
 - `app.UIFlowRankUp.Param`: `CtrlRankUp` (Control banner — walk for text), `ListData`/`_ListData`
   (IList<LeagueRankWithLevelUserDataRecord>), `IsExam`. `LeagueRankWithLevelUserDataRecord`: `messageId`
   (→GUID full "Gold 3"), `leagueRank` (→messageId→GUID bare), `rankLevel`, `isMasterLeague`,
-  `arrivalLeaguePoint`/`arrivalRating`. Arrived rank = LAST ListData record.
+  `arrivalLeaguePoint`/`arrivalRating`. The param holds NO arrived rank: taking the LAST ListData
+  record announced "Ultimate Master" on every rank-up (2026-10-12), so ListData looks like the whole
+  ladder. Arrived rank = `app.ResultController` (scene component, owns the RankUp flow) →
+  `get_SelfData()` → `Fighter.NextLeague` (CommonMatchingLeaguePoint; `PrevLeague` = before,
+  `IsSelf`) → `LeagueRankResolver.Describe`. Logged as "Self league after match" on every ranked
+  result (BattleHubResultHooks) so it can be checked without a rank-up. Not yet seen on a real
+  rank-up.
 
 ---
 
@@ -301,8 +327,14 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `ResultCounter.Param` `mP1WinCount`/`mP2WinCount` + per-player `PlayerObj.TextRatio`.
 - **Rank gauge — DATA-DRIVEN (do NOT poll the animating text):** `app.UIFlowRankGauge.Param`:
   `RankInfoAfter`/`RankInfoBefore` (`Component.CommonMatchingLeaguePoint`) → `league_point` (int),
-  `league_rank` (uint → LeagueRankResolver), `master_rating` (int); `IsMove` (bool animating),
+  `league_rank`/`master_league` (uint → `LeagueRankResolver.Describe`), `master_rating` (int); `IsMove` (bool animating),
   `PlayerIndex`, states GaugeWait/RankChange/HideAndEnd, `TextName`. Read `RankInfoAfter` as data.
+- **Rank down has no screen of its own** (2026-10-12: Diamond 1 → Platinum 5 opened no
+  `UIFlowRankUp`; a promotion does, incl. the end-of-placement one with `IsExam=True`, `_ListData=null`).
+  The gauge says "Rank down" when `RankOf(RankInfoBefore) != RankOf(RankInfoAfter)` and the points fell.
+  The opponent's gauge carries no change, so only your own gauge can trigger it.
+- During placement `league_point` is -1 on both sides: the gauge then says no points and no change
+  (it used to say "-1 LP", then "+19001" on the first placed rank).
 - Image-based (skipped): `UIFlowResultTitle`, `UIFlowResultTimer`, `UIFlowResultRivalAi`.
 
 ### Chat window (`ChatMenuHooks`)

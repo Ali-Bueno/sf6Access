@@ -8,9 +8,9 @@ namespace SF6Access.Hooks;
 /// <summary>
 /// Announces the league rank-up / promotion screen (app.UIFlowRankUp.Param) shown
 /// after ranked matches when your league rank changes (Bronze, Silver, Gold ...).
-/// The screen text lives under CtrlRankUp; the arrived rank is also held as data
-/// in ListData (LeagueRankWithLevelUserDataRecord) — the on-screen rank itself is
-/// an icon, so the localized rank name is read from the record's message Guid.
+/// The screen text lives under CtrlRankUp; the on-screen rank itself is an icon,
+/// so the arrived rank is read as data from the result screen's ResultController
+/// (your NextLeague) and named through LeagueRankResolver.
 /// Migrated to ScreenAdapter.
 /// </summary>
 public sealed class RankUpHooks : SingleParamScreenAdapter
@@ -52,7 +52,7 @@ public sealed class RankUpHooks : SingleParamScreenAdapter
 
     /// <summary>
     /// "{on-screen text}. {arrived rank}" — the localized banner text walked from
-    /// CtrlRankUp plus the rank name resolved from the rank record (skipped when
+    /// CtrlRankUp plus the arrived rank from your post-match league data (skipped when
     /// it is already part of the banner text). Null until something is readable.
     /// </summary>
     private static string BuildAnnouncement(ManagedObject param)
@@ -63,7 +63,7 @@ public sealed class RankUpHooks : SingleParamScreenAdapter
             FlowHelper.GetObjectField(param, "CtrlRankUp"));
         if (!string.IsNullOrWhiteSpace(screen)) parts.Add(screen.Trim());
 
-        string rank = ResolveArrivedRank(param);
+        string rank = ResolveArrivedRank();
         if (!string.IsNullOrEmpty(rank) &&
             (screen == null || screen.IndexOf(rank, System.StringComparison.OrdinalIgnoreCase) < 0))
             parts.Add(rank);
@@ -72,39 +72,40 @@ public sealed class RankUpHooks : SingleParamScreenAdapter
     }
 
     /// <summary>
-    /// Localized name of the arrived rank from the last ListData record
-    /// (LeagueRankWithLevelUserDataRecord). Tries the record's own message Guid,
-    /// then the nested leagueRank message Guid.
+    /// Localized name of the rank the player arrived at ("Gold 1", "High Master").
+    /// NOT from the param's _ListData: that list is the rank ladder, and taking its
+    /// last record announced "Ultimate Master" for every rank-up.
     /// </summary>
-    private static string ResolveArrivedRank(ManagedObject param)
+    private static string ResolveArrivedRank()
+    {
+        var next = SelfNextLeague();
+        return next == null ? null : LeagueRankResolver.Describe(next);
+    }
+
+    private static Method _findComponents;
+    private static TypeDefinition _resultControllerType;
+
+    /// <summary>
+    /// The local player's league after the match (CommonMatchingLeaguePoint), from
+    /// the result screen's app.ResultController: SelfData.Fighter.NextLeague. The
+    /// controller owns the rank-up flow, so it is alive while that screen shows.
+    /// </summary>
+    internal static ManagedObject SelfNextLeague()
     {
         try
         {
-            var list = FlowHelper.GetObjectField(param, "ListData")
-                     ?? FlowHelper.Call(param, "get_ListData") as ManagedObject;
-            int count = FlowHelper.GetListCount(list);
-            if (count <= 0) return null;
+            _findComponents ??= TDB.Get().FindType("via.Scene")?.GetMethod("findComponents(System.Type)");
+            _resultControllerType ??= TDB.Get().FindType("app.ResultController");
+            var runtime = _resultControllerType?.GetRuntimeType();
+            var scene = (API.GetNativeSingleton("via.SceneManager") as IObject)?.Call("get_CurrentScene") as IObject;
+            if (_findComponents == null || runtime == null || scene == null) return null;
 
-            var record = FlowHelper.GetListItem(list, count - 1); // the rank arrived at
-            if (record == null) return null;
+            var all = _findComponents.InvokeBoxed(typeof(object), scene, new object[] { runtime }) as ManagedObject;
+            if (FlowHelper.GetListCount(all) == 0) return null;
 
-            // record.messageId.GUID — usually the full "Gold 3" style label
-            string name = ResolveMessageGuid(FlowHelper.GetObjectField(record, "messageId"));
-            if (string.IsNullOrEmpty(name))
-            {
-                // fall back to record.leagueRank.messageId.GUID — the bare rank name
-                var leagueRank = FlowHelper.GetObjectField(record, "leagueRank");
-                name = ResolveMessageGuid(FlowHelper.GetObjectField(leagueRank, "messageId"));
-            }
-            return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            var self = FlowHelper.Call(FlowHelper.GetListItem(all, 0), "get_SelfData") as ManagedObject;
+            return FlowHelper.GetObjectField(FlowHelper.GetObjectField(self, "Fighter"), "NextLeague");
         }
         catch { return null; }
-    }
-
-    /// <summary>Resolve the GUID field of a *Message object to its localized string.</summary>
-    private static string ResolveMessageGuid(ManagedObject messageObj)
-    {
-        if (messageObj == null) return null;
-        return FlowHelper.ResolveGuidField(messageObj, "GUID");
     }
 }

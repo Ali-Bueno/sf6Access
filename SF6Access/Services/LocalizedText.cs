@@ -98,6 +98,18 @@ public static class LocalizedText
         _ => null,
     };
 
+    /// <summary>The Legend rank's name: the game draws it into the rank icon and
+    /// has no message for it.</summary>
+    public static string Legend() => LangFile.Get("rank.legend", "Legend");
+
+    /// <summary>"Legend, ranked 123" — the player's world Master Rate ranking.</summary>
+    public static string LegendRanked(string legend, int position)
+        => string.Format(LangFile.Get("rank.legend_ranked", "{0}, ranked {1}"), legend, position);
+
+    /// <summary>Said on the post-match rank gauge when you drop a rank (a demotion
+    /// opens no screen of its own, unlike a promotion).</summary>
+    public static string RankDown() => LangFile.Get("rank.down", "Rank down");
+
     /// <summary>Control-type fallback (Classic=0, Modern=1, Dynamic=2) — the
     /// game lookup is preferred; this only covers lookup failure.</summary>
     public static string ControlType(int index) => index switch
