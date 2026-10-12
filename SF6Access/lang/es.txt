@@ -818,6 +818,7 @@ profile.league_point=Puntos de liga
 profile.master_rating=Master Rating
 profile.play_time=Tiempo de juego
 profile.fighter_id=ID de luchador
+profile.home=País
 tab.equipment=Equipamiento
 tab.special_moves=Movimientos especiales
 tab.super_arts=Super Arts

@@ -857,6 +857,7 @@ profile.league_point=League Point
 profile.master_rating=Master Rating
 profile.play_time=Play Time
 profile.fighter_id=Fighter ID
+profile.home=Home
 tab.equipment=Equipment
 tab.special_moves=Special Moves
 tab.super_arts=Super Arts

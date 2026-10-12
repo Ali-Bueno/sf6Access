@@ -791,6 +791,7 @@ profile.league_point=Ligapunkte
 profile.master_rating=Master Rating
 profile.play_time=Spielzeit
 profile.fighter_id=Kämpfer-ID
+profile.home=Land
 tab.equipment=Ausrüstung
 tab.special_moves=Spezialangriffe
 tab.super_arts=Super Arts

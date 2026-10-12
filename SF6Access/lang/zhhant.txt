@@ -798,6 +798,7 @@ profile.league_point=段位積分
 profile.master_rating=大師評分
 profile.play_time=遊戲時間
 profile.fighter_id=鬥士ID
+profile.home=所在地
 tab.equipment=裝備
 tab.special_moves=必殺技
 tab.super_arts=超級藝術

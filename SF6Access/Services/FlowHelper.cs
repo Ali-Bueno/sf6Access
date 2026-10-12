@@ -587,6 +587,21 @@ public static partial class FlowHelper
         return Call(list, IsArray(list) ? "Get" : "get_Item", index) as ManagedObject;
     }
 
+    /// <summary>Read an int / enum element from a List&lt;T&gt; (a value type, so
+    /// unbox through InvokeBoxed(int) rather than a managed-object cast); -1 if absent.</summary>
+    public static int ReadIntListItem(ManagedObject list, int idx)
+    {
+        if (list == null || idx < 0) return -1;
+        try
+        {
+            var getItem = list.GetTypeDefinition()?.GetMethod("get_Item(System.Int32)");
+            if (getItem == null) return -1;
+            var raw = getItem.InvokeBoxed(typeof(int), list, new object[] { idx });
+            return raw != null ? Convert.ToInt32(raw) : -1;
+        }
+        catch { return -1; }
+    }
+
     /// <summary>One float component ("x"/"y"/"z") of a via vector value: getter
     /// first, then the component as a direct FIELD of the boxed
     /// REFrameworkNET.ValueType — engine vector structs expose fields without

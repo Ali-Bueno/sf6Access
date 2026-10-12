@@ -46,7 +46,7 @@ public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
     {
         if (_announced) return;
 
-        string text = BuildProfile();
+        string text = BuildProfile(Param);
         if (string.IsNullOrEmpty(text))
         {
             if (--_retries > 0) return;
@@ -60,10 +60,11 @@ public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
     }
 
     /// <summary>
-    /// "{name}. {title}. LP {lp}. MR {mr}" from the two profile HUD GUIs.
+    /// "{name}. {country}. {title}. LP {lp}. MR {mr}" from the two profile HUD GUIs,
+    /// plus the CFN Home country (the flag) from the menu's profile data.
     /// Null until at least a name resolves.
     /// </summary>
-    private static string BuildProfile()
+    private static string BuildProfile(ManagedObject param)
     {
         string name = null, title = null, lp = null, mr = null;
 
@@ -94,6 +95,9 @@ public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
         if (string.IsNullOrEmpty(name)) return null;
 
         var parts = new System.Collections.Generic.List<string> { name };
+        string home = HomeCountryResolver.FromBanner(FlowHelper.GetObjectField(FlowHelper.GetObjectField(
+            FlowHelper.GetObjectField(param, "mSimpleProfileData"), "fighter_profile_light"), "fighter_banner_info"));
+        if (!string.IsNullOrWhiteSpace(home)) parts.Add(home.Trim());
         if (!string.IsNullOrEmpty(title)) parts.Add(title);
         if (!string.IsNullOrEmpty(lp)) parts.Add($"LP {lp}");
         if (!string.IsNullOrEmpty(mr)) parts.Add($"MR {mr}");

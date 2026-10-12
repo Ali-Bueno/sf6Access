@@ -802,6 +802,7 @@ profile.league_point=Очки лиги
 profile.master_rating=Master Rating
 profile.play_time=Время игры
 profile.fighter_id=ID бойца
+profile.home=Страна
 tab.equipment=Экипировка
 tab.special_moves=Спецприёмы
 tab.super_arts=Super Arts

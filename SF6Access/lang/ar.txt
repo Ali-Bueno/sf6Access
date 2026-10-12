@@ -802,6 +802,7 @@ profile.league_point=نقاط الدوري
 profile.master_rating=تقييم الماستر
 profile.play_time=وقت اللعب
 profile.fighter_id=معرف المقاتل
+profile.home=البلد
 tab.equipment=المعدات
 tab.special_moves=الحركات الخاصة
 tab.super_arts=سوبر آرتس

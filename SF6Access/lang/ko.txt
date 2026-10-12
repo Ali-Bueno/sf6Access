@@ -802,6 +802,7 @@ profile.league_point=리그 포인트
 profile.master_rating=마스터 레이팅
 profile.play_time=플레이 시간
 profile.fighter_id=파이터 ID
+profile.home=거주지
 tab.equipment=장비
 tab.special_moves=필살기
 tab.super_arts=슈퍼 아츠

@@ -260,6 +260,24 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   83006 LP" while the screen showed 1313 MR.
 - Name messages are `LeagueRankMessageN` (1 New Challenger, 2–36 tier+division, 37 Master, 38–44 bare
   tier names, 45–47 High/Grand/Ultimate Master). No Legend message exists in that family.
+- **Home country (the flag):** `PlayerData.mHomeId` (uint; also `FighterProfileDesc.HomeId`,
+  `CommonFighterBannerInfo.home_id`). The flag part (`UIPartsNationalFlag.SetData(id)`) only holds
+  the texture (key "CfnHome{id}"). Home table `app.network.ResidentCFNTableData` (scene component)
+  `.CfnHome.DataArray`: 194 records, `ManageId` 1–194 (no 169) + 999 "Other", `homeCategoryId` →
+  continent message CfnHomeMessage200–205, but the record's own `messageId` is EMPTY. Country names
+  are messages `CfnHomeMessage1..199` in another order (Japan, United States, Canada, then A–Z,
+  plus Cook Islands / Hong Kong / Vatican / Kosovo that the table lacks). The ids follow the UN
+  member list A–Z with period names (Swaziland, TFYR Macedonia), so `Services/HomeCountryResolver`
+  holds an id → message-number table, checked 2026-10-12 against every record's continent. 169
+  (absent) is mapped to Taiwan by its alphabetical slot. Confirmed in game 2026-10-12: own home
+  103 → Malaysia (the player's real setting), an opponent read as China.
+- **Change Flag dialog** (Options → User Settings → Change Flag, `app.UICFNSelectHomeDialog.FlowParam`,
+  `HomeSelectHooks`): `InitialHomeId`, `CurrentHomeList` (List&lt;AppDefine.CfnHome&gt; = home ids of
+  the open continent tab), `_CategoryTabSimpleList` (tabs All/Africa/Asia/Europe/North America/South
+  America/Oceania — read by the generic focus reader), `_NationalFlagScrollGrid` (pictures only).
+  Focused flag = `CurrentHomeList[grid.get_SelectedIndex()]`; each tab's id list is logged
+  ("Home select list") so ids outside the name table can be spotted. The "All" tab offers exactly
+  999 + 1–194 without 169 (2026-10-12), so every selectable flag is in `HomeCountryResolver`.
 - **Control type:** `PlayerData.mInputType` (`app.EConfigInputType` sbyte; NOT_SPECIFIED=-1 reads as
   byte 255 → reject). Gate on `mIsPlayer` (CPU sides default NORMAL). `Services/ControlTypeNames`.
 
@@ -319,6 +337,11 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `BattleHubContactPanel_OtherPlayer` `e_text_name` + GUI `CFNFighterProfileSimpleTop`
   (`e_text_fid_name`/`e_text_title`/`e_text_lp_num`/`e_text_mr_num`) once on appear.
   `AccessOtherPlayerMenu.mSimpleProfileData` = `HatoClientAPI.Component.PostFighterProfileLightOut`.
+  Home country: `mSimpleProfileData.fighter_profile_light.fighter_banner_info.home_id` →
+  `HomeCountryResolver`, said after the name. The CFN profile reader (`ProfileHooks`) says
+  "Home: X" on the play overview tab from `UICFNFightersProfileTabPlayChildTab1.ResponseData`
+  (PostFighterProfileOut) `.fighter_banner_info.home_id` — the only `UICFNFightersProfileTab*`
+  param with the full profile, so it is said once.
   Radial GUI `BattleHub_BattleHubContactPanel_Common` `e_text_0_d_34` = player name / "Access".
 
 ### Post-match info (`BattleHubResultHooks`)

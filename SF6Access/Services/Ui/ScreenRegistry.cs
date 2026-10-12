@@ -51,6 +51,7 @@ public class ScreenRegistry
         UiDispatcher.Register(new ArcadeResultHooks());
         UiDispatcher.Register(new CharDetailSettingHooks());
         UiDispatcher.Register(new LeagueSelectHooks());
+        UiDispatcher.Register(new HomeSelectHooks());
         UiDispatcher.Register(new ProfileHooks());
 
         // Category B batch 2 — auto-shown displays / overlays

@@ -802,6 +802,7 @@ profile.league_point=リーグポイント
 profile.master_rating=マスターレート
 profile.play_time=プレイ時間
 profile.fighter_id=ファイターID
+profile.home=居住地
 tab.equipment=装備
 tab.special_moves=必殺技
 tab.super_arts=スーパーアーツ

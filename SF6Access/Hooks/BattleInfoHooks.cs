@@ -286,6 +286,10 @@ public class BattleInfoHooks
             if (!string.IsNullOrWhiteSpace(online) && online.Trim() != chara?.Trim())
                 bits.Add(online.Trim());
 
+            // CFN Home: the country flag next to the name (0 = not set / CPU).
+            string home = HomeCountryResolver.Resolve(FlowHelper.ReadIntField(pd, "mHomeId", 0));
+            if (!string.IsNullOrWhiteSpace(home)) bits.Add(home.Trim());
+
             string cpuLevel = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(pd, "mTextCPULevel"));
             if (!string.IsNullOrWhiteSpace(cpuLevel)) bits.Add($"CPU {cpuLevel.Trim()}");
 
