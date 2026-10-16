@@ -117,6 +117,13 @@ public sealed class ProfileHooks : ScreenAdapter
                 td = td.ParentType;
             }
 
+            // CFN Home (the flag): only the play overview tab holds the full
+            // profile (ResponseData = PostFighterProfileOut), so it is said once.
+            string home = HomeCountryResolver.FromBanner(FlowHelper.GetObjectField(
+                FlowHelper.GetObjectField(param, "ResponseData"), "fighter_banner_info"));
+            if (!string.IsNullOrWhiteSpace(home))
+                parts.Add($"{LangFile.GetByText("profile", "Home")}: {home.Trim()}");
+
             // The play tab also shows the favorite modes with their hours —
             // they only exist as GUI texts, paired num + mode name
             if (typeName.Contains("TabPlay"))

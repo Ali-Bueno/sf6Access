@@ -80,6 +80,15 @@ public static class LocalizedText
     /// <summary>The combo counter's "hits" word ("2500. 6 hits").</summary>
     public static string Hits() => LangFile.Get("hits", "hits");
 
+    /// <summary>Training readout labels for the two sides — the frame meter's
+    /// rows carry no label on screen (sighted players tell them apart by position).</summary>
+    public static string You() => LangFile.Get("you", "You");
+
+    public static string Opponent() => LangFile.Get("opponent", "Opponent");
+
+    /// <summary>The Attack Data damage percent ("270 (30%)") has no on-screen label.</summary>
+    public static string Scaling() => LangFile.Get("scaling", "scaling");
+
     /// <summary>Boot title-screen prompt (the on-screen prompt is an image and,
     /// despite it saying "any button", only these inputs advance).</summary>
     public static string TitleScreenPrompt() => LangFile.Get("title_prompt",
@@ -97,6 +106,18 @@ public static class LocalizedText
         10 => LangFile.Get("stat.10", "Defense"),
         _ => null,
     };
+
+    /// <summary>The Legend rank's name: the game draws it into the rank icon and
+    /// has no message for it.</summary>
+    public static string Legend() => LangFile.Get("rank.legend", "Legend");
+
+    /// <summary>"Legend, ranked 123" — the player's world Master Rate ranking.</summary>
+    public static string LegendRanked(string legend, int position)
+        => string.Format(LangFile.Get("rank.legend_ranked", "{0}, ranked {1}"), legend, position);
+
+    /// <summary>Said on the post-match rank gauge when you drop a rank (a demotion
+    /// opens no screen of its own, unlike a promotion).</summary>
+    public static string RankDown() => LangFile.Get("rank.down", "Rank down");
 
     /// <summary>Control-type fallback (Classic=0, Modern=1, Dynamic=2) — the
     /// game lookup is preferred; this only covers lookup failure.</summary>

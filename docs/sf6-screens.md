@@ -148,23 +148,56 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   (`TM_DisplaySetting`): `Is_FrameMeter_View`, `Is_DS_AD_View`. Helper
   `FlowHelper.GetTrainingDisplaySetting()` (mgr._tData → DisplayFunc._tData fallback). Panels:
   `ui11253`=Attack Data, `ui11255`=Frame Meter, `ui11254`=input history, `ui11258`=command.
-  Read frame data only while `TrainingManager != null` (replay-leak fix).
+  Per-player `DisplaySetting.PlayerDatas[i].Is_FrameNum_View` also exists.
+
+### Training live display state (`FlowHelper.GetTrainingGameData()`, measured 2026-10-16)
+- `TrainingManager.DisplayFunc._gData` (`tf_DisplaySetting.GameLocalData`). Null outside training.
+- `PlayerDatas[i]` (`PlayerLocalData`, index = player, P1 first) = the Attack Data panel's record:
+  `singleDamage` (last hit), `correction` (**long**, damage scaling %, 100 = none; 28-hit combo → 30),
+  `comboDamage`, `maxComboDamage`, `prevComboCount`, `attackInfo` (Guid → "High"/"Throw"…).
+  `shell` is **null whenever no attack is in progress** — useless for reaching the cTeam.
+  Panel `ui11253`: rows `c_attackInfo_0` Damage ("400 (100)" = single (correction)),
+  `_1` Combo Damage ("400 (4090)" = combo (max)), `_2` Attack Type; `e_text_left` = P1, `e_text_right` = P2.
+- `FMActive` (int) = frame meter: 0 idle, 1 someone acting, 3 contact, 2 closing. Returns to 0 only
+  when the whole exchange is over (hit, block or whiff) — the frame rows are final ~1-3 frames later.
+- Frame Meter `ui11255` rows: `c_frameMeter/e_txt_up` = P1, `e_txt_down` = P2, each
+  "Startup 6F / Total 22F / Advantage 1F" (advantage wrapped in `<HLBGN Arg0="3"|"4">` = plus/minus
+  colour). Filled in stages (startup → total → advantage); the defender's row is
+  "Startup -- / Total -- / Advantage -1F" (mirror). Whiffs keep "Advantage --". A move started right
+  after another shows the NEW startup beside the OLD total/advantage until it finishes — hence the
+  readout waits for `FMActive` → 0 instead of reacting to text changes. Walk/dash rows have no startup.
+
+### Battle notices (`BattleNoticeHooks`, 2026-10-16)
+- HUD `BattleHud_Notice` (`app.UIBattleHud_Notice`), banners as `e_txt_notice` ("PUNISH COUNTER",
+  "HARD KNOCKDOWN"…; several copies — one per notice slot). Requested via
+  `UIBattleHud_Notice.RequestNotice(int teamId, app.ENoticeSelf type, uint frame)`; SHOWN via
+  `app.UIPartsBattleNotice.ActivateNotice(NoticeInfo, NoticeSettingData, float)` — hooked there:
+  `NoticeInfo` = `TeamId`, `Type`, `Frame`; `NoticeSettingData` = `NoticeUIType`, `MessageId` (localized
+  text Guid), `DisplayName`. Settings list: `UIBattleHud_Notice.SettingData.NoticeSettingDataList`.
+- `eNoticeUIType`: 0 FIRST_ATTACK, 1 REVERSAL, 2 THROW_ESCAPE, 3 COUNTER, 4 PUNISH_COUNTER, 5 STUN,
+  6 HARD_KNOCKDOWN, 7 CRUSH, 8 LOCK, 9 CROSS_UP, 10 FORCED_DOWN, 11 ARMOR_BREAK. (`ENoticeSelf`, the
+  request enum, numbers them differently and adds ADVANCING_GUARD / PUNISH_COUNTER_DRV.)
+- Which are read = `<game>\reframework\plugins\managed\SF6Access.notices.txt` (`key=on|off`, re-read
+  when edited). Default on: hard_knockdown, lock, forced_down — the tester's list of notices with no
+  game sound. No side label: there is no known field for the LOCAL player's side online.
 
 ### Combo tracking (`Services/ComboTracker.cs`)
 - Authoritative: `app.cTeam.mComboCount` (a **short** — read with `ReadShortField`; int-read grabs
   `mComboCountOld` bytes). Stays >0 for the whole combo, returns to 0 at true end/drop = on-screen
   "X HITS". `cTeam.mComboDamage` (int) = accumulated damage.
-- Reach a cTeam: `cWork.owner_add`(→cPlayer)→`mpTeam`, or `cPlayer.mpTeam`. Training:
-  `TrainingManager.DisplayFunc._gData.PlayerDatas[i].shell`→`owner_add`→`mpTeam`. Lives on one side —
-  read BOTH, take max. API: `TeamOf`, `NoteTeams`, `CountOf(team,out damage)`, `IsComboActive`, `Clear`.
-- Used as a NON-destructive suppressor over the working HUD-hook + quiet-frames + `PlayerLocalData`
-  (comboDamage/prevComboCount) path — do not replace that with cTeam-only (broke damage announcing).
+- Reach a cTeam: **`ComboTracker.BattleTeam(side)`** = static `gBattle.Team.mcTeam[side]`, readable at
+  any moment of a battle. Also `cWork.owner_add`(→cPlayer)→`mpTeam` / `cPlayer.mpTeam` from a hook.
+  (The old training route via `PlayerDatas[i].shell` is null between attacks, so it never read.)
+  API: `BattleTeam`, `TeamOf`, `NoteTeams`, `CountOf(team,out damage)`, `IsComboActive`, `Clear`.
+- **The count runs on the ATTACKER's own team** (confirmed 2026-10-16: P1 hitting the dummy raised
+  `mcTeam[0]`), and it rises and falls for EVERY hit — a lone jab goes 1 → 0 about 0.4 s later.
+- Training Attack Data (`TrainingAttackDataHooks`, rewritten 2026-10-16): the end of a hit/combo is
+  that count falling back to 0; a few frames later the attacker's `PlayerLocalData` is announced.
+  Replaces the HUD-fade + quiet-frames detection, which waited for the panel numbers to CHANGE and
+  then sit still ~1.7 s — it never fired for rapid or identical single hits.
 - **Do NOT gate the announcement on `count == hudCount`** (removed 2026-07-06): the training data
-  and the HUD counter advance at different times on multi-hit supers, and the equality gate silently
-  dropped the whole combo readout on any mismatch (tester: "small hits get missed, damage dropped").
-  The `PlayerLocalData` values are the panel's own latched result — announce them once the HUD end is
-  confirmed AND `mComboCount` cleared AND the numbers were stable for `END_CONFIRM_FRAMES`; log the
-  HUD/data difference instead.
+  and the HUD counter advance at different times on multi-hit supers (tester: "small hits get
+  missed, damage dropped"). The `PlayerLocalData` values are the panel's own latched result.
 - Other latched sources (unused, candidates): `CommentBattleParamRecorder.ComboFinishChecker`
   (`LastComboCount`/`LastComboDamage`, `OnFinishCombo` edge — commentator system, may be inert when
   commentary is off); `cTeam.mComboCountOld` (short, previous-frame count); `FBattleMediator.AtckInfo`
@@ -233,13 +266,51 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   (`app.network.MsgLeaguePoint`), `PlayerData.mInputType`, `PlayerData.mIsPlayer`.
 - `MsgLeaguePoint` fields: `character_id` (uint), `league_point` (int), `league_rank` (uint),
   `master_league` (uint), `master_rating` (int), `master_rating_ranking` (int).
-- **Rank (data-driven):** `league_rank` IS an `app.AppDefine.LeagueRankWithLevel`. Resolve via
-  `Services/LeagueRankResolver` (`GetRecord` uses `app.helper.hGUI.GetLeagueRankWithLevelUserData`;
-  `Format(record, tierOnly)` → "Diamond 3" from `leagueRank.messageId.GUID` + `rankLevel`). Reject when
-  `IsMaster && master_rating <= 0` (unranked sentinel); non-master → "Tier Level {league_point} LP"
-  (LP skipped when ≤ 0 — pre-placement is -1); master → "Tier {master_rating} MR" (tester request:
-  the point values are announced alongside the rank). `league_rank=39` is a VALID rank
-  ("New Challenger 1"), not a sentinel.
+- **Rank (data-driven):** `league_rank` and `master_league` are both `app.AppDefine.LeagueRankWithLevel`
+  values; the full rank is `master_league` when non-zero, else `league_rank`
+  (`LeagueRankResolver.RankOf` — identical to `hGUI.GetLeagueRankWithLevel(league_rank, master_league)`,
+  probed for every pair 1..15 × 0..6). `LeagueRankResolver.Describe(lp)` names it from the record's
+  own full label `record.messageId.GUID` (building tier + `rankLevel` said "New Challenger 1"); non-master →
+  "Tier Level, {league_point} LP" (LP skipped when ≤ 0 — pre-placement is -1); master-league →
+  "Name, {master_rating} MR" (MR skipped when ≤ 0). Each side's details are comma-joined and the
+  sides split by ". vs " so the screen reader pauses between items. `league_rank=39` is a VALID rank (New
+  Challenger), not a sentinel. See "League rank table" below for the Master sub-tiers and Legend.
+
+### League rank table (probed in game 2026-10-12, `hGUI.GetLeagueRankWithLevelUserData`)
+- 1–35: Rookie, Iron, Bronze, Silver, Gold, Platinum, Diamond × divisions 1–5 (`rankLevel`). LP
+  thresholds (`arrivalLeaguePoint`): Rookie 0/200/400/600/800, Iron from 1000 (+400), Bronze from 3000
+  (+400), Silver from 5000 (+800), Gold from 9000 (+800), Platinum from 13000 (+1200), Diamond from
+  19000 (+1200).
+- 36 Master (25000 LP) · 40 High Master (1600 MR) · 41 Grand Master (1700 MR) · 42 Ultimate Master
+  (1800 MR) — `arrivalRating` holds the MR threshold. 39 New Challenger. 38 has no record.
+- **37 = Legend** (top 500 by MR at the end of a Master League phase): `isMasterLeague=True`, sorts
+  above Ultimate Master (`leagueRank.sortNumber` 13 vs 12), but its record has NO name message (the
+  word is part of the icon image; `UIPartsRankIconBase.MessageLegendConvert(text, rankingNum)` only
+  writes the ranking number). The mod says `LocalizedText.Legend()` plus `master_rating_ranking`
+  ("Legend, ranked 123"). Not yet seen on a real Legend player.
+- **Master test = `hGUI.IsMasterRateRank(record)`** (true for 36, 37, 40–42). Do NOT use the record's
+  `isMasterLeague` field: it is FALSE for plain Master (36), which made the VS screen say "Master 1
+  83006 LP" while the screen showed 1313 MR.
+- Name messages are `LeagueRankMessageN` (1 New Challenger, 2–36 tier+division, 37 Master, 38–44 bare
+  tier names, 45–47 High/Grand/Ultimate Master). No Legend message exists in that family.
+- **Home country (the flag):** `PlayerData.mHomeId` (uint; also `FighterProfileDesc.HomeId`,
+  `CommonFighterBannerInfo.home_id`). The flag part (`UIPartsNationalFlag.SetData(id)`) only holds
+  the texture (key "CfnHome{id}"). Home table `app.network.ResidentCFNTableData` (scene component)
+  `.CfnHome.DataArray`: 194 records, `ManageId` 1–194 (no 169) + 999 "Other", `homeCategoryId` →
+  continent message CfnHomeMessage200–205, but the record's own `messageId` is EMPTY. Country names
+  are messages `CfnHomeMessage1..199` in another order (Japan, United States, Canada, then A–Z,
+  plus Cook Islands / Hong Kong / Vatican / Kosovo that the table lacks). The ids follow the UN
+  member list A–Z with period names (Swaziland, TFYR Macedonia), so `Services/HomeCountryResolver`
+  holds an id → message-number table, checked 2026-10-12 against every record's continent. 169
+  (absent) is mapped to Taiwan by its alphabetical slot. Confirmed in game 2026-10-12: own home
+  103 → Malaysia (the player's real setting), an opponent read as China.
+- **Change Flag dialog** (Options → User Settings → Change Flag, `app.UICFNSelectHomeDialog.FlowParam`,
+  `HomeSelectHooks`): `InitialHomeId`, `CurrentHomeList` (List&lt;AppDefine.CfnHome&gt; = home ids of
+  the open continent tab), `_CategoryTabSimpleList` (tabs All/Africa/Asia/Europe/North America/South
+  America/Oceania — read by the generic focus reader), `_NationalFlagScrollGrid` (pictures only).
+  Focused flag = `CurrentHomeList[grid.get_SelectedIndex()]`; each tab's id list is logged
+  ("Home select list") so ids outside the name table can be spotted. The "All" tab offers exactly
+  999 + 1–194 without 169 (2026-10-12), so every selectable flag is in `HomeCountryResolver`.
 - **Control type:** `PlayerData.mInputType` (`app.EConfigInputType` sbyte; NOT_SPECIFIED=-1 reads as
   byte 255 → reject). Gate on `mIsPlayer` (CPU sides default NORMAL). `Services/ControlTypeNames`.
 
@@ -273,7 +344,13 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
 - `app.UIFlowRankUp.Param`: `CtrlRankUp` (Control banner — walk for text), `ListData`/`_ListData`
   (IList<LeagueRankWithLevelUserDataRecord>), `IsExam`. `LeagueRankWithLevelUserDataRecord`: `messageId`
   (→GUID full "Gold 3"), `leagueRank` (→messageId→GUID bare), `rankLevel`, `isMasterLeague`,
-  `arrivalLeaguePoint`/`arrivalRating`. Arrived rank = LAST ListData record.
+  `arrivalLeaguePoint`/`arrivalRating`. The param holds NO arrived rank: taking the LAST ListData
+  record announced "Ultimate Master" on every rank-up (2026-10-12), so ListData looks like the whole
+  ladder. Arrived rank = `app.ResultController` (scene component, owns the RankUp flow) →
+  `get_SelfData()` → `Fighter.NextLeague` (CommonMatchingLeaguePoint; `PrevLeague` = before,
+  `IsSelf`) → `LeagueRankResolver.Describe`. Logged as "Self league after match" on every ranked
+  result (BattleHubResultHooks) so it can be checked without a rank-up. Not yet seen on a real
+  rank-up.
 
 ---
 
@@ -293,6 +370,11 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `BattleHubContactPanel_OtherPlayer` `e_text_name` + GUI `CFNFighterProfileSimpleTop`
   (`e_text_fid_name`/`e_text_title`/`e_text_lp_num`/`e_text_mr_num`) once on appear.
   `AccessOtherPlayerMenu.mSimpleProfileData` = `HatoClientAPI.Component.PostFighterProfileLightOut`.
+  Home country: `mSimpleProfileData.fighter_profile_light.fighter_banner_info.home_id` →
+  `HomeCountryResolver`, said after the name. The CFN profile reader (`ProfileHooks`) says
+  "Home: X" on the play overview tab from `UICFNFightersProfileTabPlayChildTab1.ResponseData`
+  (PostFighterProfileOut) `.fighter_banner_info.home_id` — the only `UICFNFightersProfileTab*`
+  param with the full profile, so it is said once.
   Radial GUI `BattleHub_BattleHubContactPanel_Common` `e_text_0_d_34` = player name / "Access".
 
 ### Post-match info (`BattleHubResultHooks`)
@@ -301,8 +383,14 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
   `ResultCounter.Param` `mP1WinCount`/`mP2WinCount` + per-player `PlayerObj.TextRatio`.
 - **Rank gauge — DATA-DRIVEN (do NOT poll the animating text):** `app.UIFlowRankGauge.Param`:
   `RankInfoAfter`/`RankInfoBefore` (`Component.CommonMatchingLeaguePoint`) → `league_point` (int),
-  `league_rank` (uint → LeagueRankResolver), `master_rating` (int); `IsMove` (bool animating),
+  `league_rank`/`master_league` (uint → `LeagueRankResolver.Describe`), `master_rating` (int); `IsMove` (bool animating),
   `PlayerIndex`, states GaugeWait/RankChange/HideAndEnd, `TextName`. Read `RankInfoAfter` as data.
+- **Rank down has no screen of its own** (2026-10-12: Diamond 1 → Platinum 5 opened no
+  `UIFlowRankUp`; a promotion does, incl. the end-of-placement one with `IsExam=True`, `_ListData=null`).
+  The gauge says "Rank down" when `RankOf(RankInfoBefore) != RankOf(RankInfoAfter)` and the points fell.
+  The opponent's gauge carries no change, so only your own gauge can trigger it.
+- During placement `league_point` is -1 on both sides: the gauge then says no points and no change
+  (it used to say "-1 LP", then "+19001" on the first placed rank).
 - Image-based (skipped): `UIFlowResultTitle`, `UIFlowResultTimer`, `UIFlowResultRivalAi`.
 
 ### Chat window (`ChatMenuHooks`)

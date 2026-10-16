@@ -184,6 +184,18 @@ records that survive a machine change.)
 - Shop Enhance/Dye side panes still unread.
 
 **Built but not yet verified in game**
+- **Battle notices read aloud, 2026-10-16** (`BattleNoticeHooks`). VERIFIED in training: the game's
+  text is read once per banner (STUN, PUNISH COUNTER, COUNTER HIT after enabling them in
+  `plugins\managed\SF6Access.notices.txt`, applied without a restart). Still unverified: online
+  rollback not repeating a banner; what the LOCK notice is.
+- **Training Attack Data + frame data aligned with the sighted readout, 2026-10-16.** Detection was
+  verified with a live probe (`docs/sf6-screens.md` § Training live display state); the built readouts
+  still need an in-game pass. Expected: a single hit says "700. High" EVERY time (identical repeats
+  included); a combo says "1230. 4 hits. scaling 60%"; the dummy hitting you is prefixed "Opponent";
+  frame data is ONE line per exchange — "You: Startup 6F / Total 22F / Advantage 1F", or
+  "Opponent: …" when the dummy attacked — a whiff drops the "Advantage --"; walking/dashing is silent.
+  Unverified: the attack-type Guid (`attackInfo`) resolving to text; a dummy attack (recording/CPU)
+  producing the "Opponent" variants.
 - **`ZoneNameService` now ENUMERATES the section table instead of looking it up by key, 2026-09-10.**
   `CitySectionDataUserDataDict` is keyed by `ManageId`, which is not guaranteed to be the section id.
   The old route asked `get_Item(sectionId)` and then cross-checked the record's own `id`; that check was

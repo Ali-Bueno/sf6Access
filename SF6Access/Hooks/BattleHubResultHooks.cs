@@ -120,6 +120,11 @@ public sealed class BattleHubResultHooks : ScreenAdapter
             string text = BuildRankResult(param);
             if (string.IsNullOrEmpty(text)) continue;
 
+            // Once per result: the same lookup the rank-up screen uses, logged on every
+            // ranked match because a real rank-up is hard to reproduce on demand.
+            if (_rankAnnounced.Count == 0)
+                API.LogInfo($"[SF6Access] Self league after match: {LeagueRankResolver.Describe(RankUpHooks.SelfNextLeague()) ?? "(none)"}");
+
             _rankAnnounced.Add(addr);
             API.LogInfo($"[SF6Access] Rank gauge: {text}");
             Speak(text, interrupt: false);
@@ -133,7 +138,7 @@ public sealed class BattleHubResultHooks : ScreenAdapter
     }
 
     /// <summary>
-    /// "{name}. {rank}. {value} LP/MR. {+/-delta}" from the gauge's final data
+    /// "{name}. [Rank down.] {rank}. {value} LP/MR. {+/-delta}" from the gauge's final data
     /// (RankInfoAfter, with RankInfoBefore for the change). Null until populated.
     /// </summary>
     private static string BuildRankResult(ManagedObject param)
@@ -151,16 +156,27 @@ public sealed class BattleHubResultHooks : ScreenAdapter
         string name = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(param, "TextName"));
         if (!string.IsNullOrWhiteSpace(name)) parts.Add(name.Trim());
 
-        string rank = LeagueRankResolver.Resolve(FlowHelper.ReadIntField(after, "league_rank", 0), tierOnly: false);
-        if (!string.IsNullOrEmpty(rank)) parts.Add(rank);
-
-        int afterVal = master ? mr : lp;
-        parts.Add($"{afterVal} {(master ? "MR" : "LP")}");
-
         // Change vs before the match.
         var before = FlowHelper.GetObjectField(param, "RankInfoBefore");
+        int afterVal = master ? mr : lp;
         int beforeVal = FlowHelper.ReadIntField(before, master ? "master_rating" : "league_point", afterVal);
-        int delta = afterVal - beforeVal;
+        // league_point is -1 before placement is done: no points to say, no real change.
+        // master_rating is 0 before reaching Master, so a promotion into Master has no
+        // MR change either (it would read the whole starting MR as a gain).
+        bool hasPoints = afterVal >= 0;
+        bool hadPoints = master ? beforeVal > 0 : beforeVal >= 0;
+        int delta = hasPoints && hadPoints ? afterVal - beforeVal : 0;
+
+        // A demotion has no screen of its own (a promotion opens UIFlowRankUp, read by
+        // RankUpHooks), so say it here: the rank changed and the points went down.
+        int beforeRank = LeagueRankResolver.RankOf(before);
+        if (beforeRank > 0 && beforeRank != LeagueRankResolver.RankOf(after) && delta < 0)
+            parts.Add(LocalizedText.RankDown());
+
+        string rank = LeagueRankResolver.Describe(after);
+        if (!string.IsNullOrEmpty(rank)) parts.Add(rank);
+
+        if (hasPoints) parts.Add($"{afterVal} {(master ? "MR" : "LP")}");
         if (delta != 0) parts.Add(delta > 0 ? $"+{delta}" : delta.ToString());
 
         return parts.Count > 0 ? string.Join(". ", parts) : null;
