@@ -504,6 +504,18 @@ public static partial class FlowHelper
         catch { return null; }
     }
 
+    /// <summary>
+    /// The live training display state (app.training.tf_DisplaySetting.GameLocalData):
+    /// <c>PlayerDatas</c> (the Attack Data record per side, P1 first) and
+    /// <c>FMActive</c> (frame meter: 0 idle, non-zero while an exchange runs).
+    /// Null outside a training session.
+    /// </summary>
+    public static ManagedObject GetTrainingGameData()
+    {
+        var mgr = API.GetManagedSingleton("app.training.TrainingManager");
+        return GetObjectField(GetObjectField(mgr, "DisplayFunc"), "_gData");
+    }
+
     // Whether app.training.TrainingManager actually exposes DisplayFunc, resolved
     // ONCE against the type definition.
     //

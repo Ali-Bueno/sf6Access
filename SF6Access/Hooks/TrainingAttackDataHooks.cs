@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using REFrameworkNET;
 using REFrameworkNET.Attributes;
 using REFrameworkNET.Callbacks;
@@ -6,130 +7,39 @@ using SF6Access.Services;
 namespace SF6Access.Hooks;
 
 /// <summary>
-/// Announces the Attack Data (combo damage + hit count) when a combo ends in
-/// training mode. The end is signalled by the on-screen hit counter
-/// (app.UIPartsHitCount): UpdateNumber marks a combo as running and the
-/// FADE_OUT animation (or HideCount) marks the true end. A quiet-frames timer
-/// is the fallback. Both end signals are additionally held off while the game's
-/// own combo counter (app.cTeam.mComboCount) is still above zero, so a long
-/// finisher animation is no longer mistaken for the end of the combo. Data
-/// source: TrainingManager.DisplayFunc._gData.PlayerDatas[0] (prevComboCount /
-/// comboDamage), the same data that feeds the Attack Data panel.
+/// Announces the training Attack Data once per hit or combo, with the numbers
+/// the panel shows when the exchange is over. The end is the game's own combo
+/// counter (app.cTeam.mComboCount, per side via ComboTracker.BattleTeam)
+/// dropping back to zero: it stays up through hitstun, juggles and long
+/// finishers, and rises and falls for every single hit — so repeated identical
+/// hits each get a readout. (The previous detection waited for the panel numbers
+/// to CHANGE and then go quiet, which never fired for identical or rapid single
+/// hits.) Values: TrainingManager.DisplayFunc._gData.PlayerDatas[side], the
+/// panel's own latched record: comboDamage, prevComboCount, correction (the
+/// damage scaling percent shown as "270 (30%)") and attackInfo (attack type).
 /// </summary>
 public class TrainingAttackDataHooks
 {
-    private static int _pollCounter;
     private const int POLL_SEARCH_INTERVAL = 120;
-    private const int POLL_READ_INTERVAL = 10;
+    // Hitstun of the lightest hit lasts far longer than this
+    private const int POLL_READ_INTERVAL = 2;
+    // Frames between the counter clearing and reading the panel record, so the
+    // last hit's numbers have latched
+    private const int SETTLE_FRAMES = 6;
+    private const int SIDES = 2;
+    // Whether a combo counts on the attacker's own cTeam (vs the defender's)
+    private const bool COUNTER_ON_ATTACKER = true;
+    // PlayerDatas[0] / the panel's left column is the training player (P1)
+    private const int OWN_SIDE = 0;
+    // Damage scaling is a percent; a full-damage hit reads 100
+    private const int NO_SCALING = 100;
 
-    // Fallback when the HUD hooks miss the end: the combo is over when its
-    // numbers stop moving for this many frames. Generous on purpose — super
-    // freezes pause the counters for well over a second mid-combo
-    private const int QUIET_FRAMES = 100;
-
-    // The HUD also replays FADE_OUT while RESETTING the counter at combo
-    // start (which announced the very first hit as a finished combo), so a
-    // fade only counts as the end after the numbers stay put this long
-    private const int END_CONFIRM_FRAMES = 40;
-
-    // app.UIPartsHitCount.ANIM_STATE: FADE_IN, DEFAULT, COUNT_UP, FADE_OUT
-    private const int ANIM_STATE_FADE_IN = 0;
-    private const int ANIM_STATE_COUNT_UP = 2;
-    private const int ANIM_STATE_FADE_OUT = 3;
-
+    private static int _pollCounter;
     private static ManagedObject _manager;
     private static bool _isActive;
 
-    private static int _lastCount = -1;
-    private static int _lastDamage = -1;
-    private static int _lastChangeFrame;
-    private static bool _dirty;
-
-    // HUD hit-counter state (set from hooks, consumed by the poll)
-    private static bool _comboActive;
-    private static int _hudCount;
-    private static int _hudEndFrame = -1; // frame the counter faded, -1 = no end pending
-
-    [PluginEntryPoint]
-    public static void Initialize()
-    {
-        InstallHudHooks();
-        API.LogInfo("[SF6Access] TrainingAttackDataHooks initialized");
-    }
-
-    private static void InstallHudHooks()
-    {
-        try
-        {
-            var td = TDB.Get().FindType("app.UIPartsHitCount");
-            if (td == null)
-            {
-                API.LogInfo("[SF6Access] UIPartsHitCount type not found, HUD combo hooks skipped");
-                return;
-            }
-
-            var update = td.GetMethod("UpdateNumber(System.Int32)") ?? td.GetMethod("UpdateNumber");
-            if (update != null)
-            {
-                var hook = update.AddHook(false);
-                hook.AddPre(args =>
-                {
-                    int count = (int)(long)args[2];
-                    if (count > 0)
-                    {
-                        _hudCount = count;
-                        _comboActive = true;
-                        _hudEndFrame = -1; // the counter is alive — that fade was a reset
-                    }
-                    return PreHookResult.Continue;
-                });
-                API.LogInfo("[SF6Access] UIPartsHitCount.UpdateNumber hook installed");
-            }
-
-            var anim = td.GetMethod("PlayAnimState(app.UIPartsHitCount.ANIM_STATE)") ?? td.GetMethod("PlayAnimState");
-            if (anim != null)
-            {
-                var hook = anim.AddHook(false);
-                hook.AddPre(args =>
-                {
-                    int state = (int)(long)args[2];
-                    if (state == ANIM_STATE_FADE_OUT && _comboActive)
-                    {
-                        _comboActive = false;
-                        _hudEndFrame = _pollCounter;
-                    }
-                    else if (state == ANIM_STATE_FADE_IN || state == ANIM_STATE_COUNT_UP)
-                    {
-                        // Counter (re)shown — the combo is running, not ending
-                        _comboActive = true;
-                        _hudEndFrame = -1;
-                    }
-                    return PreHookResult.Continue;
-                });
-                API.LogInfo("[SF6Access] UIPartsHitCount.PlayAnimState hook installed");
-            }
-
-            // Backup end signal: some paths hide the counter without fading
-            var hide = td.GetMethod("HideCount()") ?? td.GetMethod("HideCount");
-            if (hide != null)
-            {
-                var hook = hide.AddHook(false);
-                hook.AddPost((ref ulong retval) =>
-                {
-                    if (_comboActive)
-                    {
-                        _comboActive = false;
-                        _hudEndFrame = _pollCounter;
-                    }
-                });
-                API.LogInfo("[SF6Access] UIPartsHitCount.HideCount hook installed");
-            }
-        }
-        catch (System.Exception ex)
-        {
-            API.LogError($"[SF6Access] UIPartsHitCount hooks failed: {ex.Message}");
-        }
-    }
+    private static int _attacker = -1;  // side whose hit/combo is running, -1 = none
+    private static int _endFrame = -1;  // frame the counter cleared, -1 = no end pending
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void OnUpdate()
@@ -144,11 +54,8 @@ public class TrainingAttackDataHooks
             if (_manager == null) return;
 
             _isActive = true;
-            _lastCount = -1;
-            _lastDamage = -1;
-            _dirty = false;
-            _comboActive = false;
-            _hudEndFrame = -1;
+            _attacker = -1;
+            _endFrame = -1;
             API.LogInfo("[SF6Access] Training attack data watcher active");
             return;
         }
@@ -157,8 +64,8 @@ public class TrainingAttackDataHooks
 
         try
         {
-            var playerData = FindPlayerLocalData();
-            if (playerData == null)
+            var players = PlayerDatas();
+            if (players == null)
             {
                 if (_pollCounter % POLL_SEARCH_INTERVAL == 0 &&
                     API.GetManagedSingleton("app.training.TrainingManager") == null)
@@ -170,128 +77,76 @@ public class TrainingAttackDataHooks
                 return;
             }
 
-            int count = FlowHelper.ReadIntField(playerData, "prevComboCount", -1);
-            int damage = FlowHelper.ReadIntField(playerData, "comboDamage", -1);
-            if (count < 0 && damage < 0) return;
-
-            bool first = _lastCount == -1 && _lastDamage == -1;
-
-            if (count != _lastCount || damage != _lastDamage)
+            int attacker = RunningComboSide();
+            if (attacker >= 0)
             {
-                _lastCount = count;
-                _lastDamage = damage;
-                _lastChangeFrame = _pollCounter;
-                if (!first) _dirty = true; // a combo is in progress
-                // Numbers moved after a fade — it wasn't the end (or they
-                // were still settling); restart the confirmation window
-                if (_hudEndFrame >= 0) _hudEndFrame = _pollCounter;
+                _attacker = attacker;
+                _endFrame = -1;
                 return;
             }
 
-            // HUD counter faded and the numbers stayed put — the combo really
-            // ended. The display data is the panel's own latched result, so it
-            // is announced as-is: the old equality gate against the HUD count
-            // (count == _hudCount) silently DROPPED combos whenever the two
-            // sources disagreed by a hit (multi-hit supers advanced one source
-            // before the other), which under-reported damage to the player.
-            if (_hudEndFrame >= 0)
-            {
-                if (_pollCounter - _hudEndFrame < END_CONFIRM_FRAMES) return;
-                // The game's own combo counter is still up — a long finisher is
-                // still part of the combo; wait for it to truly end
-                if (TeamComboStillActive()) return;
-                _hudEndFrame = -1;
-                if (_dirty && count > 0)
-                {
-                    _dirty = false;
-                    _lastChangeFrame = _pollCounter;
-                    if (count != _hudCount)
-                        API.LogInfo($"[SF6Access] HUD/data combo count differ (announcing data): hud={_hudCount}, data={count}");
-                    if (!TrainingMenuHooks.IsInTrainingMenu)
-                        AnnounceCombo(count, damage);
-                    return;
-                }
-            }
+            if (_attacker < 0) return;
+            if (_endFrame < 0) _endFrame = _pollCounter;
+            if (_pollCounter - _endFrame < SETTLE_FRAMES) return;
 
-            // Quiet-frames fallback: silent while the HUD counter is still up
-            // (juggle gaps and freezes are not the end) and on stable zeros
-            if (_comboActive) return;
-            if (!_dirty || _pollCounter - _lastChangeFrame < QUIET_FRAMES) return;
-            // Still combatting: the game combo counter has not cleared yet
-            if (TeamComboStillActive()) return;
-            _dirty = false;
-            if (count <= 0 && damage <= 0) return;
-
-            // No announcements while the pause menu is open (stale values)
-            if (TrainingMenuHooks.IsInTrainingMenu) return;
-
-            AnnounceCombo(count, damage);
+            int side = _attacker;
+            _attacker = -1;
+            _endFrame = -1;
+            if (!TrainingMenuHooks.IsInTrainingMenu)
+                Announce(FlowHelper.GetListItem(players, side), side);
         }
         catch { }
     }
 
-    /// <summary>
-    /// Whether the game's own combo counter (app.cTeam.mComboCount, reached via
-    /// the player shells) is still above zero — i.e. a combo is genuinely in
-    /// progress. Holds the end-detection off through long finisher animations.
-    /// Returns false (does not block) when the team data can't be read, so a
-    /// broken path falls back to the timer/HUD heuristics rather than going mute.
-    /// </summary>
-    private static bool TeamComboStillActive()
+    /// <summary>The attacking side of the hit or combo in progress, -1 if none.</summary>
+    private static int RunningComboSide()
     {
-        try
+        for (int side = 0; side < SIDES; side++)
         {
-            var displayFunc = FlowHelper.GetObjectField(_manager, "DisplayFunc");
-            var gameData = FlowHelper.GetObjectField(displayFunc, "_gData");
-            var players = FlowHelper.GetObjectField(gameData, "PlayerDatas");
-            if (players == null) return false;
-
-            int best = 0;
-            for (int i = 0; i < 2; i++)
-            {
-                var pl = FlowHelper.GetListItem(players, i);
-                var shell = FlowHelper.GetObjectField(pl, "shell");
-                var team = ComboTracker.TeamOf(shell);
-                if (team == null) continue;
-                int c = ComboTracker.CountOf(team, out int _d);
-                if (c > best) best = c;
-            }
-            return best > 0;
+            if (ComboTracker.CountOf(ComboTracker.BattleTeam(side), out int _damage) > 0)
+                return COUNTER_ON_ATTACKER ? side : SIDES - 1 - side;
         }
-        catch { return false; }
+        return -1;
     }
 
-    /// <summary>
-    /// Damage first, then hit count, no "Combo" prefix — the tester asked for
-    /// the bare numbers, and "hits" is the word he uses in any language.
-    /// </summary>
-    private static void AnnounceCombo(int count, int damage)
+    private static void Announce(ManagedObject data, int side)
     {
-        // Combo trials show their own recipe/progress feedback — the combo damage
-        // readout is noise there and the tester asked to silence it.
-        if (ComboTrialHooks.IsActive) return;
+        // Combo trials give their own recipe/progress feedback — the tester asked
+        // to silence the damage readout there
+        if (data == null || ComboTrialHooks.IsActive) return;
 
-        // Respect the in-game toggle: the "Attack Data" menu item is the master
-        // toggle for the whole panel (Is_AttackAllView); the Is_DS_*_View flags
-        // are sub-views that stay on. The combo data stays populated even when
-        // the panel is hidden, so the setting is the reliable gate.
+        // "Attack Data" is the master toggle for the whole panel (Is_AttackAllView);
+        // the panel record stays populated while it is hidden
         var ds = FlowHelper.GetTrainingDisplaySetting();
         if (ds != null && !FlowHelper.ReadBoolField(ds, "Is_AttackAllView")) return;
 
-        string hits = LocalizedText.Hits();
-        string announcement = damage > 0
-            ? (count > 0 ? $"{damage}. {count} {hits}" : damage.ToString())
-            : $"{count} {hits}";
+        int count = FlowHelper.ReadIntField(data, "prevComboCount", 0);
+        int damage = FlowHelper.ReadIntField(data, "comboDamage", 0);
+        if (count <= 0 && damage <= 0) return;
+
+        var parts = new List<string>();
+        if (side != OWN_SIDE) parts.Add(LocalizedText.Opponent());
+        parts.Add(damage.ToString());
+        if (count > 1)
+        {
+            parts.Add($"{count} {LocalizedText.Hits()}");
+            // correction is a long; the percent fits the low 32 bits
+            int scaling = FlowHelper.ReadIntField(data, "correction", NO_SCALING);
+            if (scaling > 0 && scaling < NO_SCALING) parts.Add($"{LocalizedText.Scaling()} {scaling}%");
+        }
+        else
+        {
+            // A lone hit: its attack type (High / Low / Throw…), as the panel shows
+            string type = FlowHelper.ResolveGuidField(data, "attackInfo");
+            if (!string.IsNullOrWhiteSpace(type)) parts.Add(type);
+        }
+
+        string announcement = string.Join(". ", parts);
         API.LogInfo($"[SF6Access] Attack data: {announcement}");
         ScreenReaderService.Speak(announcement, interrupt: false);
     }
 
-    /// <summary>P1's display-state record (combo counters live there).</summary>
-    private static ManagedObject FindPlayerLocalData()
-    {
-        var displayFunc = FlowHelper.GetObjectField(_manager, "DisplayFunc");
-        var gameData = FlowHelper.GetObjectField(displayFunc, "_gData");
-        var players = FlowHelper.GetObjectField(gameData, "PlayerDatas");
-        return FlowHelper.GetListItem(players, 0);
-    }
+    /// <summary>Both sides' display-state records (P1 first).</summary>
+    private static ManagedObject PlayerDatas() =>
+        FlowHelper.GetObjectField(FlowHelper.GetTrainingGameData(), "PlayerDatas");
 }

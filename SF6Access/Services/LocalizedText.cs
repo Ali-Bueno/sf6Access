@@ -80,6 +80,15 @@ public static class LocalizedText
     /// <summary>The combo counter's "hits" word ("2500. 6 hits").</summary>
     public static string Hits() => LangFile.Get("hits", "hits");
 
+    /// <summary>Training readout labels for the two sides — the frame meter's
+    /// rows carry no label on screen (sighted players tell them apart by position).</summary>
+    public static string You() => LangFile.Get("you", "You");
+
+    public static string Opponent() => LangFile.Get("opponent", "Opponent");
+
+    /// <summary>The Attack Data damage percent ("270 (30%)") has no on-screen label.</summary>
+    public static string Scaling() => LangFile.Get("scaling", "scaling");
+
     /// <summary>Boot title-screen prompt (the on-screen prompt is an image and,
     /// despite it saying "any button", only these inputs advance).</summary>
     public static string TitleScreenPrompt() => LangFile.Get("title_prompt",

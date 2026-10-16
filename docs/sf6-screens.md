@@ -148,23 +148,42 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   (`TM_DisplaySetting`): `Is_FrameMeter_View`, `Is_DS_AD_View`. Helper
   `FlowHelper.GetTrainingDisplaySetting()` (mgr._tData → DisplayFunc._tData fallback). Panels:
   `ui11253`=Attack Data, `ui11255`=Frame Meter, `ui11254`=input history, `ui11258`=command.
-  Read frame data only while `TrainingManager != null` (replay-leak fix).
+  Per-player `DisplaySetting.PlayerDatas[i].Is_FrameNum_View` also exists.
+
+### Training live display state (`FlowHelper.GetTrainingGameData()`, measured 2026-10-16)
+- `TrainingManager.DisplayFunc._gData` (`tf_DisplaySetting.GameLocalData`). Null outside training.
+- `PlayerDatas[i]` (`PlayerLocalData`, index = player, P1 first) = the Attack Data panel's record:
+  `singleDamage` (last hit), `correction` (**long**, damage scaling %, 100 = none; 28-hit combo → 30),
+  `comboDamage`, `maxComboDamage`, `prevComboCount`, `attackInfo` (Guid → "High"/"Throw"…).
+  `shell` is **null whenever no attack is in progress** — useless for reaching the cTeam.
+  Panel `ui11253`: rows `c_attackInfo_0` Damage ("400 (100)" = single (correction)),
+  `_1` Combo Damage ("400 (4090)" = combo (max)), `_2` Attack Type; `e_text_left` = P1, `e_text_right` = P2.
+- `FMActive` (int) = frame meter: 0 idle, 1 someone acting, 3 contact, 2 closing. Returns to 0 only
+  when the whole exchange is over (hit, block or whiff) — the frame rows are final ~1-3 frames later.
+- Frame Meter `ui11255` rows: `c_frameMeter/e_txt_up` = P1, `e_txt_down` = P2, each
+  "Startup 6F / Total 22F / Advantage 1F" (advantage wrapped in `<HLBGN Arg0="3"|"4">` = plus/minus
+  colour). Filled in stages (startup → total → advantage); the defender's row is
+  "Startup -- / Total -- / Advantage -1F" (mirror). Whiffs keep "Advantage --". A move started right
+  after another shows the NEW startup beside the OLD total/advantage until it finishes — hence the
+  readout waits for `FMActive` → 0 instead of reacting to text changes. Walk/dash rows have no startup.
 
 ### Combo tracking (`Services/ComboTracker.cs`)
 - Authoritative: `app.cTeam.mComboCount` (a **short** — read with `ReadShortField`; int-read grabs
   `mComboCountOld` bytes). Stays >0 for the whole combo, returns to 0 at true end/drop = on-screen
   "X HITS". `cTeam.mComboDamage` (int) = accumulated damage.
-- Reach a cTeam: `cWork.owner_add`(→cPlayer)→`mpTeam`, or `cPlayer.mpTeam`. Training:
-  `TrainingManager.DisplayFunc._gData.PlayerDatas[i].shell`→`owner_add`→`mpTeam`. Lives on one side —
-  read BOTH, take max. API: `TeamOf`, `NoteTeams`, `CountOf(team,out damage)`, `IsComboActive`, `Clear`.
-- Used as a NON-destructive suppressor over the working HUD-hook + quiet-frames + `PlayerLocalData`
-  (comboDamage/prevComboCount) path — do not replace that with cTeam-only (broke damage announcing).
+- Reach a cTeam: **`ComboTracker.BattleTeam(side)`** = static `gBattle.Team.mcTeam[side]`, readable at
+  any moment of a battle. Also `cWork.owner_add`(→cPlayer)→`mpTeam` / `cPlayer.mpTeam` from a hook.
+  (The old training route via `PlayerDatas[i].shell` is null between attacks, so it never read.)
+  API: `BattleTeam`, `TeamOf`, `NoteTeams`, `CountOf(team,out damage)`, `IsComboActive`, `Clear`.
+- **The count runs on the ATTACKER's own team** (confirmed 2026-10-16: P1 hitting the dummy raised
+  `mcTeam[0]`), and it rises and falls for EVERY hit — a lone jab goes 1 → 0 about 0.4 s later.
+- Training Attack Data (`TrainingAttackDataHooks`, rewritten 2026-10-16): the end of a hit/combo is
+  that count falling back to 0; a few frames later the attacker's `PlayerLocalData` is announced.
+  Replaces the HUD-fade + quiet-frames detection, which waited for the panel numbers to CHANGE and
+  then sit still ~1.7 s — it never fired for rapid or identical single hits.
 - **Do NOT gate the announcement on `count == hudCount`** (removed 2026-07-06): the training data
-  and the HUD counter advance at different times on multi-hit supers, and the equality gate silently
-  dropped the whole combo readout on any mismatch (tester: "small hits get missed, damage dropped").
-  The `PlayerLocalData` values are the panel's own latched result — announce them once the HUD end is
-  confirmed AND `mComboCount` cleared AND the numbers were stable for `END_CONFIRM_FRAMES`; log the
-  HUD/data difference instead.
+  and the HUD counter advance at different times on multi-hit supers (tester: "small hits get
+  missed, damage dropped"). The `PlayerLocalData` values are the panel's own latched result.
 - Other latched sources (unused, candidates): `CommentBattleParamRecorder.ComboFinishChecker`
   (`LastComboCount`/`LastComboDamage`, `OnFinishCombo` edge — commentator system, may be inert when
   commentary is off); `cTeam.mComboCountOld` (short, previous-frame count); `FBattleMediator.AtckInfo`
