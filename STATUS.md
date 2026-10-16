@@ -184,6 +184,10 @@ records that survive a machine change.)
 - Shop Enhance/Dye side panes still unread.
 
 **Built but not yet verified in game**
+- **Battle notices read aloud, 2026-10-16** (`BattleNoticeHooks`). VERIFIED in training: the game's
+  text is read once per banner (STUN, PUNISH COUNTER, COUNTER HIT after enabling them in
+  `plugins\managed\SF6Access.notices.txt`, applied without a restart). Still unverified: online
+  rollback not repeating a banner; what the LOCK notice is.
 - **Training Attack Data + frame data aligned with the sighted readout, 2026-10-16.** Detection was
   verified with a live probe (`docs/sf6-screens.md` § Training live display state); the built readouts
   still need an in-game pass. Expected: a single hit says "700. High" EVERY time (identical repeats

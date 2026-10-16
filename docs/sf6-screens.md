@@ -167,6 +167,20 @@ menus name items `c_item_N` (not just dialogs) — read the subtree text, use Ye
   after another shows the NEW startup beside the OLD total/advantage until it finishes — hence the
   readout waits for `FMActive` → 0 instead of reacting to text changes. Walk/dash rows have no startup.
 
+### Battle notices (`BattleNoticeHooks`, 2026-10-16)
+- HUD `BattleHud_Notice` (`app.UIBattleHud_Notice`), banners as `e_txt_notice` ("PUNISH COUNTER",
+  "HARD KNOCKDOWN"…; several copies — one per notice slot). Requested via
+  `UIBattleHud_Notice.RequestNotice(int teamId, app.ENoticeSelf type, uint frame)`; SHOWN via
+  `app.UIPartsBattleNotice.ActivateNotice(NoticeInfo, NoticeSettingData, float)` — hooked there:
+  `NoticeInfo` = `TeamId`, `Type`, `Frame`; `NoticeSettingData` = `NoticeUIType`, `MessageId` (localized
+  text Guid), `DisplayName`. Settings list: `UIBattleHud_Notice.SettingData.NoticeSettingDataList`.
+- `eNoticeUIType`: 0 FIRST_ATTACK, 1 REVERSAL, 2 THROW_ESCAPE, 3 COUNTER, 4 PUNISH_COUNTER, 5 STUN,
+  6 HARD_KNOCKDOWN, 7 CRUSH, 8 LOCK, 9 CROSS_UP, 10 FORCED_DOWN, 11 ARMOR_BREAK. (`ENoticeSelf`, the
+  request enum, numbers them differently and adds ADVANCING_GUARD / PUNISH_COUNTER_DRV.)
+- Which are read = `<game>\reframework\plugins\managed\SF6Access.notices.txt` (`key=on|off`, re-read
+  when edited). Default on: hard_knockdown, lock, forced_down — the tester's list of notices with no
+  game sound. No side label: there is no known field for the LOCAL player's side online.
+
 ### Combo tracking (`Services/ComboTracker.cs`)
 - Authoritative: `app.cTeam.mComboCount` (a **short** — read with `ReadShortField`; int-read grabs
   `mComboCountOld` bytes). Stays >0 for the whole combo, returns to 0 at true end/drop = on-screen
