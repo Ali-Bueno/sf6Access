@@ -607,6 +607,8 @@ reframework\plugins\
   managed\SF6Access.lang\*.txt     (localized strings — WITHOUT this every readout
                                     falls back to English; forgotten once, v0.5.x)
 ```
+`managed\SF6Access.notices.txt` (which battle notices are read) is written with defaults on first run
+— don't ship your own copy, it would override the player's defaults.
 
 Build steps: `dotnet build` (fresh DLL copies into the game folder) → copy the files above into the
 kept `release\SF6Access\` staging folder → `Compress-Archive` the CONTENTS into `release\SF6Access.zip`

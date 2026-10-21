@@ -35,6 +35,12 @@ slots_count={0} of {1} slots
 slots_full=Slots full
 perks=Perks
 hits=hits
+you=You
+opponent=Opponent
+scaling=scaling
+rank.legend=Legend
+rank.legend_ranked={0}, ranked {1}
+rank.down=Rank down
 title_prompt=Title screen. Press F on keyboard, A on Xbox controller, or Cross on PlayStation controller
 
 # --- Avatar combat stats (WTPlayerStatusType) ---
@@ -854,6 +860,7 @@ profile.league_point=League Point
 profile.master_rating=Master Rating
 profile.play_time=Play Time
 profile.fighter_id=Fighter ID
+profile.home=Home
 tab.equipment=Equipment
 tab.special_moves=Special Moves
 tab.super_arts=Super Arts

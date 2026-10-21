@@ -104,7 +104,7 @@ public sealed class LeagueSelectHooks : ScreenAdapter
         // CfnLeagueInfo.LeagueList is List<LeagueRankWithLevel>; its first entry
         // resolves the tier name (the grid picks a whole tier, so drop the level).
         var levels = FlowHelper.GetObjectField(info, "LeagueList");
-        int enumVal = ReadEnumListItem(levels, 0);
+        int enumVal = FlowHelper.ReadIntListItem(levels, 0);
         if (enumVal <= 0) return null;
 
         return LeagueRankResolver.Resolve(enumVal, tierOnly: true);
@@ -114,25 +114,9 @@ public sealed class LeagueSelectHooks : ScreenAdapter
     private string ResolveDetailName(int idx)
     {
         var list = FlowHelper.GetObjectField(_param, "_LeagueList");
-        int enumVal = ReadEnumListItem(list, idx);
+        int enumVal = FlowHelper.ReadIntListItem(list, idx);
         if (enumVal <= 0) return null;
 
         return LeagueRankResolver.Resolve(enumVal, tierOnly: false);
-    }
-
-    /// <summary>Read an enum element from a List&lt;enum&gt; as int (value type,
-    /// so unbox through InvokeBoxed(int) rather than a managed-object cast).</summary>
-    private static int ReadEnumListItem(ManagedObject list, int idx)
-    {
-        if (list == null || idx < 0) return -1;
-        try
-        {
-            var td = list.GetTypeDefinition();
-            var getItem = td?.GetMethod("get_Item(System.Int32)");
-            if (getItem == null) return -1;
-            var raw = getItem.InvokeBoxed(typeof(int), list, new object[] { idx });
-            return raw != null ? Convert.ToInt32(raw) : -1;
-        }
-        catch { return -1; }
     }
 }

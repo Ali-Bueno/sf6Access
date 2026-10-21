@@ -27,6 +27,23 @@ public static class ComboTracker
         return FlowHelper.GetObjectField(owner, "mpTeam");          // cTeam
     }
 
+    private static Field _battleTeamField;
+
+    /// <summary>A side's cTeam straight from the static <c>gBattle.Team.mcTeam</c>
+    /// array (index = player side). Unlike a shell's owner_add it is readable at
+    /// any moment of a battle — training's PlayerLocalData.shell is null whenever
+    /// no attack is in progress, which left the shell path blind.</summary>
+    public static ManagedObject BattleTeam(int side)
+    {
+        try
+        {
+            _battleTeamField ??= TDB.Get().FindType("gBattle")?.FindField("Team");
+            var battleTeam = _battleTeamField?.GetDataBoxed(typeof(object), 0, false) as ManagedObject;
+            return FlowHelper.GetListItem(FlowHelper.GetObjectField(battleTeam, "mcTeam"), side);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Cache both sides' teams from a battle hook (attacker shell +
     /// defender player), so later polls can read the live combo state. The
     /// combo counter lives on one side only, so both are kept and checked.</summary>
