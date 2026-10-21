@@ -1,5 +1,101 @@
 # Changelog
 
+## v0.6.0 — 21/10/2026
+
+> Ranked, home country, Training and battle notices were contributed by **Leos-Khai** (pull request #4).
+> Thank you!
+
+### Ranked — Master tiers and Legend
+- Rank names now include the Master sub-tiers: **High Master, Grand Master, Ultimate Master** and
+  **Legend** ("Legend, ranked N").
+- The VS screen reads **MR** for every Master player. Plain Master used to read LP.
+- The rank-up screen names the rank you actually reached. It used to say "Ultimate Master" every time.
+- The post-match gauge says **"Rank down"** when you drop a rank.
+
+### Home country (flags)
+- The VS screen, Battle Hub profiles and the CFN profile now say each player's **country**.
+- **Options > User Settings > Change Flag** names the focused flag. The grid is pictures only, so it
+  was silent before.
+
+### Training — Attack Data and frame data
+- **Attack Data** gives one readout per hit or combo, ending when the game's own combo counter resets,
+  with damage scaling ("1230. 4 hits. scaling 60%"). Repeated or very fast single hits used to be missed.
+- **Frame data** is spoken once per exchange, labelled **"You:"** or **"Opponent:"**.
+- These two readouts were rebuilt and are not fully tested in game yet. Please report anything wrong.
+
+### Battle notices
+- Fight banners are read aloud in your game language (for example STUN, PUNISH COUNTER, COUNTER HIT).
+- Choose which ones in `reframework\plugins\managed\SF6Access.notices.txt`, created on the first run
+  with one `name=on|off` line per notice. Edits apply without restarting the game. On by default:
+  hard knockdown, lock and forced down, the banners that have no game sound of their own.
+
+### World Tour — finding your way around the city (experimental)
+
+> **Please read first.** This is a large new navigation system. Most of it was built from the game's
+> code and checked with offline tests; only the parts marked below were confirmed in game. Treat the
+> rest as **experimental**. If something is silent, wrong or too noisy, send `re2_framework_log.txt`
+> from the game folder. Shortcuts marked "keyboard" have no controller button.
+
+#### Knowing where you are
+- **Area and street names are announced as you walk**, from the game's own area banners (for example
+  "Faith Avenue"), in your game language. They never interrupt dialogue, menus or fights, and do not
+  bounce back and forth when you stand on the border between two areas. Confirmed in game.
+- **Z (keyboard) — "where am I"**: your area, the nearest named place or landmark with its direction
+  (as a clock position relative to the camera) and distance, which way you are facing, and where your
+  destination lies. Confirmed in game.
+- **Shift+Z (keyboard)** sweeps the eight compass directions and says what is around you.
+- **N (keyboard) / Start (controller)** lists the people near you, with names and distances.
+- Compass words ("north-east") are spoken when you turn the camera, once the heading settles.
+
+#### Choosing where to go
+- **Hold R3 (controller) or V (keyboard)** to open the destination picker. Your character does not move
+  while it is open. Confirmed in game.
+  - Up/down: next/previous entry. Left/right or L1/R1 (keyboard: left/right arrows, PageUp/PageDown):
+    next/previous category.
+  - **Decide** chooses, **Cancel** (or R3 / V again) closes without changing anything, **X / Square
+    (keyboard: Delete)** removes a saved place.
+- Categories: **Guidance** (follow the tracked mission, or explore freely), **Places by name**, **Rest:
+  day and night**, places, fast travel, ladders and doors, shops, masters, missions, jobs, nearby
+  people, map pins and your saved places. Each entry says what it is, its clock direction, its distance
+  and where it sits relative to a known landmark.
+- **Save this place** stores where you stand under the area name, so you can come back later, also in
+  a later session.
+- Opening the phone map lets the mod learn the shops, masters and missions it shows (not tested in game
+  yet).
+- Your destination stays set through menus, the phone and street fights. It is dropped only when you
+  cancel it or change city.
+
+#### Exploring by ear
+- **Free exploration is the default.** Turn the camera and the mod names what it settles on: people,
+  places, ladders, doors and breakable objects, standing or walking.
+- **Tap R3 / V right after hearing a name** (still facing it) to **follow it**. Tap R3 / V again to
+  **cancel** any guidance and go back to exploring.
+- **Passing by:** places within about 12 metres are named once as you walk past, with their direction.
+- **Object sounds**, positioned in stereo with distance: ladder (metallic strikes), door (low knocks),
+  shop (register bell), travel point (rising zip), place / saved place / pin (airy swell), breakable
+  object (dry crackle). The object the camera points at repeats faster as you get closer; nearby ones
+  take quiet turns. Testers found them easy to tell apart. **Shift+N (keyboard)** turns them on and off.
+- **Guidance sound** toward your destination: panned left/right, lower when it is behind you, and a
+  fifth higher when you point straight at it, so the right stick steers. **Shift+V (keyboard)** turns
+  route guidance on and off.
+- **Routes through ladders:** when the destination is on another floor or a roof, the mod plans walk,
+  ladder, walk, speaks each leg, and points out objects you may need to break. Some routes (such as
+  partial roof routes) may still fail.
+- **Walls radar:** walls, openings and stairs around you as sounds, on by default. **B (keyboard)**
+  reads it once, **Shift+B (keyboard)** pauses and resumes it.
+- World sounds lower under speech instead of cutting out, and go quiet in menus, dialogue, fights and
+  the picker.
+
+#### Places by name and listening across the city (new, not tested in game yet)
+- **Places by name** in the picker lists known places alphabetically, at any distance. Choosing one
+  starts normal guidance to it.
+- **Guidance > Listen across the city**: turn the camera to hear the known place you point at, at any
+  distance, with a short sound for its type. Tap R3 / V to choose it, or pick **Explore freely** to
+  leave. Distances are straight-line, not walking distance.
+- Only places the game or the phone map has already shown the mod are listed; unvisited shops are not.
+- **Rest: day and night** guides you to the travel point linked to your room. That is not the exact door
+  position, so look for the door when you get close.
+
 ## v0.5.5 — 07/07/2026
 
 ### World Tour — in-gameplay dialogue now reads

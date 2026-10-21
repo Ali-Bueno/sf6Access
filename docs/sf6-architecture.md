@@ -603,9 +603,10 @@ re2_fw_config.txt              (overlay hidden, menu key = Pause)
 README.txt                     (EN+ES install + "send me logs/dumps")
 reframework\plugins\
   Ijwhost.dll, REFramework.NET.dll, REFramework.NET.runtimeconfig.json
-  managed\SF6Access.dll + managed\dependencies\*.dll
+  managed\SF6Access.dll + managed\dependencies\*.dll   (incl. NAudio*.dll since v0.6.0)
   managed\SF6Access.lang\*.txt     (localized strings — WITHOUT this every readout
                                     falls back to English; forgotten once, v0.5.x)
+  managed\SF6Access.sounds\*.mp3   (World Tour cues, from `SF6Access\sounds\`; since v0.6.0)
 ```
 `managed\SF6Access.notices.txt` (which battle notices are read) is written with defaults on first run
 — don't ship your own copy, it would override the player's defaults.
