@@ -6,13 +6,13 @@ namespace SF6Access.Services.WorldTour;
 internal static class RouteNotice
 {
     internal static string State(in BeaconDestination d, bool near) =>
-        d.Searching ? "searching"
+        d.TargetLost ? "target-lost"
+        : d.Searching ? "searching"
+        : d.Unconfirmed ? "unconfirmed"
         : d.Ladder ? (near ? "ladder-near:" : d.Blocked && !d.ViaRoute ? "ladder-blocked:" : "ladder:") + d.Leg
         : d.Closest ? ((near && d.IsApproach) || d.AtFoot ? "closest-near" : "closest")
         : d.NoRoute ? "no-route"
-        : !d.ViaRoute ? "unavailable"
-        : d.IsApproach ? (near || d.AtFoot ? "approach-near" : "approach")
-        : near ? "near" : "route";
+        : RouteAnswerPolicy.WalkingState(d.ViaRoute, d.IsApproach, d.AtFoot, near);
 
     internal static bool IsNear(string state) => state is "near" or "approach-near" or "closest-near" || state?.StartsWith("ladder-near:") == true;
 
@@ -55,6 +55,8 @@ internal static class RouteNotice
             "no-route" when afterSearch => Get("search_failed", "No ladder found that reaches the destination"),
             "no-route" => LocalizedText.AimNoRoute(d.Word, meters),
             "unavailable" => ExplorationText.RouteLost(),
+            "unconfirmed" => Get("unconfirmed", "Route unavailable. Guidance paused until it can be checked"),
+            "target-lost" => string.Format(Get("target_lost", "{0} is no longer available. Tap R3 or V to cancel"), d.Word),
             "approach" => ExplorationText.Approach(),
             "approach-near" when d.AboveM >= LevelRoute.LevelM => AtFoot(d),
             "approach-near" => ExplorationText.Get("approach_near", "Near the approach point. The objective still needs an entrance"),
@@ -63,7 +65,7 @@ internal static class RouteNotice
             "closest" => Closest(d.AboveM),
             "closest-near" when d.AboveM >= LevelRoute.LevelM => AtFoot(d),
             "closest-near" => ExplorationText.Get("approach_near", "Near the approach point. The objective still needs an entrance"),
-            "route" when previous is "no-route" or "unavailable" or "approach" => ExplorationText.RouteRestored(),
+            "route" when previous is "no-route" or "unavailable" or "unconfirmed" or "approach" => ExplorationText.RouteRestored(),
             _ => null,
         };
     }

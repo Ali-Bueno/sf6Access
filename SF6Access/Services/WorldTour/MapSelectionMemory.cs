@@ -1,37 +1,11 @@
 using REFrameworkNET;
-using SF6Access.Services;
 
 namespace SF6Access.Services.WorldTour;
 
-/// <summary>
-/// What the player last picked on the World Tour phone map, remembered as plain
-/// numbers so it outlives the map being closed.
-///
-/// <para><b>Why the phone map and not the minimap.</b> The HUD minimap was tried
-/// first and could not be reached at all: neither <c>app.UIMiniMapWindow</c> nor
-/// its owner <c>app.UICityHud_CityMiniMap</c> turns up in the scene
-/// (confirmed in game 2026-09-09, twice). The phone map, by contrast, has worked
-/// since 2026-09-07 — <see cref="SF6Access.Hooks.WorldTour.DeviceMapHooks"/> already
-/// reads the icon under the free cursor and speaks it. So the map the player
-/// actually browses IS the selection UI; nothing new had to be built for them to
-/// choose with, which is also why this replaced a whole modal radar.</para>
-///
-/// <para><b>One capture point covers everything.</b> The cursor path yields an
-/// <c>app.UIMapWindowBase.IconInfo</c>, and every kind of thing on the map arrives
-/// through it — missions, shops, masters, NPCs, fast-travel points, and the
-/// player's OWN pins: the game builds a pin's icon with
-/// <c>MakePinIconInfo(PinInfo, int)</c> (<c>UIMapWindowBase.cs:1038</c>), so a
-/// placed marker's <c>GlobalPos</c> is already the pin's own position.</para>
-///
-/// <para><b>Plain floats, never a wrapper.</b> The icon buffer belongs to a UI that
-/// is about to be torn down, and an engine wrapper outliving its object is the
-/// finalizer-on-the-GC-thread crash this mod has paid for twice. The three
-/// coordinates and a string are copied out and the engine object is let go.</para>
-/// </summary>
+/// <summary>The player's navigation choice, stored as plain values across menus and fights.</summary>
 public static class MapSelectionMemory
 {
-    /// <summary>A remembered map point. <see cref="Ok"/> is false when the player
-    /// has not picked anything since entering the city.</summary>
+    /// <summary>A remembered destination, without retaining its native map or scene object.</summary>
     public readonly struct Selection
     {
         public readonly bool Ok;
@@ -41,61 +15,89 @@ public static class MapSelectionMemory
         public readonly string Label;
 
         public readonly float X, Y, Z;
+        public readonly string Key;
+        public readonly bool Lost, Pending, InContact, IsPerson;
 
-        public Selection(string label, float x, float y, float z)
+        public Selection(string label, float x, float y, float z, string key,
+            bool lost = false, bool pending = false, bool inContact = false, bool isPerson = false)
         {
-            Ok = true; Label = label; X = x; Y = y; Z = z;
+            Ok = true; Label = label; X = x; Y = y; Z = z; Key = key;
+            Lost = lost; Pending = pending; InContact = inContact; IsPerson = isPerson;
         }
     }
 
     private static Selection _current;
+    private static ActorTrackingState _actor;
+    private static long _generation, _nextRefresh;
+    private const long RefreshMs = 500; // Match the route's two updates per second.
+
+    /// <summary>Free exploration suspends the automatic mission destination.</summary>
+    public static bool Exploring { get; private set; } = true;
 
     /// <summary>What the player last picked, or a default whose <c>Ok</c> is false.</summary>
     public static Selection Current => _current;
 
-    /// <summary>Remember a point the player put the map cursor on. Ignores an
-    /// unreadable position: an exact origin means the read failed rather than that
-    /// something sits at the world origin, the same rule the field readers already
-    /// apply to gimmick positions.</summary>
+    /// <summary>Refresh a live destination without changing its route identity or retaining native objects.</summary>
+    public static Selection Refresh()
+    {
+        if (_actor == null || _actor.Lost) return _current;
+        long now = System.Environment.TickCount64;
+        if (now < _nextRefresh) return _current;
+        _nextRefresh = now + RefreshMs;
+        ActorTrackingState.Observation observation;
+        try { observation = LiveDestinationReader.Read(_actor.Current.Actor); }
+        catch { observation = default; }
+        _actor.Observe(observation);
+        var updated = _actor.Current;
+        bool lost = !_current.Lost && _actor.Lost;
+        _current = new Selection(updated.Label, updated.X, updated.Y, updated.Z, _current.Key,
+            _actor.Lost, _actor.Pending, _actor.InContact, _current.IsPerson);
+        if (lost) API.LogInfo($"[SF6Access] Selected actor lost: '{_current.Label}'; kept its last known position");
+        return _current;
+    }
+
+    public static void Remember(Destination destination)
+        => Remember(destination.Label, destination.X, destination.Y, destination.Z, destination);
+
+    /// <summary>Follow a deliberately chosen destination, rejecting unreadable coordinates.</summary>
     public static void Remember(string label, float x, float y, float z)
+        => Remember(label, x, y, z, default);
+
+    private static void Remember(string label, float x, float y, float z, Destination destination)
     {
         if (string.IsNullOrWhiteSpace(label)) return;
+        if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z)) return;
         if (x == 0f && y == 0f && z == 0f) return;
 
+        CityListeningMode.Exit();
         bool changed = !_current.Ok || _current.Label != label
                        || _current.X != x || _current.Y != y || _current.Z != z;
-        _current = new Selection(label, x, y, z);
+        _generation++;
+        _current = new Selection(label, x, y, z, "pick:" + _generation,
+            isPerson: destination.Actor.IsValid || destination.Category is DestinationCategory.People or DestinationCategory.Masters);
+        _actor = destination.Actor.IsValid ? new ActorTrackingState(destination) : null;
+        _nextRefresh = 0;
+        Exploring = false;
         if (changed)
             API.LogInfo($"[SF6Access] Map selection: '{label}' at ({x:0.0}, {y:0.0}, {z:0.0})");
     }
 
-    /// <summary>Read <c>IconInfo.GlobalPos</c> off a map icon and remember it.
-    /// <paramref name="info"/> is the icon record the map reader already has in
-    /// hand; nothing is retained from it.
-    ///
-    /// <para><c>GlobalPos</c> is a <c>via.vec3</c> STRUCT member, so it is read
-    /// untyped through <see cref="FieldProbeService.Member"/> and unpacked with
-    /// <see cref="FlowHelper.ReadVecComponent"/> — naming <c>via.vec3</c> as the
-    /// target type yields a dispatch proxy that reads as all zeros, and
-    /// <c>GetObjectField</c> only ever returns a <c>ManagedObject</c>, which a
-    /// value type is not.</para></summary>
-    public static void RememberIcon(object info, string label)
+    public static void Explore() => Reset("free exploration");
+
+    public static void FollowMission()
     {
-        if (info == null) return;
-        object pos = FieldProbeService.Member(info, "GlobalPos");
-        if (pos == null) return;
-        Remember(label,
-                 FlowHelper.ReadVecComponent(pos, "x"),
-                 FlowHelper.ReadVecComponent(pos, "y"),
-                 FlowHelper.ReadVecComponent(pos, "z"));
+        Reset("follow the tracked mission");
+        Exploring = false;
     }
 
-    /// <summary>Forget the selection. Called when the field unloads: another city's
-    /// coordinates are not this one's, and a point left over from the last city
-    /// would aim the player at nothing.</summary>
+    /// <summary>Forget the choice when changing cities; menus and fights keep it.</summary>
     public static void Reset(string reason)
     {
+        CityListeningMode.Exit();
         if (_current.Ok) API.LogInfo($"[SF6Access] Map selection cleared ({reason})");
         _current = default;
+        _actor = null;
+        _nextRefresh = 0;
+        Exploring = true;
     }
 }

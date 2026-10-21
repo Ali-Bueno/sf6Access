@@ -73,6 +73,7 @@ public static class FieldRadarService
         try { Evaluate(now, dtSec); }
         catch (Exception ex)
         {
+            Reset();
             _nextSenseAt = now + FieldRadarTuning.FallbackSenseMs;
             if (_failLogged) return;
             _failLogged = true;
@@ -84,7 +85,12 @@ public static class FieldRadarService
     {
         var cam = FieldDirectionService.GetCameraForward();
         var me = AvatarFieldReader.ReadPlayerPos(null);
-        if (!cam.Ok || !me.ok) { _nextSenseAt = now + FieldRadarTuning.FallbackSenseMs; return; }
+        if (!cam.Ok || !me.ok)
+        {
+            Reset();
+            _nextSenseAt = now + FieldRadarTuning.FallbackSenseMs;
+            return;
+        }
 
         FieldRadarTravel.Update(me.x, me.y, me.z, cam, dtSec);
         // A teleport is not a walk: every line would span a loading boundary.
@@ -92,9 +98,9 @@ public static class FieldRadarService
 
         if (!FieldRadarSense.Measure(cam))
         {
-            // No information is not open space: forget the beams rather than let the
-            // next reading break a line against a world that was never measured.
-            FieldRadarClearance.WipeAll();
+            // Reseeding must also discard unheard cues; otherwise an old opening can
+            // survive the failure and sound over a new blocked baseline.
+            Reset();
             _nextSenseAt = now + FieldRadarTuning.FallbackSenseMs;
             return;
         }
@@ -111,8 +117,8 @@ public static class FieldRadarService
         ProximityPass(now, canCue);
     }
 
-    /// <summary>What each beam has SETTLED into but not yet said, and what the player
-    /// was last told about it.
+    /// <summary>What each beam has settled into but not yet said, and what the player
+    /// was last told. Pending verdicts also need supporting evidence at emission.
     ///
     /// <para>At most one cue leaves an evaluation, so entering a plaza — where both
     /// laterals turn passable at once — speaks them in order instead of over each
@@ -121,11 +127,10 @@ public static class FieldRadarService
     /// alley into a lateral beam during the turn, when laterals are silent, so the
     /// player arrived at its mouth having been told nothing.</para>
     ///
-    /// <para><see cref="Spoken"/> is what stops that becoming chatter. A beam that
+    /// <para>The heard verdict stops that becoming chatter. A beam that
     /// changed and changed back while silent ends on the verdict the player already
     /// holds, and says nothing.</para></summary>
-    private static readonly PassState[] Voice = new PassState[FieldRadarSense.BEAM_COUNT];
-    private static readonly PassState[] Spoken = new PassState[FieldRadarSense.BEAM_COUNT];
+    private static readonly RadarCueMemory[] CueMemory = new RadarCueMemory[FieldRadarSense.BEAM_COUNT];
 
     /// <summary>Pass one: passability. Every beam's verdict is kept current every
     /// evaluation, whether or not it may speak; only a beam that CHANGES verdict has
@@ -141,19 +146,16 @@ public static class FieldRadarService
 
             var settled = FieldRadarClearance.Step(beam, r.Mid, radius, now);
 
-            // A wall closing in dead ahead is the approach tone's to voice, and only
-            // within the tone's reach — beyond it nobody else would report it. The
-            // player IS told, so it counts as spoken: otherwise backing away from that
-            // wall would find Spoken still saying "passable" and swallow the cue that
-            // says the way is clear again.
+            // The approach tone owns a nearby wall ahead. Suppress the duplicate wall
+            // sound, but count it as heard only after that tone actually plays.
             if (settled == PassState.Blocked && Role(beam) == 0
                 && r.Mid < FieldRadarTuning.PitchReachM)
             {
-                Spoken[(int)beam] = PassState.Blocked;
+                CueMemory[(int)beam].SuppressPending();
                 settled = PassState.Unknown;
             }
 
-            if (settled != PassState.Unknown) Voice[(int)beam] = settled;
+            CueMemory[(int)beam].Offer(settled);
         }
 
         if (!canCue) return false;
@@ -162,14 +164,16 @@ public static class FieldRadarService
         {
             int b = (int)beam;
             // Every beam may speak while the camera turns (tester request 2026-09-26).
-            if (Voice[b] == PassState.Unknown) continue;
-            // Nothing new to say: the beam changed and changed back out of earshot, and
-            // the player already holds this verdict.
-            if (Voice[b] == Spoken[b]) { Voice[b] = PassState.Unknown; continue; }
+            var pending = CueMemory[b].Candidate();
+            if (pending == PassState.Unknown) continue;
 
-            FieldRadarCues.Say(beam, Voice[b], FieldRadarSense.Beam(beam).Mid, now);
-            Spoken[b] = Voice[b];
-            Voice[b] = PassState.Unknown;
+            var reading = FieldRadarSense.Beam(beam);
+            // Debouncing may still hold Passable while a new obstruction is being confirmed.
+            // Retain the pending cue for recovery, but let other supported beams use this slot.
+            if (!RadarCueAdmission.Supports(pending, reading.Ok, reading.Mid,
+                FieldRadarTuning.PassableEnterRadii * radius, FieldRadarClearance.BlockedAtM(radius))) continue;
+            if (!FieldRadarCues.Say(beam, pending, reading.Mid, now)) return false;
+            CueMemory[b].Acknowledge(pending);
             _nextCueAt = now + FieldRadarTuning.CueCooldownMs;
             return true;
         }
@@ -219,6 +223,12 @@ public static class FieldRadarService
 
         if ((int)best >= 0 && canCue && FieldRadarCues.Pitch(best, bestDist))
         {
+            var reading = FieldRadarSense.Beam(best);
+            float radius = BodyHalfWidth();
+            CueMemory[(int)best].AcknowledgeWallTone(true,
+                RadarCueAdmission.Supports(PassState.Blocked, reading.Ok, reading.Mid,
+                    FieldRadarTuning.PassableEnterRadii * radius, FieldRadarClearance.BlockedAtM(radius)),
+                FieldRadarClearance.Current(best));
             _nextCueAt = now + FieldRadarTuning.CueCooldownMs;
             return;
         }
@@ -229,7 +239,7 @@ public static class FieldRadarService
             var r = FieldRadarSense.Beam(beam);
             if (!r.Ok || !FieldRadarSense.StairsAhead(in r)) continue;
             if (!canCue || now < StairCooldownAt[(int)beam]) continue;
-            FieldRadarCues.Stairs(beam);
+            if (!FieldRadarCues.Stairs(beam)) return;
             StairCooldownAt[(int)beam] = now + FieldRadarTuning.StairMotifCooldownMs;
             _nextCueAt = now + FieldRadarTuning.CueCooldownMs;
             return;
@@ -264,8 +274,7 @@ public static class FieldRadarService
         for (int b = 0; b < FieldRadarSense.BEAM_COUNT; b++)
         {
             StairCooldownAt[b] = 0;
-            Voice[b] = PassState.Unknown;
-            Spoken[b] = PassState.Unknown;
+            CueMemory[b] = default;
         }
         _nextCueAt = 0;
         _bodyRadius = 0f;

@@ -11,19 +11,7 @@ internal static class LadderAccess
     private const long DiagnoseMs = 3000; // One contact line every few seconds while standing at a ladder.
     private static long _nextDiagnosis;
 
-    internal static bool Offered(ulong access)
-    {
-        if (access == 0) return false;
-        try
-        {
-            var list = AvatarFieldReader.GetAccessInfoList(WorldTourStateService.GetAvatarManager());
-            int count = FlowHelper.GetListCount(list);
-            for (int i = 0; i < count; i++)
-                if (TargetOf(FlowHelper.GetListItem(list, i))?.GetAddress() == access) return true;
-        }
-        catch { }
-        return false;
-    }
+    internal static bool Offered(ulong access) => FieldActionReader.InContact(access);
 
     /// <summary>At a planned ladder: what the contact list holds, so a ladder the player could not take can be explained.</summary>
     internal static void Diagnose(ulong access, float bottomRungM, float px, float py, float pz)

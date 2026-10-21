@@ -1,4 +1,29 @@
-# World Tour — navigating freely, without a menu (2026-09-27)
+# World Tour — navigating freely, without a menu
+
+For deliberate orientation across the whole city, the optional
+[city listening mode and alphabetical directory](wt-city-listening.md) remove the local scan's
+100 m limit for known fixed places. Default local exploration remains unchanged; native test pending.
+
+**Current follow-up (2026-10-01, built; pending listening verification):** free exploration is the
+default. One shared scan identifies a person, place, access point or breakable after a short focus
+dwell, including while walking. A current focus retries after speech; it has no turn-window deadline.
+Tap R3/V after the spoken name, while still facing it, to follow it. Another tap cancels any active
+destination or explicit mission guidance and returns to exploration, even when a target is lost or
+temporarily unreadable. Hear a focus and tap again to select it. No exploration-menu detour is required.
+
+Compass words return while turning, through the shared speech policy. Radar, nearby places and
+environmental sounds remain available alongside optional destination guidance. Sounds duck during
+speech; they no longer disappear for its entire duration. Confirmed contacts say "Interact".
+Four short audio voices can now overlap. In exploration, facing a native-verified walking direction
+can name where that path leads; Z summarizes nearby places, contact and checked walking choices.
+Fast travel has a separate cue and category. Rest/day-night points now have their own early picker
+category and Z readout, from native `IsMyRoom`/HOME semantics. Fixed destination rows give a known
+landmark reference to help learn the map. These additions still need the listening pass below.
+See [wt-soundscape.md](wt-soundscape.md) for current controls, research, priorities, limitations and
+the listening checklist. Continuous automatic camera steering remains unimplemented.
+
+The remainder records the **2026-09-27 prototype and alternatives**, including behaviors superseded
+by the quiet-navigation revision above.
 
 Tester, after the orientation pass (`wt-orientation.md`) worked: *"quiero que me ayudes a pensar en algo
 para navegar más libremente, sin usar un menú"*. The destination picker answers "take me to X" but it is

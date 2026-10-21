@@ -87,6 +87,35 @@ handles are cached, never an engine object. A miss is logged once, naming type a
   (via.Color → packed rgba uint) and `ReadVec2Field`, via ValueType address + Marshal.
 - `ObjectDumper.cs` / `ScreenshotService.cs` — research tools (see Dump tools).
 
+## World Tour feedback and destination lifecycle (2026-10-01)
+
+Automatic field output goes through `Services/WorldTour/FieldFeedback`, ending at the existing
+`ScreenReaderService` sink. Each source submits a replaceable, expiring notice with priority and,
+where needed, a current-state predicate. Commit announcement memory in `onSpoken`; accepting a notice
+does not mean it was heard. Explicit readouts keep using the sink directly and protect both queued
+and interrupting speech. Mod cues reserve their returned playback duration through the same service.
+Compass, focused NPC names and proximity readers share this policy. Environmental cues may play
+under speech at `FieldCuePolicy.SpeechGain`; dialogue/menu gates still silence them.
+
+Route sensing must never wait for speech. `BeaconDestination` distinguishes a confirmed absent path
+from pending/unreadable data; cache reuse retains the original sample age. Current route demand takes
+the next available native query slot before background ladder retries. `MissionBeaconHooks` expires
+stale steering and uses confirmed delivery for turn/state/contact notices.
+
+`MapSelectionMemory` defaults to free exploration and owns explicit mission/destination choices.
+Selected loaded actors carry only copied identities/coordinates, refreshed from current lists;
+`LiveDestinationReader` never reconstructs a wrapper from a stored pointer. Missing data holds;
+confirmed identity loss latches until explicit reselection. Preserve the logical selection key while
+coordinates move. City changes invalidate coordinates/caches but preserve exploration or mission mode.
+
+Focused look names stay eligible through speech and movement, until the focus actually changes.
+`AvatarNameCache` retries incomplete classifications instead of permanently remembering a missing name.
+`FieldAccessCatalog.Target` copies the access identity so unnamed in-range ladder/door contacts can
+reuse their semantic label. Only a matching current access-list entry authorizes "Interact".
+
+This revision is built and offline-tested, **not yet verified in game**. Current behavior, research,
+known native limits and listening tests: [wt-soundscape.md](wt-soundscape.md).
+
 ## Screen adapter architecture (menu hooks) — `Services/Ui/`
 
 Most menu/screen hooks share one shape: search `_Handles` for a flow Param, activate, then each frame

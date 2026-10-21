@@ -13,7 +13,7 @@ namespace SF6Access.Services.WorldTour;
 /// </summary>
 public static class FastTravelCatalog
 {
-    public readonly record struct Point(string Name, float X, float Y, float Z);
+    public readonly record struct Point(string Name, float X, float Y, float Z, int Id = 0, bool IsMyRoom = false);
 
     private const long EMPTY_RETRY_MS = 5000;
 
@@ -47,8 +47,11 @@ public static class FastTravelCatalog
         if (!_logged && (_points.Count > 0 || !same))
         {
             _logged = _points.Count > 0;
+            var rest = _points.FindAll(p => p.IsMyRoom);
+            string restNames = string.Join("; ", rest.ConvertAll(p => FormattableString.Invariant(
+                $"'{p.Name}' [point {p.Id}, {p.X:F2}, {p.Y:F2}, {p.Z:F2}]")));
             API.LogInfo($"[SF6Access] Zone: {_points.Count} named fast-travel points " +
-                        $"for city {city} situation {situation}");
+                        $"for city {city} situation {situation}; {rest.Count} native hangouts: {restNames}");
         }
         return _points;
     }
@@ -64,7 +67,8 @@ public static class FastTravelCatalog
         for (int i = 0; i < n; i++)
         {
             var pt = FlowHelper.GetListItem(list, i);
-            string name = PointName(pt);
+            var record = FieldProbeService.Member(pt, "mAttachedData") as ManagedObject;
+            string name = PointName(record);
             if (string.IsNullOrEmpty(name)) continue;
 
             // Position lives on the base CityPointDataInfoBase and is a struct: read untyped.
@@ -74,15 +78,17 @@ public static class FastTravelCatalog
             float y = FlowHelper.ReadVecComponent(pos, "y");
             float z = FlowHelper.ReadVecComponent(pos, "z");
             // An exact origin is a failed read, not a landmark.
-            if (!float.IsFinite(x) || x == 0f && y == 0f && z == 0f) continue;
-            result.Add(new Point(name, x, y, z));
+            if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z) || x == 0f && y == 0f && z == 0f) continue;
+            // mPointId is a signed 32-bit field on the base type, confirmed in the city dump.
+            int id = FieldProbeService.Member(pt, "mPointId", typeof(int)) is int value ? value : 0;
+            bool isMyRoom = FieldProbeService.Member(record, "IsMyRoom", typeof(bool)) is true;
+            result.Add(new Point(name, x, y, z, id, isMyRoom));
         }
         return result;
     }
 
-    private static string PointName(ManagedObject point)
+    private static string PointName(ManagedObject record)
     {
-        var record = FieldProbeService.Member(point, "mAttachedData") as ManagedObject;
         var msg = AvatarFieldReader.GetProp(record, "PointNameID");
         return FlowHelper.CleanTags(FlowHelper.ResolveGuidField(msg, "GUID"))?.Trim();
     }

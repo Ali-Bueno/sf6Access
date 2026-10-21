@@ -55,6 +55,7 @@ internal static class LevelRoute
 
     /// <summary>A partial plan has been climbed: the ladders go no nearer, the rest is up to the player.</summary>
     internal static bool AtClosest => _closest;
+    internal static bool BackgroundSearch => _phase == Phase.Searching && _silent;
 
     /// <summary>The current phase and, while following a plan, the leg the player is on.</summary>
     internal static Guidance Guide(string key, Spot target, Spot player)

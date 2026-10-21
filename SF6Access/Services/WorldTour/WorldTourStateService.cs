@@ -57,6 +57,21 @@ public static class WorldTourStateService
     /// <summary>Current situation id (<c>WTCityManager.mSituationId</c>), or 0.</summary>
     public static uint SituationId => ReadUIntFromCityManager("mSituationId");
 
+    /// <summary>A copied city/situation pair with explicit readability, for retained spoken targets.</summary>
+    internal static bool TryReadContext(out uint city, out uint situation)
+    {
+        city = situation = 0;
+        var manager = GetCityManager();
+        // Both native fields are uint. General state accessors use zero for failed reads;
+        // retained-target validation must distinguish that failure from a readable value.
+        if (MemberAccess.ReadFieldsFirst(manager, "mCityId", typeof(uint)) is not uint currentCity
+            || MemberAccess.ReadFieldsFirst(manager, "mSituationId", typeof(uint)) is not uint currentSituation)
+            return false;
+        city = currentCity;
+        situation = currentSituation;
+        return true;
+    }
+
     /// <summary>Time-of-day (<c>WTCityManager.mTimeType</c> → WTDefine.TimeType:
     /// Invalid=0, Day=2, Night=4, Midnight=5), or 0.</summary>
     public static uint TimeType => ReadUIntFromCityManager("mTimeType");

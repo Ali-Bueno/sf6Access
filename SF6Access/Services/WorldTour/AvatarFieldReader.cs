@@ -5,11 +5,11 @@ namespace SF6Access.Services.WorldTour;
 
 /// <summary>
 /// Shared readers over the World Tour avatar field (<c>AvatarManager</c>) used
-/// by both the on-demand radar (<c>FieldAwarenessHooks</c>) and the continuous
-/// tracker (<c>FieldTrackingHooks</c>): the in-range access list, the global
+/// by the on-demand radar, deliberate camera scan and selected-actor tracking:
+/// the in-range access list, the global
 /// avatar list with world positions, and avatar naming.
 ///
-/// <para>All findings are runtime-confirmed 2026-07-20 — see
+/// <para>The original readers were runtime-confirmed 2026-07-20 — see
 /// <c>docs/sf6-screens.md</c> § World Tour — field awareness for the full
 /// reference (SafeList unwrapping, sibling access-target component, etc.).</para>
 /// </summary>
@@ -90,6 +90,32 @@ public static class AvatarFieldReader
     // Sanity cap on how many avatar entries to walk per read (crowded hubs);
     // avatars beyond it are simply not announced this press/tick.
     private const int MAX_AVATARS = 24;
+
+    // Selected identity lookup must survive crowd reordering beyond the discovery window.
+    // Use the registry's defensive 512-entry bound; a truncated search remains unreadable.
+    private const int MaximumTrackedAvatars = 512;
+
+    /// <summary>Find an exact live avatar; false means the list could not be read completely.</summary>
+    internal static bool TryFindOther(ulong address, out ManagedObject found)
+        => TryFindInList(GetAvatarList(WorldTourStateService.GetAvatarManager()), address, MaximumTrackedAvatars, out found);
+
+    internal static bool TryFindInList(ManagedObject list, ulong address, int maximum, out ManagedObject found)
+    {
+        found = null;
+        if (list == null) return false;
+        bool array = list.GetTypeDefinition()?.GetFullName()?.EndsWith("[]") == true;
+        if (FlowHelper.Call(list, array ? "get_Length" : "get_Count") is not int count || count < 0) return false;
+        bool complete = count <= maximum;
+        for (int i = 0; i < System.Math.Min(count, maximum); i++)
+        {
+            var item = FlowHelper.GetListItem(list, i);
+            if (item == null) { complete = false; continue; }
+            if (item.GetAddress() != address) continue;
+            found = item;
+            return true;
+        }
+        return complete;
+    }
 
     /// <summary>The player avatar's own world position — the origin every field
     /// distance is measured from. Exposed because targets other than avatars

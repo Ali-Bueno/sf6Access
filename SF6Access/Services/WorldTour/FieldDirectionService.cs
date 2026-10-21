@@ -25,6 +25,14 @@ public static class FieldDirectionService
     // Clock-face geometry: 12 hours over 360°.
     public const float DEGREES_PER_HOUR = 360f / 12f;
 
+    /// <summary>"Dead ahead": the half hour either side of 12, exactly what the spoken clock
+    /// direction calls "at 12". Shared by the beacons' on-course pitch and the sonar focus.</summary>
+    public const float AHEAD_DEG = DEGREES_PER_HOUR / 2f;
+
+    /// <summary>A few degrees more to stop being dead ahead than to start, so a camera settling
+    /// on the edge does not flip the answer back and forth (a UX margin, not a game value).</summary>
+    public const float AHEAD_LEAVE_DEG = AHEAD_DEG + 5f;
+
     // Below this squared XZ length a direction has no usable heading (a camera
     // looking straight down projects to ~zero, a target standing on top of the
     // player likewise); treat it as unreadable.

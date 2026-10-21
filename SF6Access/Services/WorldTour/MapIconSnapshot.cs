@@ -21,7 +21,7 @@ public static class MapIconSnapshot
     /// <summary>Icon groups captured, by the game's member names, with the picker category each feeds.</summary>
     private static readonly (string Name, DestinationCategory Category, bool Persist)[] GROUPS =
     {
-        ("TRAVEL", DestinationCategory.Places, true),
+        ("TRAVEL", DestinationCategory.Travel, true),
         ("FACILITY", DestinationCategory.Shops, true),
         ("JOB", DestinationCategory.Jobs, true),
         // Missions come and go with progress: offered this session, never written to disk.
@@ -48,6 +48,10 @@ public static class MapIconSnapshot
             if (_groupValues[i] == group) return GROUPS[i].Category;
         return null;
     }
+
+    /// <summary>HOME is an icon type, not a group; it keeps its rest purpose in any captured group.</summary>
+    public static DestinationCategory? CategoryOf(int group, int type) => DestinationCategoryRules.MapIcon(
+        FlowHelper.ResolveEnumName(DeviceMapText.IconTypeEnum, type), CategoryOf(group));
 
     /// <summary>What the map last showed for <paramref name="city"/> (this session or a previous one).</summary>
     public static IReadOnlyList<PlaceFile.Entry> For(uint city)
@@ -91,11 +95,14 @@ public static class MapIconSnapshot
         if (entries.Count == 0) return;
 
         Load();
-        _byCity[city] = Merge(_byCity.TryGetValue(city, out var old) ? old : null, entries);
+        _byCity.TryGetValue(city, out var old);
+        var merged = Merge(old, entries);
+        bool changed = old == null || !new HashSet<PlaceFile.Entry>(old).SetEquals(merged);
+        _byCity[city] = merged;
+        bool saved = !changed || PlaceFile.Save(FilePath, Persisted());
         string summary = $"city {city}: " + string.Join(", ", counts);
-        if (summary == _lastSummary) return;
+        if (summary == _lastSummary && !changed) return;
         _lastSummary = summary;
-        bool saved = PlaceFile.Save(FilePath, Persisted());
         API.LogInfo($"[SF6Access] Map places captured - {summary}{(saved ? "" : " (not saved to disk)")}");
     }
 
@@ -114,7 +121,8 @@ public static class MapIconSnapshot
             float y = FlowHelper.ReadVecComponent(pos, "y");
             float z = FlowHelper.ReadVecComponent(pos, "z");
             // An exact origin is a failed read, not a place (same rule as the map selection).
-            if (!float.IsFinite(x) || x == 0f && y == 0f && z == 0f) continue;
+            if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z)
+                || x == 0f && y == 0f && z == 0f) continue;
             var entry = new PlaceFile.Entry(city, group, FlowHelper.ReadIntField(info, "Type", -1), title, x, y, z);
             if (!into.Contains(entry)) into.Add(entry);
         }

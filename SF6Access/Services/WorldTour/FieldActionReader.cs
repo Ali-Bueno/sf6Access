@@ -96,15 +96,24 @@ internal static class FieldActionReader
     {
         var guide = MissionGuideReader.Read();
         if (!guide.Ok || guide.AccessTarget == null) return false;
-        ulong wanted = guide.AccessTarget.GetAddress();
-        var list = AvatarFieldReader.GetAccessInfoList(WorldTourStateService.GetAvatarManager());
-        int count = FlowHelper.GetListCount(list);
-        for (int i = 0; i < count; i++)
+        return InContact(guide.AccessTarget.GetAddress());
+    }
+
+    internal static bool InContact(ulong wanted)
+    {
+        if (wanted == 0) return false;
+        try
         {
-            var info = MemberAccess.ReadFieldsFirst(FlowHelper.GetListItem(list, i), "TargetInfo");
-            var target = MemberAccess.ReadFieldsFirst(info, "Target") as ManagedObject;
-            if (target?.GetAddress() == wanted) return true;
+            var list = AvatarFieldReader.GetAccessInfoList(WorldTourStateService.GetAvatarManager());
+            int count = FlowHelper.GetListCount(list);
+            for (int i = 0; i < count; i++)
+            {
+                var info = MemberAccess.ReadFieldsFirst(FlowHelper.GetListItem(list, i), "TargetInfo");
+                var target = MemberAccess.ReadFieldsFirst(info, "Target") as ManagedObject;
+                if (target?.GetAddress() == wanted) return true;
+            }
         }
+        catch { }
         return false;
     }
 

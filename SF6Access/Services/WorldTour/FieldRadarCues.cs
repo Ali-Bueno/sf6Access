@@ -21,6 +21,10 @@ namespace SF6Access.Services.WorldTour;
 internal static class FieldRadarCues
 {
     private const int N = FieldRadarSense.BEAM_COUNT;
+    private const string Source = "radar";
+    private static TimeSpan MaximumDuration => FieldCuePolicy.MaximumDuration(FieldCueLane.Geometry);
+    private static float Volume => FieldRadarTuning.CueVolume
+        * (FieldFeedback.SpeechActive ? FieldCuePolicy.SpeechGain : 1f);
 
     /// <summary>The approach tone, nearest first: a rising note as the wall closes, so
     /// the direction of the pitch is the direction of the change. Built from
@@ -49,8 +53,14 @@ internal static class FieldRadarCues
     /// into the same value without passing through the other one first: a duplicate is
     /// no longer suppressed, it is unrepresentable. That is what makes the doubled
     /// sounds gone rather than filtered.</para></summary>
-    public static void Say(RadarBeam beam, PassState state, float clearM, long now)
+    public static bool Say(RadarBeam beam, PassState state, float clearM, long now)
     {
+        if (!FieldFeedback.CueAvailable(FieldCueLane.Geometry, Source)) return false;
+        var duration = AudioService.PlaySound(
+            state == PassState.Passable ? FieldRadarTuning.ExitSound : FieldRadarTuning.WallSound,
+            FieldRadarSense.Pan(beam), Volume, maximumDuration: MaximumDuration);
+        if (duration <= TimeSpan.Zero) return false;
+        FieldFeedback.ReserveCue(FieldCueLane.Geometry, Source, duration);
         // The speed is here so the cost of any confirm delay can be MEASURED rather than
         // argued about: metres of travel = speed x delay, and the log now carries both.
         REFrameworkNET.API.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture,
@@ -58,14 +68,17 @@ internal static class FieldRadarCues
             state == PassState.Passable ? "PASSABLE" : "BLOCKED ", beam, clearM,
             FieldRadarTravel.SpeedMs, now));
 
-        AudioService.PlaySound(
-            state == PassState.Passable ? FieldRadarTuning.ExitSound : FieldRadarTuning.WallSound,
-            FieldRadarSense.Pan(beam), FieldRadarTuning.CueVolume);
+        return true;
     }
 
     /// <summary>The stairs motif, panned to its beam.</summary>
-    public static void Stairs(RadarBeam beam)
-        => AudioService.PlayTone(StairMotif, FieldRadarSense.Pan(beam), FieldRadarTuning.CueVolume);
+    public static bool Stairs(RadarBeam beam)
+    {
+        if (!FieldFeedback.CueAvailable(FieldCueLane.Geometry, Source)) return false;
+        var duration = AudioService.PlayTone(StairMotif, FieldRadarSense.Pan(beam), Volume, MaximumDuration);
+        FieldFeedback.ReserveCue(FieldCueLane.Geometry, Source, duration);
+        return duration > TimeSpan.Zero;
+    }
 
     /// <summary>The proximity tone, AHC's own rule: while the beam travels roughly the
     /// player's way, a tone on every CHANGE of the ROUNDED contact distance below
@@ -80,15 +93,19 @@ internal static class FieldRadarCues
         int rounded = (int)Math.Round(distanceM);
         if (rounded < 0 || rounded >= FieldRadarTuning.PitchReachM) { LastRounded[b] = -1; return false; }
         if (rounded == LastRounded[b]) return false;
+        // Geometry can coexist with steering and objects, but cannot pile up its own tones.
+        if (!FieldFeedback.CueAvailable(FieldCueLane.Geometry, Source)) return false;
 
-        LastRounded[b] = rounded;
         int step = Math.Clamp(rounded, 0, PitchNote.Length - 1);
         REFrameworkNET.API.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture,
             "[SF6Access] Tone beam={0} rounded={1} d={2:F2}", beam, rounded, distanceM));
         // Same level as every other cue: the STEP is carried by the note, never by the
         // loudness — a tone that fades with range says "distance" twice and blurs both.
-        AudioService.PlayTone(new[] { PitchNote[step] }, FieldRadarSense.Pan(beam),
-                              FieldRadarTuning.CueVolume);
+        var duration = AudioService.PlayTone(new[] { PitchNote[step] }, FieldRadarSense.Pan(beam),
+                                             Volume, MaximumDuration);
+        if (duration <= TimeSpan.Zero) return false;
+        FieldFeedback.ReserveCue(FieldCueLane.Geometry, Source, duration);
+        LastRounded[b] = rounded;
         return true;
     }
 

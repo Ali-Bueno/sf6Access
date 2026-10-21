@@ -61,6 +61,7 @@ public class GroupFocusHooks
         "app.UIFlowChat",                  // Battle Hub text-chat window (RootGroup/InputGroup/ButtonsGroup)
         "app.UIFlowTextList",              // preset text picker (room Comment submenu — PartsList)
         "app.UIFlowWTDeviceEmoteShortCut", // emote wheel (tabs/buttons/lists; cells may be icons)
+        "app.UIFlowWTMyRoom",             // hangout TimeList (UIPartsSimpleList); day/night rows, runtime unverified
         "app.UIFlowWTMPauseMenu",          // World Tour master-fight pause menu: Main (_menuTab),
                                            // Escape (_simpleList), Item/PerkList/BattleInfo lists, and
                                            // the move tabs OtherMoves/SpecialMoves/SuperArts

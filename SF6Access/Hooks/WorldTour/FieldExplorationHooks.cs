@@ -11,11 +11,9 @@ namespace SF6Access.Hooks.WorldTour;
 public class FieldExplorationHooks
 {
     private static readonly NavigationNoticeMemory Memory = new();
-    private const long ReaderHoldMs = 1200; // Same grace as the existing field readers.
     private static long _nextSample, _nextSpeech;
     private static uint _city, _section;
     private static bool _inField, _failed;
-    private static readonly float[] AlignedTone = { AudioService.NoteMi, AudioService.NoteLa };
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -63,7 +61,7 @@ public class FieldExplorationHooks
     private static void Update()
     {
         FieldPresenceService.Refresh();
-        if (!FieldPresenceService.CanSpeak)
+        if (!FieldFeedback.CanOutput)
         {
             if (_inField) Reset();
             _inField = false;
@@ -82,18 +80,19 @@ public class FieldExplorationHooks
         if (!player.ok) return;
         // Keep discovery samples fresh even while another reader owns speech.
         var accesses = FieldAccessCatalog.Nearby(player.x, player.y, player.z, now);
-        if (now < _nextSpeech || now - ScreenReaderService.LastInterruptTick < ReaderHoldMs) return;
         foreach (var prompt in FieldActionReader.Current(now))
         {
             if (!Memory.Wants(prompt.Key, prompt.Text, 0, true, now)) continue;
             Say(prompt.Key, prompt.Text, ExplorationText.Available(prompt.Text), 0, true, now);
             return;
         }
+        if (CityListeningMode.Active || now < _nextSpeech) return;
         var forward = FieldDirectionService.GetCameraForward();
         FieldAccessCatalog.Access? best = null;
         float nearest = FieldAccessCatalog.RangeM;
         foreach (var access in accesses)
         {
+            if (FieldAimHooks.IsFocused(access.Key) || FieldActionReader.InContact(access.Target)) continue;
             float distance = MathF.Sqrt(FieldAccessCatalog.DistanceSq(access.X, access.Y, access.Z,
                 player.x, player.y, player.z));
             int hour = FieldDirectionService.ClockHour(forward, access.X - player.x, access.Z - player.z);
@@ -104,20 +103,39 @@ public class FieldExplorationHooks
         int clock = FieldDirectionService.ClockHour(forward, selected.X - player.x, selected.Z - player.z);
         string words = clock > 0 ? LocalizedText.AtClockMeters(selected.Text, clock, (int)MathF.Round(nearest))
                                 : LocalizedText.AtMeters(selected.Text, (int)MathF.Round(nearest));
-        Say(selected.Key, selected.Text, words, nearest, clock == 12, now);
-        if (clock == 12) AudioService.PlayTone(AlignedTone);
+        Say(selected.Key, selected.Text, words, nearest, clock == 12, now, () =>
+        {
+            var position = FieldPresenceService.PlayerPos;
+            return FieldFeedback.CanOutput && !CityListeningMode.Active && !FieldAimHooks.IsFocused(selected.Key)
+                && !FieldActionReader.InContact(selected.Target) &&
+                FieldAccessCatalog.DistanceSq(selected.X, selected.Y, selected.Z, position.X, position.Y, position.Z)
+                    <= FieldAccessCatalog.RangeM * FieldAccessCatalog.RangeM;
+        });
     }
 
-    private static void Say(string key, string state, string text, float distance, bool aligned, long now)
+    private static void Say(string key, string state, string text, float distance, bool aligned, long now,
+        Func<bool> stillValid = null)
     {
-        ScreenReaderService.Speak(text, interrupt: true);
-        Memory.Spoke(key, state, distance, aligned, now);
-        _nextSpeech = now + NavigationNoticeMemory.RepeatFloorMs;
-        API.LogInfo("[SF6Access] Exploration: " + text);
+        var priority = distance == 0 ? FieldSpeechPriority.Interaction : FieldSpeechPriority.Ambient;
+        FieldFeedback.Say("exploration", text, priority, onSpoken: () =>
+        {
+            long spokenAt = Environment.TickCount64;
+            Memory.Spoke(key, state, distance, aligned, spokenAt);
+            _nextSpeech = spokenAt + NavigationNoticeMemory.RepeatFloorMs;
+            API.LogInfo("[SF6Access] Exploration: " + text);
+        }, stillValid: stillValid ?? (() => IsCurrent(key, state, distance)));
+    }
+
+    private static bool IsCurrent(string key, string state, float distance)
+    {
+        if (distance > 0) return FieldFeedback.CanOutput;
+        foreach (var prompt in FieldActionReader.Current(Environment.TickCount64))
+            if (prompt.Key == key && prompt.Text == state) return true;
+        return false;
     }
 
     private static void Reset()
-    { Memory.Clear(); FieldActionReader.Reset(); FieldAccessCatalog.Reset(); _nextSpeech = 0; }
+    { Memory.Clear(); FieldActionReader.Reset(); FieldAccessCatalog.Reset(); _nextSpeech = 0; FieldFeedback.Forget("exploration"); }
 
     private static void LogFailure(Exception ex)
     {

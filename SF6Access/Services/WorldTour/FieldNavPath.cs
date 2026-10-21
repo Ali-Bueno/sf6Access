@@ -49,6 +49,7 @@ public static partial class FieldNavPath
     /// beacon ping however often a caller polls, charged for the whole ATTEMPT so a query that
     /// faults or cannot resolve its surface is not retried at frame rate.</summary>
     public const long MinQueryIntervalMs = 250;
+    internal static long NextQueryTick => _nextQueryAt;
 
     /// <summary>What the pathfinder said. <c>Ok == false</c> means "could not answer" and
     /// a caller must NEVER read that as walkable.</summary>
@@ -75,6 +76,8 @@ public static partial class FieldNavPath
         /// destination itself is round a corner. <see cref="HasCorner"/> says the position
         /// was readable at all.</summary>
         public readonly bool HasCorner;
+        /// <summary>The route was string-pulled successfully; directional previews also require a readable corner.</summary>
+        public readonly bool GeometryVerified;
         public readonly float CornerX, CornerY, CornerZ;
         public readonly int Turn;
 
@@ -85,11 +88,12 @@ public static partial class FieldNavPath
 
         public PathAnswer(bool ok, bool exists, bool throttled, float pathM, float straightM,
                           int points, bool hasCorner, float cx, float cy, float cz, int turn = 0,
-                          bool startOffMesh = false, bool endOffMesh = false)
+                          bool startOffMesh = false, bool endOffMesh = false, bool geometryVerified = false)
         {
             Ok = ok; Exists = exists; Throttled = throttled;
             PathM = pathM; StraightM = straightM; Points = points;
             HasCorner = hasCorner; CornerX = cx; CornerY = cy; CornerZ = cz;
+            GeometryVerified = geometryVerified;
             Turn = turn; StartOffMesh = startOffMesh; EndOffMesh = endOffMesh;
         }
 
@@ -127,6 +131,14 @@ public static partial class FieldNavPath
         var me = AvatarFieldReader.ReadPlayerPos(null);
         if (!me.ok) { Fail("the avatar's own position is unreadable"); return default; }
         return Query(me.x, me.y, me.z, x, y, z, readAim: true);
+    }
+
+    /// <summary>Preview from an exact sampled origin, sharing the same native query and rate limit.</summary>
+    internal static PathAnswer TryReachFrom(float sx, float sy, float sz, float x, float y, float z)
+    {
+        if (!PATHFINDER_ENABLED || !float.IsFinite(sx) || !float.IsFinite(sy) || !float.IsFinite(sz)
+            || !float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z)) return default;
+        return Query(sx, sy, sz, x, y, z, readAim: true);
     }
 
     /// <summary>Is there a walkable route between two arbitrary world points, and how long
@@ -178,6 +190,7 @@ public static partial class FieldNavPath
             float pathM = 0f, rawM = 0f, cx = 0f, cy = 0f, cz = 0f;
             int points = 0;
             bool hasCorner = false;
+            bool geometryVerified = false;
             int turn = 0;
             if (exists && ran is true && info != null)
             {
@@ -191,7 +204,7 @@ public static partial class FieldNavPath
                 // `void createTraceLine()` (PathInfo.cs:307) takes no arguments and
                 // returns nothing, and it mutates OUR PathQueryReport's PathInfo, not
                 // the borrowed NPC's navigation. A connectivity question needs no line.
-                if (readAim) TraceLine(info);
+                if (readAim) geometryVerified = TraceLine(info);
 
                 Step(6, "reading PathInfo.calcDistance / PathPointCount / walking getPathPointInfo(i) to where the route bends");
                 EnsureDistanceIds();
@@ -214,7 +227,7 @@ public static partial class FieldNavPath
             _tracing = false;
             return new PathAnswer(true, exists, false, pathM, rawM, points, hasCorner, cx, cy, cz, turn,
                                   verdict?.Contains("StartNodeNotFound") == true,
-                                  verdict?.Contains("DestNodeNotFound") == true);
+                                  verdict?.Contains("DestNodeNotFound") == true, geometryVerified);
         }
         catch (Exception ex)
         {

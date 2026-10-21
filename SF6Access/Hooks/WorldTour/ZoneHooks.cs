@@ -88,7 +88,7 @@ public class ZoneHooks
             return;
         }
 
-        if (wantsZone)
+        if (wantsZone && FieldFeedback.CanOutput)
         {
             _pending = default;
             var zone = ZoneNameService.Current();
@@ -108,8 +108,8 @@ public class ZoneHooks
             var p = _pending;
             _pending = default;
             if (!StillThere(p)) return;
-            MarkAnnounced(p.Name, p.SectionId);
-            ScreenReaderService.Speak(p.Text, interrupt: false);
+            FieldFeedback.Say("zone", p.Text, FieldSpeechPriority.Zone, lifetimeMs: 5000,
+                onSpoken: () => MarkAnnounced(p.Name, p.SectionId), stillValid: () => StillThere(p));
         }
     }
 
@@ -136,9 +136,7 @@ public class ZoneHooks
             return;
         }
 
-        if (zone.Name == _announcedName) return;
-        // Keyed now, not when spoken, so a region is queued once however long speech waits.
-        _announcedName = zone.Name;
+        if (zone.Name == _announcedName || zone.Name == _pending.Name) return;
         if (zone.Source == ZoneSource.Region && _bannersSeen) return;
         string text = zone.Source == ZoneSource.Region ? LocalizedText.RegionOf(zone.Name) : zone.Name;
         _pending = new Pending(zone.Name, text, 0, 0);
@@ -148,7 +146,7 @@ public class ZoneHooks
     /// (id 0 = between sections, not a contradiction).</summary>
     private static bool StillThere(Pending p)
     {
-        if (p.SectionId == 0 || p.DueAt == 0) return true;
+        if (p.SectionId == 0) return ZoneNameService.Current().Name == p.Name;
         uint now = WorldTourStateService.CurrentSectionId;
         return now == 0 || now == p.SectionId;
     }
@@ -162,7 +160,7 @@ public class ZoneHooks
 
     private static bool MayAnnounce()
     {
-        if (!FieldPresenceService.CanSpeak) return false;
+        if (!FieldFeedback.CanOutput) return false;
         if (SF6Access.Hooks.SpTalkNovelHooks.DialogueActive) return false;
         if (PadGuideHooks.Active || DestinationPickerHooks.IsOpen) return false;
         return System.Environment.TickCount64 - ScreenReaderService.LastInterruptTick >= READER_HOLD_MS;

@@ -108,6 +108,7 @@ public static class ZoneNameService
         distance = float.MaxValue;
         foreach (var p in FastTravelCatalog.Points())
         {
+            if (p.IsMyRoom) continue; // Rest destinations have their own purpose-labelled Z entry.
             float dx = p.X - px, dz = p.Z - pz;
             float d = (float)Math.Sqrt(dx * dx + dz * dz);
             if (d < distance) { distance = d; point = p; }

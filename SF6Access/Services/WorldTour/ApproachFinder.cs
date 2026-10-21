@@ -63,8 +63,7 @@ public static class ApproachFinder
     private static float _tx, _ty, _tz, _py;
 
     // How far through the candidate list we are, and the answer if we have one.
-    private static int _probe;
-    private static bool _found;
+    private static readonly ApproachProbeProgress Progress = new(FieldNavPath.MinQueryIntervalMs);
     private static float _ax, _ay, _az;
     private static bool _exhaustedLogged;
 
@@ -73,7 +72,8 @@ public static class ApproachFinder
 
     /// <summary>True once a reachable stand-in has been found for the current
     /// objective.</summary>
-    public static bool HasSubstitute => _found;
+    public static bool HasSubstitute => Progress.Found;
+    internal static bool WaitingForQuery { get; private set; }
 
     /// <summary>The player has stood at the stand-in; from then on it has done its job (cleared with the search).</summary>
     public static bool Arrived { get; private set; }
@@ -85,8 +85,9 @@ public static class ApproachFinder
                               out float ax, out float ay, out float az)
     {
         ax = ay = az = 0f;
+        if (!ValidQuery(tx, ty, tz, py)) return false;
         Retarget(tx, ty, tz, py);
-        if (!_found) return false;
+        if (!Progress.Found) return false;
         ax = _ax; ay = _ay; az = _az;
         return true;
     }
@@ -96,9 +97,12 @@ public static class ApproachFinder
     public static bool Probe(float tx, float ty, float tz, float px, float py, float pz,
                              float longestM = float.PositiveInfinity)
     {
+        WaitingForQuery = false;
+        if (!ValidQuery(tx, ty, tz, py) || !float.IsFinite(px) || !float.IsFinite(pz)
+            || float.IsNaN(longestM) || longestM < 0f) return false;
         Retarget(tx, ty, tz, py);
-        if (_found) return true;
-        if (_probe >= CandidateCount)
+        if (Progress.Found) return true;
+        if (Progress.Candidate >= CandidateCount)
         {
             if (!_exhaustedLogged)
             {
@@ -109,18 +113,24 @@ public static class ApproachFinder
             return false;
         }
 
-        Candidate(_probe, tx, tz, py, out float cx, out float cz);
-        _probe++;
+        long now = Environment.TickCount64;
+        if (!Progress.Ready(now)) return false;
+        Candidate(Progress.Candidate, tx, tz, py, out float cx, out float cz);
 
         var answer = FieldNavPath.TryReach(cx, py, cz);
-        // Throttled means the query never ran, and a player off the navmesh (on a ladder,
-        // mid-jump) says nothing about the candidate: give it back for the next tick.
-        if (answer.Throttled || (answer.Ok && answer.StartOffMesh)) { _probe--; return false; }
-        if (!answer.Ok || !answer.Exists || answer.PathM > longestM) return false;
+        // Neither missing data nor an off-mesh player establishes that a candidate is unreachable.
+        // The shared scheduler retries a throttled probe at the native gate, which may be sooner than one interval.
+        if (answer.Throttled) { WaitingForQuery = true; return false; }
+        if (answer.Ok && answer.StartOffMesh)
+        { Progress.Record(ApproachProbeProgress.Verdict.Deferred, now); return false; }
+        if (!answer.Ok || (answer.Exists && (!float.IsFinite(answer.PathM) || answer.PathM < 0f)))
+        { Progress.Record(ApproachProbeProgress.Verdict.Unavailable, now); return false; }
+        if (!answer.Exists || answer.PathM > longestM)
+        { Progress.Record(ApproachProbeProgress.Verdict.Rejected, now); return false; }
 
-        _found = true;
+        Progress.Record(ApproachProbeProgress.Verdict.Reached, now);
         _ax = cx; _ay = py; _az = cz;
-        API.LogInfo($"[SF6Access] Approach: probe {_probe} of {CandidateCount} reached " +
+        API.LogInfo($"[SF6Access] Approach: probe {Progress.Candidate + 1} of {CandidateCount} reached " +
                     $"({cx:0.0}, {py:0.0}, {cz:0.0}) - guiding there instead of the objective, " +
                     "which is on a disconnected piece of navmesh");
         return true;
@@ -159,16 +169,19 @@ public static class ApproachFinder
         _have = true;
         Arrived = false;
         _tx = tx; _ty = ty; _tz = tz; _py = py;
-        _probe = 0;
-        _found = false;
+        Progress.Reset();
         _exhaustedLogged = false;
     }
 
     /// <summary>Forget everything (left the field, new city).</summary>
     public static void Reset()
     {
-        _have = _found = _exhaustedLogged = false;
+        _have = _exhaustedLogged = false;
+        WaitingForQuery = false;
         Arrived = false;
-        _probe = 0;
+        Progress.Reset();
     }
+
+    private static bool ValidQuery(float tx, float ty, float tz, float py)
+        => float.IsFinite(tx) && float.IsFinite(ty) && float.IsFinite(tz) && float.IsFinite(py);
 }

@@ -41,12 +41,6 @@ public partial class FieldNavRadarHooks
     /// wall, long enough to swallow a single-sample flicker.</summary>
     internal const int CONFIRM_SAMPLES = 2;
 
-    /// <summary>The drop warning: a DESCENDING motif, so the shape of the sound is
-    /// the shape of the hazard. Built from AudioService's equal-temperament note
-    /// constants rather than raw frequencies.</summary>
-    private static readonly float[] DropMotif =
-        { AudioService.NoteLaHigh, AudioService.NoteMi, AudioService.NoteLa };
-
     private static bool _keyDown;
     private static bool _continuous = true;
     private static long _nextVerdictAt;
@@ -56,6 +50,8 @@ public partial class FieldNavRadarHooks
     private static bool _haveBaseline;
     private static NavReading _pending;
     private static int _pendingSamples;
+    private static bool _announceBlock, _announceDrop;
+    private static long _lastReadingAt;
 
     [PluginEntryPoint]
     public static void Initialize()
@@ -79,7 +75,7 @@ public partial class FieldNavRadarHooks
         if (!_continuous) return;
         // The shared field gate: in a walkable World Tour field, no menu owning the
         // screen, no fight. Never cast rays anywhere else.
-        if (!FieldPresenceService.CanSpeak) { ResetContinuous(); return; }
+        if (!FieldFeedback.CanOutput) { ResetContinuous(); return; }
         // Nothing may sound over the game's own dialogue voice.
         if (SF6Access.Hooks.SpTalkNovelHooks.DialogueActive || PadGuideHooks.Active) return;
 
@@ -93,7 +89,12 @@ public partial class FieldNavRadarHooks
         _nextVerdictAt = clock + VERDICT_SENSE_MS;
 
         var now = FieldNavRadarService.Sample();
-        if (now.Ok) Confirm(now);
+        if (now.Ok)
+        {
+            _lastReadingAt = clock;
+            Confirm(now);
+        }
+        OfferNotices();
 
         var cameraForward = FieldDirectionService.GetCameraForward();
         // Automatic diagnostic: the player is blind and cannot aim F10 at a
@@ -110,7 +111,7 @@ public partial class FieldNavRadarHooks
     /// no geometry to answer with in a menu or a battle.</summary>
     private static void HandlePress()
     {
-        if (!FieldPresenceService.CanSpeak)
+        if (!FieldFeedback.CanOutput)
         {
             API.LogInfo("[SF6Access] Nav radar key pressed outside the World Tour field — ignored " +
                         $"(InField={FieldPresenceService.InField}, Fighting={FieldPresenceService.Fighting})");
@@ -154,7 +155,10 @@ public partial class FieldNavRadarHooks
     {
         // The drop goes first: it is the only cue that is a safety matter, so it
         // must not queue behind a wall cue in the same sample.
-        if (was.GroundSolid && !now.GroundSolid) AudioService.PlayTone(DropMotif);
+        if (was.GroundSolid && !now.GroundSolid)
+            _announceDrop = true;
+        if (now.GroundSolid)
+        { _announceDrop = false; FieldFeedback.Forget("radar-ground"); }
 
         // BLOCKED is the game's own verdict, never the ray ladder: a rung that hits
         // means "something of about this height is somewhere along that ray", which
@@ -162,7 +166,9 @@ public partial class FieldNavRadarHooks
         bool wasBlocked = was.Block == FrontBlock.Blocked;
         bool isBlocked = now.Block == FrontBlock.Blocked;
         // Without interrupting: the word only has to arrive, not to arrive first.
-        if (!wasBlocked && isBlocked) ScreenReaderService.Speak(BlockPhrase(now), interrupt: false);
+        if (!wasBlocked && isBlocked) _announceBlock = true;
+        if (!isBlocked && now.Block != FrontBlock.WallRide)
+        { _announceBlock = false; FieldFeedback.Forget("radar-block"); }
 
         if (isBlocked && wasBlocked && was.Front != now.Front)
         {
@@ -173,13 +179,32 @@ public partial class FieldNavRadarHooks
             // "closed" / "opened" and neither happened, so re-firing one would lie.
             // The word alone carries it, and the confirmation window plus the
             // reader's duplicate filter keep a wobbling class from chattering.
-            ScreenReaderService.Speak(BlockPhrase(now), interrupt: false);
+            _announceBlock = true;
         }
 
         // A wall the avatar can run along is a route, not a dead end, so it never
         // fires the impassable cue — but arriving at one is worth a word.
         if (now.Block == FrontBlock.WallRide && was.Block != FrontBlock.WallRide)
-            ScreenReaderService.Speak(LocalizedText.NavWallRide(), interrupt: false);
+            _announceBlock = true;
+    }
+
+    private static bool FreshReading => _haveBaseline &&
+        _pending.SameStateAs(_announced) &&
+        System.Environment.TickCount64 - _lastReadingAt <= 2 * VERDICT_SENSE_MS;
+
+    private static void OfferNotices()
+    {
+        if (!FreshReading) return;
+        if (_announceDrop)
+            FieldFeedback.Say("radar-ground", LocalizedText.NavFloorDrop(), FieldSpeechPriority.Interaction,
+                onSpoken: () => _announceDrop = false,
+                stillValid: () => FreshReading && _announceDrop && !_announced.GroundSolid);
+        if (!_announceBlock) return;
+        var reading = _announced;
+        string text = reading.Block == FrontBlock.WallRide ? LocalizedText.NavWallRide() : BlockPhrase(reading);
+        FieldFeedback.Say("radar-block", text, FieldSpeechPriority.Route,
+            onSpoken: () => _announceBlock = false,
+            stillValid: () => FreshReading && _announceBlock && _announced.SameStateAs(reading));
     }
 
     private static void Seed(NavReading r)
@@ -194,12 +219,15 @@ public partial class FieldNavRadarHooks
     /// the field after a menu — starts from a fresh silent baseline.</summary>
     private static void ResetContinuous()
     {
+        FieldFeedback.Forget("radar-block"); FieldFeedback.Forget("radar-ground");
         _nextVerdictAt = 0;
         FieldRadarService.Reset();
         _announced = default;
         _pending = default;
         _pendingSamples = 0;
         _haveBaseline = false;
+        _announceBlock = _announceDrop = false;
+        _lastReadingAt = 0;
         FieldRayMetrics.Reset();
         NavMeshOpenings.Reset();
     }

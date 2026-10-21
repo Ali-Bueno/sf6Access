@@ -7,18 +7,43 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../SF6Access/Services/WorldTour/RouteLookAhead.cs" Link="RouteLookAhead.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RouteQuerySchedule.cs" Link="RouteQuerySchedule.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RouteQueryCache.cs" Link="RouteQueryCache.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/PlaceRouteMemory.cs" Link="PlaceRouteMemory.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/SpokenDestinationMemory.cs" Link="SpokenDestinationMemory.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/SpokenFocusGate.cs" Link="SpokenFocusGate.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/LookRetargetPolicy.cs" Link="LookRetargetPolicy.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/CityListeningMode.cs" Link="CityListeningMode.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RouteAnswerPolicy.cs" Link="RouteAnswerPolicy.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ApproachProbeProgress.cs" Link="ApproachProbeProgress.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/FieldSpeechPolicy.cs" Link="FieldSpeechPolicy.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/HeadingAnnouncement.cs" Link="HeadingAnnouncement.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/FieldCuePolicy.cs" Link="FieldCuePolicy.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/FieldRadarClearance.cs" Link="FieldRadarClearance.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/FieldRadarTuning.cs" Link="FieldRadarTuning.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RadarCueAdmission.cs" Link="RadarCueAdmission.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/RadarCueMemory.cs" Link="RadarCueMemory.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ScanDwell.cs" Link="ScanDwell.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/ActorTrackingState.cs" Link="ActorTrackingState.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/NavigationNoticeMemory.cs" Link="NavigationNoticeMemory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/NavReading.cs" Link="NavReading.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/LevelRoutePlanner.cs" Link="LevelRoutePlanner.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/Destination.cs" Link="Destination.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/DestinationCategoryRules.cs" Link="DestinationCategoryRules.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/FacilityMemory.cs" Link="FacilityMemory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/DestinationPicker.cs" Link="DestinationPicker.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/HoldTapDetector.cs" Link="HoldTapDetector.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/RegionTracker.cs" Link="RegionTracker.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/MapLandmarkRelation.cs" Link="MapLandmarkRelation.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/CityPlaceFocus.cs" Link="CityPlaceFocus.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/CityPlaceDirectory.cs" Link="CityPlaceDirectory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/PlaceFile.cs" Link="PlaceFile.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/ZoneAnnounceGate.cs" Link="ZoneAnnounceGate.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/ConeSweep.cs" Link="ConeSweep.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/ProximityMemory.cs" Link="ProximityMemory.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/CameraTurnDetector.cs" Link="CameraTurnDetector.cs" />
     <Compile Include="../../SF6Access/Services/WorldTour/SonarRota.cs" Link="SonarRota.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/SonarFocus.cs" Link="SonarFocus.cs" />
+    <Compile Include="../../SF6Access/Services/WorldTour/AxisLatch.cs" Link="AxisLatch.cs" />
   </ItemGroup>
 </Project>

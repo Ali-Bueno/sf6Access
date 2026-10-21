@@ -21,6 +21,8 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
 - Build: `dotnet build` from the `SF6Access` folder (auto-copies the DLL into the game). Compile after
   every code change without asking.
 - Log: `re2_framework_log.txt` in the game root; dumps/screenshots in `<game>\reframework\data\`.
+- **User-led live tests (2026-10-01):** do not open the game automatically. Prepare/build the changes,
+  tell the user they are ready, let the user run the test, then investigate the resulting logs.
 - **Hot-reload dev loop — no game restart:** for fast iteration, develop as a C# **source plugin** (a
   loose `.cs` under `<game>/reframework/plugins/source/`); REFramework.NET compiles it on save and
   hot-reloads it live without restarting SF6. `[DllImport]` to the native screen-reader DLL (Tolk today)
@@ -41,7 +43,8 @@ Capcom's RE Engine via REFramework. This repository began as a generic RE Engine
 - [`docs/wt-free-navigation.md`](docs/wt-free-navigation.md) — navigating without a menu: look sweep
   for places + R3 to go, "passing by", and the proposed next steps (continuous guidance, streets).
 - [`docs/wt-soundscape.md`](docs/wt-soundscape.md) — the audio design for independent navigation: lanes
-  (destination / surroundings / words / walls), cue inventory, rules, ladder & door earcons, roadmap.
+  (destination / surroundings / words / walls), cue inventory, rules, the world sonar (earcons for
+  ladders, doors, shops, places; the camera-pointed "flashlight"), on-course beacons, roadmap.
 
 > These docs are the durable, version-controlled record of what we learned reverse-engineering
 > SF6's UI. **When you discover something new about a screen, add it here** — don't leave it only in

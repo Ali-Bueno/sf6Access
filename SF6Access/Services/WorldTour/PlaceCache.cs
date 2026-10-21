@@ -18,12 +18,17 @@ public static class PlaceCache
     private static List<Place> _places = new();
     private static long _builtAt;
     private static bool _built;
+    private static uint _city, _situation;
 
     public static IReadOnlyList<Place> Places()
     {
+        if (!FieldPresenceService.InField
+            || !WorldTourStateService.TryReadContext(out uint city, out uint situation))
+        { Reset(); return _places; }
+        if (_city != city || _situation != situation) Reset();
+        _city = city; _situation = situation;
         long now = System.Environment.TickCount64;
         if (_built && now - _builtAt < REFRESH_MS) return _places;
-        if (!FieldPresenceService.InField) return _places;
         _built = true;
         _builtAt = now;
 
@@ -41,6 +46,7 @@ public static class PlaceCache
     {
         _places = new List<Place>();
         _built = false;
+        _city = _situation = 0;
     }
 
     /// <summary>The story objective and masters move (the objective's access point follows the

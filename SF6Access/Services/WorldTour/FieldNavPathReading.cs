@@ -64,12 +64,8 @@ public static partial class FieldNavPath
         return aim.HasPoint;
     }
 
-    /// <summary>Pull the route's string: turn the corridor of portals the query
-    /// produced into an optimised line. Bound by SHAPE (zero parameters) and matched
-    /// exactly by name; <c>void</c> return, nothing by reference, nothing constructed.
-    /// A failure to bind is not fatal — the aim then reads raw portal positions, which
-    /// is what it did before and is merely worse, not dangerous.</summary>
-    private static void TraceLine(ManagedObject info)
+    /// <summary>String-pull this query's corridor; raw portal positions cannot verify a direction.</summary>
+    private static bool TraceLine(ManagedObject info)
     {
         try
         {
@@ -77,12 +73,20 @@ public static partial class FieldNavPath
             if (_createTraceLine == null)
             {
                 Step(5, "createTraceLine() not found; reading RAW portal positions instead");
-                return;
+                return false;
             }
             Step(5, "calling PathInfo.createTraceLine() - string-pulling the corridor into a route");
-            _createTraceLine.InvokeBoxed(typeof(object), info, null);
+            // This method returns void, so boxed null cannot distinguish success from a native exception.
+            var result = _createTraceLine.Invoke(info, null);
+            if (result.ExceptionThrown)
+            {
+                Fail("createTraceLine: native exception");
+                return false;
+            }
+            return true;
         }
         catch (Exception ex) { Fail($"createTraceLine: {ex.GetType().Name}: {ex.Message}"); }
+        return false;
     }
 
     /// <summary>The radius of the navmesh agent the query ran on

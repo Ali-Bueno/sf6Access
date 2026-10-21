@@ -312,4 +312,54 @@ Check(SonarRota.Pick(5, 3, 0) == 0 && SonarRota.Pick(5, 3, 1) == 1 && SonarRota.
 Check(SonarRota.Volume(2, 4, 25, 0.4f, 0.12f) == 0.4f, "inside the arrival band the cue is loudest");
 Check(Math.Abs(SonarRota.Volume(25, 4, 25, 0.4f, 0.12f) - 0.12f) < 1e-6f, "at the edge of range it is quiet, not silent");
 Check(SonarRota.Volume(14.5f, 4, 25, 0.4f, 0.12f) is > 0.12f and < 0.4f, "in between it fades with distance");
+Check(SonarRota.Gap(2, 4, 100, 250, 2000) == 250, "close up the cue repeats fastest");
+Check(SonarRota.Gap(150, 4, 100, 250, 2000) == 2000, "beyond reach it repeats slowest");
+Check(SonarRota.Gap(52, 4, 100, 250, 2000) is > 250 and < 2000, "in between it slows with distance");
+
+// --- Soundscape: dead ahead (beacon on-course pitch) ---
+Check(Math.Abs(AxisLatch.OffDeg(1, 0)) < 1e-4f && Math.Abs(AxisLatch.OffDeg(0, 1) - 90) < 1e-3f
+      && Math.Abs(AxisLatch.OffDeg(-1, 0) - 180) < 1e-3f, "degrees off straight ahead, either side");
+var axis = new AxisLatch(15, 20);
+float Ahead(float deg) => MathF.Cos(deg * MathF.PI / 180);
+float Right(float deg) => MathF.Sin(deg * MathF.PI / 180);
+Check(!axis.Update(Ahead(18), Right(18)), "eighteen degrees off is not yet on course");
+Check(axis.Update(Ahead(-10), Right(-10)), "ten degrees to the left is on course");
+Check(axis.Update(Ahead(18), Right(18)), "once on course, eighteen degrees still is (no flicker)");
+Check(!axis.Update(Ahead(25), Right(25)), "twenty-five degrees off leaves it");
+Check(!axis.Update(Ahead(180), Right(0)), "behind is never on course");
+
+// --- Soundscape: the sonar flashlight ---
+var focus = new SonarFocus(15, 20);
+focus.Begin(); focus.Offer("salon", 40, 10); focus.Offer("plaza", 90, 5);
+Check(!focus.End() && focus.Key == null, "nothing pointed at, no focus");
+focus.Begin(); focus.Offer("plaza", 5, 80); focus.Offer("ladder", 12, 9);
+Check(focus.End() && focus.Key == "ladder", "the nearest thing in the cone takes the focus");
+focus.Begin(); focus.Offer("plaza", 0, 80); focus.Offer("ladder", 18, 9);
+Check(!focus.End() && focus.Key == "ladder", "kept while it stays inside the wider cone");
+focus.Begin(); focus.Offer("plaza", 0, 80); focus.Offer("ladder", 25, 9);
+Check(focus.End() && focus.Key == "plaza", "leaving the wider cone hands over to what is ahead now");
+focus.Begin(); focus.Offer("salon", 40, 10);
+Check(!focus.End() && focus.Key == null, "turning away from everything drops the focus, silently");
+focus.Begin(); focus.Offer("plaza", 3, 80);
+focus.End(); focus.Clear();
+Check(focus.Key == null, "clearing forgets the focus");
+focus.Begin(); focus.Offer("plaza", 3, 80);
+Check(focus.End(), "after a clear the same thing is new again");
+RouteGuidanceChecks.Run(Check);
+PlaceRouteMemoryChecks.Run(Check);
+SpokenDestinationChecks.Run(Check);
+SpokenFocusChecks.Run(Check);
+LookRetargetChecks.Run(Check);
+DestinationWorkflowChecks.Run(Check);
+TravelDestinationChecks.Run(Check);
+RestDestinationChecks.Run(Check);
+FacilityMemoryChecks.Run(Check);
+MapLandmarkChecks.Run(Check);
+CityPlaceChecks.Run(Check);
+CityListeningModeChecks.Run(Check);
+ApproachProbeChecks.Run(Check);
+FieldFeedbackTests.Run(Check);
+RadarCueChecks.Run(Check);
+HeadingAnnouncementChecks.Run(Check);
+ActorTrackingChecks.Run(Check);
 Console.WriteLine($"Passed {passed} navigation checks.");

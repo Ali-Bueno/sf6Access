@@ -6,39 +6,7 @@ using SF6Access.Services.WorldTour;
 
 namespace SF6Access.Hooks.WorldTour;
 
-/// <summary>
-/// <b>R3 (or V): point me down the next leg of the route to where I am going.</b>
-/// Holding it instead opens the destination picker (<see cref="DestinationPickerHooks"/>).
-///
-/// <para><b>Press, walk, press again.</b> Each press turns the camera down the NEXT
-/// LEG OF THE ROUTE — not at the destination in a straight line — so the player
-/// walks that leg, presses again at the corner, and repeats until they arrive.
-/// That is the whole interaction, and it is why the aim comes from
-/// <see cref="BeaconDestination"/> rather than from the raw target: that is the one
-/// place that already knows both what to follow and which way the walkable route
-/// actually leaves from here.</para>
-///
-/// <para><b>What it follows.</b> A point the player picked on the phone map if
-/// there is one — a mission, a shop, a master, an NPC, a fast-travel point, their
-/// own placed marker, all captured by <see cref="MapSelectionMemory"/> as the map
-/// reader speaks them — and otherwise the STORY OBJECTIVE, so the key is useful
-/// without opening the map at all. Reaching a picked point clears it, and the key
-/// goes back to following the mission; without that the player could never hand the
-/// beacon back short of leaving the city.</para>
-///
-/// <para><b>It replaced a modal radar</b> (2026-09-09). That radar built its own
-/// browsable list from the HUD minimap, and the minimap turned out to be
-/// unreachable in game — neither <c>app.UIMiniMapWindow</c> nor its owner
-/// <c>app.UICityHud_CityMiniMap</c> appears in the scene, so the list was always
-/// empty. The map the player already browses was the better selector all along:
-/// no second list to learn, no buttons to steal from the game, and it demonstrably
-/// works.</para>
-///
-/// <para><b>It always answers.</b> If the camera cannot be turned — see
-/// <see cref="CameraAimService"/>, which refuses rather than guessing which euler
-/// component is the yaw — the direction is SPOKEN as a clock hour instead. A press
-/// never produces silence.</para>
-/// </summary>
+/// <summary>Tap R3/V to choose a spoken target or cancel active guidance; hold it to open destinations.</summary>
 public class MapAimHooks
 {
     /// <summary>Keyboard V, mirroring the pad button. Chosen when this was the
@@ -52,7 +20,7 @@ public class MapAimHooks
 
     private static ReadoutShortcut _shortcut;
 
-    /// <summary>R3/V tap = aim (on release), hold = the destination picker.</summary>
+    /// <summary>R3/V tap = choose or cancel; hold = the destination picker.</summary>
     private static HoldTapDetector _gesture;
 
     /// <summary>Shift+V: the route pathfinder's kill switch. Keyboard only — there is
@@ -66,14 +34,14 @@ public class MapAimHooks
     [PluginEntryPoint]
     public static void Initialize()
     {
-        API.LogInfo("[SF6Access] MapAimHooks initialized (tap R3 / V = face the destination, hold = destination picker, Shift+V = route guidance on/off)");
+        API.LogInfo("[SF6Access] MapAimHooks initialized (tap R3 / V = select or cancel destination; hold = destination picker; Shift+V = route guidance on/off)");
     }
 
     [Callback(typeof(LateUpdateBehavior), CallbackType.Post)]
     public static void Tick()
     {
         FieldPresenceService.Refresh();
-        if (!FieldPresenceService.CanSpeak)
+        if (!FieldPresenceService.CanSpeak || SF6Access.Hooks.SpTalkNovelHooks.DialogueActive || PadGuideHooks.Active)
         {
             // A press held into a fight or menu must not aim when control comes back.
             _gesture?.Swallow();
@@ -89,7 +57,8 @@ public class MapAimHooks
             }
             return;
         }
-        if (!_wasInField) ForgetOtherCity();
+        // A city can still be unknown on the first playable frame after loading.
+        ForgetOtherCity();
         _wasInField = true;
 
         // Built on first use, not in a static initialiser: the button's bit has to
@@ -104,7 +73,7 @@ public class MapAimHooks
         // The picker owns R3/V while open; the press that closes it must not aim on release.
         if (DestinationPickerHooks.IsOpen) _gesture.Swallow();
         else if (route) ToggleRouteGuidance();
-        else if (gesture == HoldTapDetector.Gesture.Tap) { TakeLookedAtPlace(); Aim(); }
+        else if (gesture == HoldTapDetector.Gesture.Tap) HandleTap();
         else if (gesture == HoldTapDetector.Gesture.Hold) DestinationPickerHooks.Open();
 
         // Holds the yaw for its brief window against the controller's own update.
@@ -120,8 +89,17 @@ public class MapAimHooks
         if (city == 0) return;
         if (_city != 0 && city != _city)
         {
+            bool followingMission = !MapSelectionMemory.Exploring && !MapSelectionMemory.Current.Ok;
             MapSelectionMemory.Reset("another city");
+            if (followingMission) MapSelectionMemory.FollowMission();
             CameraAimService.Reset();
+            LevelRoute.Reset();
+            BeaconDestination.Reset();
+            FieldNavPath.Reset();
+            AccessPointReader.Reset();
+            ApproachFinder.Reset();
+            PlaceCache.Reset();
+            FieldAccessCatalog.Reset();
         }
         _city = city;
     }
@@ -141,15 +119,36 @@ public class MapAimHooks
                     FieldNavPath.RouteDescription);
     }
 
-    /// <summary>A place the look sweep has just named, still faced, becomes the destination
-    /// (<see cref="FieldPlaceSweepHooks"/>): look, hear it, tap R3 — no menu.</summary>
-    private static void TakeLookedAtPlace()
+    /// <summary>Cancellation wins over selection for every active destination, including the tracked mission.</summary>
+    private static void HandleTap()
     {
-        if (!FieldPlaceSweepHooks.TryTakeCandidate(out var place)) return;
-        if (place.Action == DestinationAction.FollowMission)
-            MapSelectionMemory.Reset("back to the story objective");
-        else
-            MapSelectionMemory.Remember(place.Label, place.X, place.Y, place.Z);
+        // Cancellation requires no native target read and must not consume a new candidate.
+        var selected = MapSelectionMemory.Current;
+        bool followingMission = !selected.Ok && !MapSelectionMemory.Exploring;
+        bool hasGuidance = selected.Ok || followingMission;
+        string reason = selected.Ok ? "selected-destination" : followingMission ? "tracked-mission" : "no-spoken-candidate";
+        Destination place = default;
+        bool candidate = !hasGuidance && FieldFeedback.CanExplore
+            && FieldPlaceSweepHooks.TryTakeCandidate(out place, out reason);
+        var action = LookRetargetPolicy.Decide(selected.Ok, followingMission, candidate);
+        // One diagnostic per deliberate press, so a future failed selection can distinguish
+        // protected modes, no spoken candidate, live identity failures and actual look-away.
+        API.LogInfo($"[SF6Access] R3 {action}: selected='{selected.Label}', mission={followingMission}, lost={selected.Lost}, pending={selected.Pending}, candidate='{place.Label}', {reason}");
+        if (action == LookTapAction.Cancel)
+        {
+            MapSelectionMemory.Explore();
+            CameraAimService.Release();
+            MissionBeaconHooks.Cancel();
+            FieldAimHooks.RearmAfterCancel();
+            ScreenReaderService.Speak(DestinationText.BeaconCancelled(), interrupt: true);
+            return;
+        }
+        if (action == LookTapAction.Choose)
+        {
+            if (place.Action == DestinationAction.FollowMission) MapSelectionMemory.FollowMission();
+            else MapSelectionMemory.Remember(place);
+        }
+        Aim();
     }
 
     private static void Aim()
@@ -158,15 +157,27 @@ public class MapAimHooks
         var me = AvatarFieldReader.ReadPlayerPos(mgr);
         if (!me.ok) return;
 
-        // The same decision the beacon makes every second: the map pick if there is
-        // one, else the story objective, and — with route guidance on — an aim point
-        // that is the next bend of a real walkable route rather than a bearing
-        // through a building. Asking it here is what makes a press mean "point me
-        // down the next leg", and what makes press-walk-press converge.
+        // A newly chosen target starts aimed at its checked walking leg.
         var dest = BeaconDestination.Resolve();
         if (!dest.Ok)
         {
-            ScreenReaderService.Speak(LocalizedText.AimNoSelection(), interrupt: true);
+            ScreenReaderService.Speak(MapSelectionMemory.Exploring
+                ? DestinationText.ExploreNoSelection() : LocalizedText.AimNoSelection(), interrupt: true);
+            return;
+        }
+        if (dest.TargetLost)
+        {
+            ScreenReaderService.Speak(RouteNotice.Text(RouteNotice.State(dest, false), null, dest, 0f, me.y), interrupt: true);
+            return;
+        }
+        if (dest.Holding)
+        {
+            ScreenReaderService.Speak(DestinationText.RouteRefreshing(), interrupt: true);
+            return;
+        }
+        if (dest.Unconfirmed)
+        {
+            ScreenReaderService.Speak(DestinationText.RouteUnavailable(), interrupt: true);
             return;
         }
         if (dest.Searching)
@@ -178,16 +189,6 @@ public class MapAimHooks
         float tx = dest.TargetX - me.x, ty = dest.TargetY - me.y, tz = dest.TargetZ - me.z;
         float straight = (float)System.Math.Sqrt(tx * tx + ty * ty + tz * tz);
 
-        // Arrived at a point the player chose: let it go, so the next press follows
-        // the mission again. The story objective is never cleared — it is not ours
-        // to finish.
-        if (dest.IsTracked && !dest.Ladder && !dest.IsApproach && straight <= MissionBeaconHooks.ARRIVED_M)
-        {
-            MapSelectionMemory.Reset("arrived");
-            ScreenReaderService.Speak(LocalizedText.TrackerArrived(dest.Word), interrupt: true);
-            return;
-        }
-
         // How far there is to go: the WALKED length when the route measured one,
         // because that is the number that predicts the walk.
         int meters = (int)System.Math.Round(dest.RouteM > 0f ? dest.RouteM : straight);
@@ -195,11 +196,19 @@ public class MapAimHooks
         // No walkable route: still turn toward it (a bearing is better than nothing)
         // but SAY that this is a direction, not a way. Marching a blind player at a
         // rooftop's foundations is exactly what this feature must never do.
-        if (dest.NoRoute)
+        if (dest.NoRoute || FieldNavPath.Enabled && !dest.ViaRoute)
         {
-            CameraAimService.AimAt(me.x, me.z, dest.X, dest.Z);
-            ScreenReaderService.Speak(LocalizedText.AimNoRoute(dest.Word, meters), interrupt: true);
-            API.LogInfo($"[SF6Access] No walkable route to '{dest.Word}' ({meters} m); said so");
+            bool aimed = CameraAimService.AimAt(me.x, me.z, dest.X, dest.Z);
+            string status = dest.NoRoute ? LocalizedText.AimNoRoute(dest.Word, meters)
+                : DestinationText.RouteUnconfirmed(dest.Word, meters);
+            if (!aimed)
+            {
+                int bearing = FieldDirectionService.ClockHour(FieldDirectionService.GetCameraForward(),
+                    dest.X - me.x, dest.Z - me.z);
+                if (bearing > 0) status += ". " + LocalizedText.ClockShort(bearing, meters);
+            }
+            ScreenReaderService.Speak(status, interrupt: true);
+            API.LogInfo($"[SF6Access] Unconfirmed walking route to '{dest.Word}' ({meters} m); direction only");
             return;
         }
 

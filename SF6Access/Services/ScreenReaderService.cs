@@ -50,6 +50,20 @@ public static class ScreenReaderService
     /// <summary>Tick of the last interrupting announcement — lets low-priority
     /// readers (tooltips) wait so they queue after the element name.</summary>
     public static long LastInterruptTick { get; private set; }
+    public static long LastExternalTick { get; private set; }
+    public static long ExternalSequence { get; private set; }
+    public static long ProtectedUntil { get; private set; }
+    private static bool _lastWasAutomatic;
+
+    public static bool ExternalSpeaking
+    {
+        get
+        {
+            if (!_initialized || _lastWasAutomatic) return false;
+            try { return Tolk.IsSpeaking(); }
+            catch { return false; }
+        }
+    }
 
     // Several hooks can resolve the same on-screen text (focused item subtree
     // walk + guide text poll) — drop identical announcements fired back-to-back.
@@ -60,6 +74,11 @@ public static class ScreenReaderService
     private const long DUPLICATE_WINDOW_MS = 250;
 
     public static void Speak(string text, bool interrupt = true)
+        => Output(text, interrupt, automatic: false);
+
+    internal static void SpeakAutomatic(string text) => Output(text, true, automatic: true);
+
+    private static void Output(string text, bool interrupt, bool automatic)
     {
         if (!_initialized || string.IsNullOrEmpty(text)) return;
 
@@ -83,6 +102,13 @@ public static class ScreenReaderService
             API.LogInfo($"[SF6Access] Speak({(interrupt ? "interrupt" : "queue")}): {text}");
 
             if (interrupt) LastInterruptTick = now;
+            if (!automatic)
+            {
+                LastExternalTick = now;
+                ExternalSequence++;
+                ProtectedUntil = WorldTour.FieldSpeechPolicy.ProtectUntil(now, ProtectedUntil, text, interrupt);
+            }
+            _lastWasAutomatic = automatic;
             Tolk.Output(text, interrupt);
         }
         catch (System.Exception ex)

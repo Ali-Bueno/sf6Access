@@ -202,13 +202,7 @@ public sealed class DeviceMapHooks : SingleParamScreenAdapter
         string kind = DeviceMapText.IconType(FlowHelper.ReadIntField(info, "Type", UNKNOWN));
         string spoken = DeviceMapText.Icon(title, kind);
 
-        // Whatever the cursor is on becomes the point the beacon guides to and the
-        // camera can be turned toward. Every kind of thing on the map arrives
-        // through this one branch — missions, shops, masters, NPCs, fast-travel
-        // points and the player's own pins — so this is the only capture the
-        // feature needs. Remembered on every poll, not only when the announcement
-        // changes: the spoken line dedupes, the selection must not.
-        MapSelectionMemory.RememberIcon(info, spoken);
+        // Map browsing supplies names; selecting a navigation goal belongs to the picker/look action.
 
         if (spoken == _lastIcon) return;
         _lastIcon = spoken;

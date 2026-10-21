@@ -2,14 +2,36 @@
 
 > Per-mod status ledger / dashboard. Open this first when resuming the mod so progress isn't re-derived from the code each session. Keep it short — a dashboard, not docs. Update the **Next step** line and the section table whenever you finish a chunk. Derive every value from the game's real data — no guessed offsets.
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-10-01
 
-**Next step (2026-09-27, latest): test the soundscape pass** (`docs/wt-soundscape.md` §8, analysis and
-roadmap there). Built, 119 pure checks, NOT verified in game: ladders and doors within 25 m give short
-earcons (`AccessSonarHooks`, new `sounds/ladder.mp3` and `sounds/door knock.mp3`, replaceable), one cue at a
-time over the 3 nearest; ladders/doors are named by the look sweep, lockable with R3 and listed in the
-picker ("Escaleras y puertas"). Decisions pending: breakable beacon as awareness lane, "Alrededor",
-reachability-muffled cues, continuous guidance.
+**Next step: user tests Places by name and Guidance / Listen across the city. Do not launch the game.**
+The user chose both named selection and recognizing distant places while exploring. Known fixed places
+now have an alphabetical view and an optional citywide look mode: one heard name, category sound and
+R3 target; selecting exits the survey and starts normal guidance. Default local exploration is retained.
+Facilities continue learning after the first discovery; cached places are scoped by city/situation.
+Release built/deployed, 0 warnings/errors; 520 navigation checks pass. Native listening test pending.
+Coverage is known locations, not every unvisited city facility; phone-map capture remains unverified.
+See [controls, coverage, design and test checklist](docs/wt-city-listening.md).
+
+Previous R3 universal cancellation and native rest/day-night category are also awaiting a live test.
+Check the room-associated travel point versus the actual door and My Room's newly watched `TimeList`.
+The unchanged audio passed 283 checks; the player confirms its object sounds are easier to distinguish.
+
+**Remaining:** listen at the player's speech rate; verify local walking previews, fast-travel contact,
+R3 recovery after loss, walking/corners, live NPC contact/loss,
+fight return and Boluo's partial roof route. Phone-map empty/day-night freshness and native action
+prompt coverage remain unresolved. No gameplay completion or runtime usability claim is made.
+
+**Earlier prototype history (superseded behavior is retained below as evidence):**
+
+**Next step (2026-09-27, latest): test navigating by ear without R3** (`docs/wt-soundscape.md` §6
+pass 2 and §8). Tester: "quisiera navegar con algo que no dependiese del R3… sonificar más el mundo".
+Built, 135 pure checks, NOT verified in game: `WorldSonarHooks` (was `AccessSonarHooks`) gives earcons
+to ladders, doors, shops (`sounds/shop.mp3`) and places (`sounds/place.mp3`, fast travel, saved spots,
+pins) — the thing the camera points at (±15°, to 100 m) plays alone and speeds up as you approach
+(flashlight), otherwise the 3 nearest within 25 m take turns quietly; Shift+N toggles. Every homing
+beacon now plays a fifth higher when dead ahead (`HomingCue` on-course), so the right stick replaces
+R3 for aiming. Also still untested: the ladder/door pass and the look sweep below.
 
 **Next step (2026-09-27): test navigating without a menu** (`docs/wt-free-navigation.md`, §6).
 Built, 113 pure checks, adversarially reviewed (8 fixes), NOT verified in game: turning the camera while standing names places ahead
@@ -144,6 +166,7 @@ Analysis/documentation only; no code changes, build or new in-game verification.
 
 | Section / feature | Status | Notes |
 |---|---|---|
+| World Tour — audio exploration and optional guidance | wip | First listening test exposed over-suppression; follow-up built, 300 checks pass, listening pending. `docs/wt-soundscape.md`. |
 | Main menu / Fighting Ground / tabs | done | `MainMenuHooks`, `FGMenuHooks`; fg/bh/wt tabs |
 | Options menu (+ sub-screens) | done | `OptionMenuHooks`, `OptionSubScreenHooks`; `OptionManager` polling |
 | Key config | done | `KeyConfigHooks` |
@@ -165,7 +188,7 @@ Analysis/documentation only; no code changes, build or new in-game verification.
 | World Tour — multi-level routes (ladders) | wip | Built 2026-09-22, NOT verified in game. `LevelRoute` + `LevelRoutePlanner` + `LadderCatalog`: walk → ladder → walk when the objective's navmesh island is disconnected. `docs/sf6-screens.md` § multi-level routes |
 | World Tour — orientation (zones, where am I, destination picker) | wip | Confirmed working in game 2026-09-27 (needs polish). `ZoneHooks`, `SectionNoticeHooks`, `DestinationPickerHooks`; `docs/wt-orientation.md` |
 | World Tour — free navigation (look sweep for places, passing by) | wip | Built 2026-09-27, NOT verified in game. `FieldPlaceSweepHooks`, `FieldPassingHooks`; `docs/wt-free-navigation.md` |
-| World Tour — soundscape (ladder/door earcons) | wip | Built 2026-09-27, NOT verified in game. `AccessSonarHooks`; `docs/wt-soundscape.md` |
+| World Tour — soundscape (world sonar, on-course beacons) | wip | Built 2026-09-27, NOT verified in game. `WorldSonarHooks`, `HomingCue`; `docs/wt-soundscape.md` |
 | World Tour full flow | todo | Next big goal; shared avatar menus not yet verified in WT |
 
 ## Derived facts (so we never re-RE them)

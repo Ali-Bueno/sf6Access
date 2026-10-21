@@ -616,6 +616,17 @@ not resolve these. Recipes:
 
 ## World Tour — field awareness (interactable radar + avatar positions)
 
+**Implementation update 2026-10-01 (pending runtime verification):** nearby NPC selections now copy
+the live component address, owning GameObject address, city, name and contact kind into
+`DestinationActor`; no wrapper survives a poll. `LiveDestinationReader` re-finds the exact actor in
+the current avatar list or `GUIAccessDataManager.GetAccessTargetData`, and reads its current position.
+Unreadable/truncated observations are pending, not absence. Confirmed loss/identity mismatch requires
+reselection; a name match alone never attaches the selection to another person. Current interaction
+uses `CurrentAccessInfoList.TargetInfo.Target`, matched to the exact registry target or owning
+GameObject. These combine existing readers; their behavior together still needs an in-game pass.
+Automatic speech and scans now follow [the shared feedback policy](wt-soundscape.md); historical
+reader behavior described below may have been superseded.
+
 Runtime-confirmed in the WT opening tutorial (2026-07-19/20). Code:
 `Hooks/WorldTour/FieldAwarenessHooks.cs` + `Services/WorldTour/WorldTourStateService.cs`.
 
@@ -1671,6 +1682,23 @@ groundwork for a future pathfinder-based radar/guidance layer; no shipped code c
   seen for the 8 points above: 1, 3, 5, 6, 7, 8, 10, 68), and the localized names resolve through the
   existing Guid→message resolver path (e.g. 'Beat Square', 'Westbay Promenade', 'Urban Park', 'Beat
   Street - Pórtico de Chinatown').
+- Fast-travel semantics (2026-10-01): the native point list and phone map `TRAVEL` group now feed
+  `DestinationCategory.Travel`, retaining the native name plus the translated fast-travel kind.
+  This identifies a point; the catalog includes unreleased points and asserts no unlock or current
+  interaction state. Selecting one requests walking guidance, never travel execution.
+- `CONFIRMED (decompiled), contact runtime check pending`: `om.WTOmAccessTarget.IsFastTravelOpenOM()`
+  identifies the semantic object; `OmComp` may be the exact type `om.Om022000`, whose `FastTravelCtrl`
+  points to `WTFastTravelCtrl.PointID:uint`. `FastTravelContact` accepts a positive semantic result
+  or that exact OM type, preserves `GetDispName`, and uses the exact point ID only when the contact
+  lacks a name. The `Interact` announcement additionally requires membership in the existing
+  `AvatarManager.CurrentAccessInfoList`; nearby landmark coordinates never confirm interaction.
+  The first successful live classification writes `Fast-travel contact identified` to the log.
+  Read-only smoke test: approach a fast-travel object until its interaction is available, press Z,
+  and check for `Interact: <native name>, fast travel` (or the generic kind if no name/ID resolves).
+  Step back while still near the landmark: Z may identify the nearby travel point but must drop
+  `Interact` once it leaves `CurrentAccessInfoList`. Repeat beside an ordinary nearby NPC to check
+  that a travel landmark does not rename that contact; open the picker/dialogue and confirm the
+  field interaction voice pauses. These checks do not activate, unlock or execute travel.
 - Sections/districts: `app.worldtour.CitySectionManager`: `CurrentSectionInfo`(13),
   `CurrentSectionId:uint`(37), `SectionInfoList`(29), `UpdateCurrentSectionId()`(65),
   `CheckUsingSectionMap(uint)`(59), `RequestSectionNotice(...)`(68). Volumes:
@@ -2219,6 +2247,13 @@ filter, and the `FieldNavVerdictService`-driven spoken class from §9 are exactl
 "Built but not yet verified in game" (2026-09-08 entry) for the in-game verification checklist.
 
 ### 9d. Line-memory radar retired; body-clearance passability model shipped (2026-09-08, later session) — `PENDING RUNTIME VERIFICATION`
+
+**2026-10-01 follow-up:** the listening log proves queued PASSABLE cues could outlive their
+measurement (0.24/0.91 m at emission despite 4.56 m open and 1.52 m blocked thresholds). Playback now
+requires fresh matching clearance through `RadarCueAdmission`; a debounce-held state alone cannot
+authorize sound. Native rays, filter, body dimensions and thresholds are unchanged. Regression tests
+exercise the actual clearance state machine and audio-lane policy. See [soundscape validation](wt-soundscape.md)
+for evidence and the next user-run test; this does not establish that every geometry complaint is solved.
 
 **Symptom that started this pass.** § 9c's "second pass" (`FieldRadarService.cs`, an event radar that
 remembered the LINE each beam looked at and spoke when that line broke — a faithful port of A Hero's

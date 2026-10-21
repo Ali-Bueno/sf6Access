@@ -50,9 +50,7 @@ internal static class FieldRadarClearance
     private static readonly long[] PendingSince = new long[N];
     private static readonly bool[] Seeded = new bool[N];
 
-    /// <summary>The current verdict for a beam, for the spoken readout to quote. The
-    /// cue channel and the reader MUST answer from this one field or they can
-    /// contradict each other, which is the failure this layer exists to end.</summary>
+    /// <summary>The settled verdict for a beam; deferred cues must also check the latest measurement.</summary>
     public static PassState Current(RadarBeam beam) => State[(int)beam];
 
     /// <summary>Feed one beam's body clearance for this evaluation.

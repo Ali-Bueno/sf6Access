@@ -10,7 +10,7 @@ internal enum AccessKind { Ladder, Door }
 /// <summary>Nearby ladder/door geometry, independent of the selected goal. Copied world positions only.</summary>
 internal static class FieldAccessCatalog
 {
-    internal readonly record struct Access(string Key, string Text, float X, float Y, float Z, long SeenAt, AccessKind Kind);
+    internal readonly record struct Access(string Key, string Text, float X, float Y, float Z, long SeenAt, AccessKind Kind, ulong Target);
     private static readonly string[] Types = {
         "app.worldtour.om.Om011000", "app.worldtour.om.Om016000", "app.worldtour.om.Om017000"
     };
@@ -59,6 +59,7 @@ internal static class FieldAccessCatalog
             if (!IsLive(om)) continue;
             float x, y, z;
             string text;
+            var access = MemberAccess.ReadFieldsFirst(om, "AccessTarget") as ManagedObject;
             if (_family == 0)
             {
                 if (!LadderCatalog.TryReadEnds(om, out var low, out var high)) continue;
@@ -86,12 +87,12 @@ internal static class FieldAccessCatalog
                         if (value == lockType && lockName == "AlwaysLock")
                             text = ExplorationText.Get("door_locked", "Blocked door");
                 }
-                var access = MemberAccess.ReadFieldsFirst(om, "AccessTarget") as ManagedObject;
                 string name = FlowHelper.Call(access, "GetDispName") as string;
                 if (!string.IsNullOrWhiteSpace(name)) text += ", " + FlowHelper.CleanTags(name);
             }
             if (DistanceSq(x, y, z, px, py, pz) > KeepRangeM * KeepRangeM) continue;
-            Entries[key] = new Access(key, text, x, y, z, now, _family == 0 ? AccessKind.Ladder : AccessKind.Door);
+            Entries[key] = new Access(key, text, x, y, z, now, _family == 0 ? AccessKind.Ladder : AccessKind.Door,
+                access?.GetAddress() ?? 0);
             if (Logged.Add(Types[_family]))
                 API.LogInfo(FormattableString.Invariant($"[SF6Access] Exploration access: {Types[_family]}, {text}, ({x:F2}, {y:F2}, {z:F2})"));
         }

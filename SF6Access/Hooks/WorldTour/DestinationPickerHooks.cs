@@ -8,15 +8,16 @@ namespace SF6Access.Hooks.WorldTour;
 
 /// <summary>
 /// The destination picker: hold R3 (or V) anywhere in the field to browse every known
-/// place by category, nearest first, and choose one; the mission beacon, route guidance
-/// and R3 aiming then lead there. Opened by <see cref="MapAimHooks"/>; controls in
+/// place by category, nearest first, and choose one for the route beacon.
+/// Opened by <see cref="MapAimHooks"/>; controls in
 /// <see cref="PickerInput"/>. Design: <c>docs/wt-orientation.md</c>.
 /// </summary>
 public class DestinationPickerHooks
 {
     private static readonly DestinationPicker _picker = new();
     private static readonly PickerInput _input = new();
-    private static DestinationCategory _lastCategory = DestinationCategory.Places;
+    private static DestinationCategory _lastCategory = DestinationCategory.Mission;
+    private static uint _city;
 
     /// <summary>True while the picker owns the field's controls and the speech.</summary>
     public static bool IsOpen { get; private set; }
@@ -30,7 +31,8 @@ public class DestinationPickerHooks
     /// <summary>Builds the list from where the player stands and speaks the first entry.</summary>
     public static void Open()
     {
-        if (IsOpen || PadGuideHooks.Active) return;
+        FieldPresenceService.Refresh();
+        if (IsOpen || !FieldPresenceService.CanSpeak || SF6Access.Hooks.SpTalkNovelHooks.DialogueActive || PadGuideHooks.Active) return;
         var me = AvatarFieldReader.ReadPlayerPos(WorldTourStateService.GetAvatarManager());
         if (!me.ok)
         {
@@ -38,6 +40,13 @@ public class DestinationPickerHooks
             return;
         }
 
+        uint city = WorldTourStateService.CityId;
+        if (city != 0 && city != _city)
+        {
+            _city = city;
+            _picker.Reset();
+            _lastCategory = DestinationCategory.Mission;
+        }
         _picker.Load(DestinationCatalog.Build(me.x, me.z), _lastCategory);
         if (_picker.IsEmpty)
         {
@@ -119,14 +128,35 @@ public class DestinationPickerHooks
                 Speak(name == null ? DestinationText.NotSaved() : DestinationText.Saved(name));
                 return;
             case DestinationAction.FollowMission:
-                MapSelectionMemory.Reset("back to the story objective");
+                MapSelectionMemory.FollowMission();
                 Speak(DestinationText.FollowMission());
+                return;
+            case DestinationAction.Explore:
+                BeginExploration(cityListening: false);
+                return;
+            case DestinationAction.ListenCity:
+                if (!_picker.Has(DestinationCategory.KnownPlaces))
+                {
+                    Speak(DestinationText.Empty());
+                    return;
+                }
+                BeginExploration(cityListening: true);
                 return;
         }
 
-        MapSelectionMemory.Remember(d.Label, d.X, d.Y, d.Z);
+        MapSelectionMemory.Remember(d);
         string where = me.ok ? DestinationText.Where(me.x, me.y, me.z, d.X, d.Y, d.Z) : null;
         Speak(where == null ? LocalizedText.TrackerFollowing(d.Label) : DestinationText.Chosen(d.Label, where));
+    }
+
+    private static void BeginExploration(bool cityListening)
+    {
+        MapSelectionMemory.Explore();
+        if (cityListening) CityListeningMode.Enter();
+        CameraAimService.Release();
+        MissionBeaconHooks.Cancel();
+        FieldAimHooks.RearmAfterCancel();
+        Speak(cityListening ? DestinationText.CityListening() : DestinationText.Exploring());
     }
 
     /// <summary>Deletes the highlighted saved spot; other entries are the game's, not ours.</summary>
@@ -159,7 +189,9 @@ public class DestinationPickerHooks
             var me = AvatarFieldReader.ReadPlayerPos(WorldTourStateService.GetAvatarManager());
             if (me.ok) where = DestinationText.Where(me.x, me.y, me.z, d.X, d.Y, d.Z);
         }
-        return DestinationText.Item(d, where, _picker.Index, _picker.Count);
+        string item = DestinationText.Item(d, where, _picker.Index, _picker.Count);
+        string reference = MapLearningReadout.Reference(d);
+        return string.IsNullOrEmpty(reference) ? item : item + ". " + reference;
     }
 
     private static void Speak(string text) => ScreenReaderService.Speak(text, interrupt: true);

@@ -1,5 +1,65 @@
 # World Tour — orientation and choosing where to go (2026-09-27)
 
+**Latest: citywide listening and Places by name** are prepared for a user-led test. Known fixed
+places can be browsed alphabetically or heard by turning, beyond the local 100 m scan range.
+See [controls, coverage, sound identity and verification limits](wt-city-listening.md).
+
+**Follow-up 2026-10-01 (built; pending listening verification):** the field starts in free exploration;
+the user explicitly chose this default. Compass directions are announced again while turning.
+Z also describes a nearby named place, any current interaction and up to three checked walking
+directions. Facing a confirmed first route leg can name where it leads; R3 selects the last spoken
+target while that evidence stays current. Fast travel has its own picker category and short cue.
+The picker starts in **Guidance**,
+offering **Follow the tracked mission** and **Explore freely**, even if no mission position is
+currently readable. Each category remembers its highlighted identity across distance reordering.
+R3 cancels any active destination or explicit mission guidance, including places and breakables.
+Proximity no longer
+clears a chosen target. Phone-map browsing never chooses a navigation goal; choose captured map icons
+through the picker. City travel preserves exploration or explicitly selected mission following;
+old-city coordinate destinations and route caches are cleared.
+
+After cancellation, hear a focused target and tap R3/V to select it. Cancellation wins even after
+actor loss or a temporary read failure; selecting a replacement takes a separate press. No menu is
+required. Steering turns are conveyed by sound, without automatic turn instructions.
+
+**Map learning follow-up (2026-10-01, after the 14:08–14:13 test; native test pending):**
+the native `FastTravelPointUserDataRecord.IsMyRoom` flag and exact `ICON_TYPE.HOME` identify a
+**Rest: day and night** category, near the start of the picker when present. Names and positions come
+from the current city's native point list, with phone-map HOME icons as another source. The native
+point is a room-associated travel position, **not a verified door interaction point**. Locked points
+can be listed; the category describes their purpose, not an unlock state.
+
+Z reads a known rest destination's bearing/distance, a travel landmark and any actual interaction.
+Nearby incidental place names use the same 12 m band as passing notices. Explicit picker rows for
+fixed places also describe their distance from the nearest ordinary travel landmark. When the
+minimap supplies verified north, that reference includes the place's compass direction from the
+landmark; the provisional north axis is never used to teach this relationship. These are geographic
+distances, not asserted walking paths. Existing checked walking previews include rest destinations.
+No new automatic speech stream or new sound pattern was added.
+
+`DestinationCategoryRules`, `MapLandmarkRelation`, and their tests cover classification, duplicates,
+and stable relative placement. Runtime catalog diagnostics include `native hangouts:` plus native name,
+point ID and coordinates. Current-contact `IsHome()` supplies the day/night interaction label;
+proximity alone never enables an interaction announcement.
+
+`GroupFocusHooks` now watches `app.UIFlowWTMyRoom`. Its existing field discovery supports the
+declared `Param.TimeList: UIPartsSimpleList` and reads selected-row GUI text with fresh flow/list
+resolution. This uses the standard reader, without new native calls or custom menu hooks; actual
+day/night row speech remains unverified.
+
+Gameplay reference: the Metro City Hangout is on Faith Avenue and its door opens the day/night
+choice ([NintendoSmash, June 2023](https://nintendosmash.com/street-fighter-6-how-to-change-between-day-and-night-in-world-tour/)).
+This is context for the feature; no guide coordinates, unlock state or chapter condition is
+hardcoded into navigation. The new native bindings and final approach still need the user's test.
+
+Loaded NPC choices now refresh the exact live actor's position with a stable route key. Unreadable
+data holds; confirmed disappearance stops guidance and requires reselection. Phone-map snapshots
+remain remembered coordinates, with the empty-group/day-night limitations documented in
+[wt-soundscape.md](wt-soundscape.md). Same-count changes to snapshot contents now save correctly.
+Automatic speech shares one prioritized queue; the historical queued-announcement descriptions
+below refer to the previous implementation. Current controls and listening tests are in the soundscape
+document; the source-discovery evidence below remains useful.
+
 Tester request (2026-09-26): *"necesitamos encontrar una mejor forma de localizarme por el mundo abierto
 y poder ir a cualquier sitio… aún falta anunciar zonas al pasar por ellas… decidir hacia qué punto quiero
 ir de cualquier sitio del mapa"*. The radar, beacon, route guidance and ladder routes exist; what was
@@ -62,8 +122,8 @@ difference beyond `ARRIVED_M` is added ("12 metros más arriba").
 ## 4. Choosing a destination from anywhere — the picker (`Hooks/WorldTour/DestinationPickerHooks.cs`)
 
 **Hold R3 / hold V** (long-press threshold = the user's Windows keyboard repeat delay,
-`ReadoutShortcut.SystemHoldDelayMs`, 500 ms by default). A **tap** of R3/V keeps its old meaning — turn
-the camera down the next leg of the route — but now fires on release. While open, the field's input is
+`ReadoutShortcut.SystemHoldDelayMs`, 500 ms by default). A **tap** on release selects a spoken focus
+in exploration, or cancels existing guidance. While open, the field's input is
 masked with the game's own one-frame lock (`FieldInputMask`, confirmed working 2026-09-09).
 
 | Action | Pad | Keyboard |
@@ -75,7 +135,7 @@ masked with the game's own one-frame lock (`FieldInputMask`, confirmed working 2
 | delete a saved spot | X / Square | Delete |
 
 Each entry: "Style Lab Beauty Salon, tienda, a las 2, a 85 metros, 3 de 12". Choosing sets
-`MapSelectionMemory`, so the existing beacon, route guidance, ladder routes and R3 aiming all follow it;
+`MapSelectionMemory`, so the existing beacon, route guidance and ladder routes all follow it;
 "Objetivo de la historia" hands guidance back to the mission; "Guardar este lugar" saves the current
 position as "<zone>, lugar N".
 
@@ -88,8 +148,8 @@ position as "<zone>, lugar N".
 - While the list has no shops/masters/missions/jobs, opening it adds once per session: "Para añadir
   tiendas, maestros y misiones, abre una vez el mapa del teléfono".
 
-Categories (`DestinationCategory`, cycled in this order, empty ones skipped): story objective, places
-(fast travel), shops and services, masters, missions, jobs, people nearby, map markers, my places.
+Categories (`DestinationCategory`, cycled in this order, empty ones skipped): guidance, places by name, rest/day-night,
+places, fast travel, ladders/doors, shops/services, masters, missions, jobs, nearby people, pins, saved places.
 Sources (`DestinationCatalog`, live first; same name within `2 × ARRIVED_M` in a category = one place):
 
 | Source | Status |

@@ -30,12 +30,15 @@ public static class AvatarNameCache
     /// Generous on purpose: the cost of keeping a stale entry is a few bytes,
     /// the cost of dropping a live one is a component walk.</summary>
     private const long FORGET_MS = 30000;
+    // A component can appear after its avatar. Missing classification must be retried while visible.
+    private const long RetryIncompleteMs = 4 * FieldActionReader.SampleMs;
 
     private sealed class Entry
     {
         public string Name;     // null = the game gives this avatar no name
         public int Kind;        // HudDef.ContactUIType
         public long SeenTick;
+        public long CheckedTick;
     }
 
     private static readonly Dictionary<ulong, Entry> Names = new();
@@ -50,6 +53,12 @@ public static class AvatarNameCache
         if (e?.Name == null) return null;
         string word = AvatarFieldReader.KindWord(e.Kind);
         return string.IsNullOrEmpty(word) ? e.Name : $"{e.Name}, {word}";
+    }
+
+    internal static (string Name, int Kind) Classify(AvatarFieldReader.Other o)
+    {
+        var entry = Lookup(o);
+        return entry == null ? (null, AvatarFieldReader.CONTACT_NONE) : (entry.Name, entry.Kind);
     }
 
     /// <summary>Somebody the voice should talk about: named, and not one of
@@ -76,10 +85,13 @@ public static class AvatarNameCache
         if (address == 0) return null;
 
         long now = System.Environment.TickCount64;
-        if (!Names.TryGetValue(address, out var e))
+        bool cached = Names.TryGetValue(address, out var e);
+        if (!cached || now - e.CheckedTick >= FORGET_MS ||
+            ((string.IsNullOrWhiteSpace(e.Name) || e.Kind == AvatarFieldReader.CONTACT_NONE)
+                && now - e.CheckedTick >= RetryIncompleteMs))
         {
             var (name, kind) = AvatarFieldReader.Classify(o.Avatar);
-            e = new Entry { Name = name, Kind = kind };
+            e = new Entry { Name = name, Kind = kind, CheckedTick = now };
             Names[address] = e;
         }
         e.SeenTick = now;

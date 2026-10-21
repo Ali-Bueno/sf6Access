@@ -22,9 +22,17 @@ namespace SF6Access.Services.WorldTour;
 /// <i>Pitch</i> answers "am I facing it at all": a stereo pan genuinely cannot
 /// tell front from back — a target dead ahead and one dead behind both sit in the
 /// centre — so the octave drop supplies exactly the bit the pan is missing, and
-/// it stays a clean binary so it can never be mistaken for anything else.
+/// the pitch only ever takes three fixed steps (below), never a slide, so it can
+/// never be mistaken for anything else.
 /// <i>Cadence</i> answers "am I getting closer", which is the question the player
 /// would otherwise have to keep asking out loud.</para>
+///
+/// <para><b>On course.</b> Dead ahead (the half hour either side of 12) the cue
+/// plays a fifth higher, so turning the camera until the pitch lifts is aiming by
+/// ear — what a tap of R3 does for you. Low = behind, normal = ahead but to a
+/// side, high = straight at it: one pitch scale for "how much am I facing it".
+/// The mission beacon aims at the route's next corner, so on course there means
+/// "facing the way to walk".</para>
 ///
 /// <para>The frame is the CAMERA's, from <see cref="FieldDirectionService"/> —
 /// World Tour movement is camera-relative, so "ahead" must mean "push the stick
@@ -37,11 +45,12 @@ public sealed class HomingCue
     // one octave down, the user's own specification.
     internal const float BEHIND_RATE = 0.5f;
     internal const float AHEAD_RATE = 1f;
+    // Dead ahead: a fifth up — clearly brighter, and nothing like the octave down.
+    internal const float ON_COURSE_RATE = 1.5f;
 
     // The repeat interval is measured as the SILENCE BETWEEN repeats, not as a
-    // period: the cue lasts as long as the file does, and twice that when it is
-    // pitched down, so spacing by the gap is what keeps a repeat from ever
-    // landing on top of the one before it, whatever file a caller passes.
+    // period: use the actual trimmed output duration so a repeat never lands on
+    // top of the previous pulse, whatever file or pitch a caller passes.
     //
     // Near bound: a quarter of a second is about the shortest silence that still
     // reads as two separate pings instead of one stuttering sound.
@@ -64,6 +73,8 @@ public sealed class HomingCue
     private readonly int _nearGapMs, _farGapMs;
     private long _nextTick;
     private int _lastLoggedM = int.MinValue;
+    private readonly AxisLatch _onCourse =
+        new(FieldDirectionService.AHEAD_DEG, FieldDirectionService.AHEAD_LEAVE_DEG);
 
     /// <param name="fileName">Sound file in the mod's sounds folder.</param>
     /// <param name="tightAtM">Distance at which the repeat is at its fastest —
@@ -91,7 +102,11 @@ public sealed class HomingCue
 
     /// <summary>Stop repeating. The next <see cref="Sound"/> fires immediately —
     /// re-acquiring a target should be heard at once, not after a gap.</summary>
-    public void Reset() => _nextTick = 0;
+    public void Reset()
+    {
+        _nextTick = 0;
+        _onCourse.Reset();
+    }
 
     /// <summary>Stay silent for a while without forgetting anything: for the
     /// stretches where there is a target but it is out of range, so the caller
@@ -100,15 +115,22 @@ public sealed class HomingCue
 
     /// <summary>Sound one repeat toward the offset <c>(dx, dz)</c> in the given
     /// forward frame, and schedule the next one from <paramref name="dist"/>.</summary>
-    public void Sound(FieldDirectionService.FlatDir forward, float dx, float dz, float dist)
+    public bool Sound(FieldDirectionService.FlatDir forward, float dx, float dz, float dist, bool route = false)
     {
+        var lane = route ? FieldCueLane.Route : FieldCueLane.Focused;
+        if (!FieldFeedback.CueAvailable(lane, _file)) return false;
         var bearing = FieldDirectionService.GetBearing(forward, dx, dz);
         // No usable frame (camera unreadable, target underfoot): centre and
         // unpitched still beats silence, since the cadence alone carries range.
         float pan = bearing.Ok ? bearing.Right : 0f;
-        float rate = bearing.Ok && bearing.Behind ? BEHIND_RATE : AHEAD_RATE;
+        if (!bearing.Ok) _onCourse.Reset();
+        bool onCourse = bearing.Ok && _onCourse.Update(bearing.Ahead, bearing.Right);
+        float rate = onCourse ? ON_COURSE_RATE
+                   : bearing.Ok && bearing.Behind ? BEHIND_RATE : AHEAD_RATE;
 
-        var length = AudioService.PlaySound(_file, pan, rate: rate);
+        float volume = AudioService.DEFAULT_VOLUME * (route && FieldFeedback.SpeechActive ? FieldCuePolicy.SpeechGain : 1f);
+        var length = AudioService.PlaySound(_file, pan, volume, rate, FieldCuePolicy.MaximumDuration(lane));
+        FieldFeedback.ReserveCue(lane, _file, length);
         // A cue that did not play (missing file) must not turn into a tight retry
         // loop hammering the log; fall back to the slowest spacing.
         long spacing = length > TimeSpan.Zero
@@ -119,10 +141,11 @@ public sealed class HomingCue
         // One line per metre of progress, not per ping: up close a cue repeats
         // several times a second and the log has been flooded before.
         int metres = (int)dist;
-        if (metres == _lastLoggedM) return;
+        if (metres == _lastLoggedM) return length > TimeSpan.Zero;
         _lastLoggedM = metres;
         REFrameworkNET.API.LogInfo(
             $"[SF6Access] Homing cue {_file} at {dist:0.0}m, pan {pan:0.00}, rate {rate:0.0}");
+        return length > TimeSpan.Zero;
     }
 
     /// <summary>Silence between repeats: shortest at <c>_tightAtM</c>, longest

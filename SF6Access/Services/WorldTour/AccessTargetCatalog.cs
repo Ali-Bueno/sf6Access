@@ -5,9 +5,9 @@ using SF6Access.Services;
 namespace SF6Access.Services.WorldTour;
 
 /// <summary>
-/// Live named people and facilities from the game's own map registry,
+/// Live named people and known static facilities from the game's own map registry,
 /// <c>app.GuiManager.AccessData</c> (<c>GUIAccessDataManager</c>) — the data the phone
-/// map builds its NPC, master and facility icons from — so the picker needs no open map.
+/// map builds its icons from; remembered facility coordinates do not imply current availability.
 /// </summary>
 public static class AccessTargetCatalog
 {
@@ -17,30 +17,29 @@ public static class AccessTargetCatalog
     /// press; the picker sorts what is read, so this must stay well above a city's real count.</summary>
     private const int MAX_READ = 512;
 
-    private const long EMPTY_RETRY_MS = 5000;
-
-    // Facilities do not move and their names cost a message lookup each: read once per city.
-    private static List<Destination> _facilities;
-    private static uint _facilitiesCity;
-    private static long _facilitiesAt;
+    private static readonly FacilityMemory _facilities = new();
 
     private static bool _logged, _unreadableLogged;
 
     /// <param name="npcs">False skips the plain NPC list (masters and facilities only).</param>
     public static void AddTo(List<Destination> into, bool npcs = true)
     {
+        uint city = WorldTourStateService.CityId;
+        var cityManager = WorldTourStateService.GetCityManager();
+        if (!_facilities.Bind(city, cityManager?.GetAddress() ?? 0)) return;
         var data = WorldTourStateService.GetAccessData();
         if (data == null)
         {
             if (!_unreadableLogged) API.LogInfo("[SF6Access] Destinations: app.GuiManager.AccessData not readable");
             _unreadableLogged = true;
+            into.AddRange(_facilities.Places);
             return;
         }
 
         int masters = AddTargets(data, AvatarFieldReader.CONTACT_LEGENDARY, into, shopsOnly: false);
         // Without the crowd, NPC shopkeepers still count: they are places to go.
         int people = AddTargets(data, AvatarFieldReader.CONTACT_NPC, into, shopsOnly: !npcs);
-        var facilities = Facilities(data);
+        var facilities = Facilities(data, city);
         into.AddRange(facilities);
         if (npcs) LogOnce($"{masters} masters, {people} NPCs, {facilities.Count} facilities");
     }
@@ -60,28 +59,23 @@ public static class AccessTargetCatalog
                 : FlowHelper.GetObjectField(target, "ShopComponent") != null ? DestinationCategory.Shops
                 : DestinationCategory.People;
             if (shopsOnly && category == DestinationCategory.People) continue;
-            into.Add(new Destination(name, null, category, x, y, z));
+            into.Add(new Destination(name, null, category, x, y, z,
+                Actor: LiveDestinationReader.ForAccess(target, name, contactType)));
             added++;
         }
         return added;
     }
 
-    private static List<Destination> Facilities(ManagedObject data)
+    private static IReadOnlyList<Destination> Facilities(ManagedObject data, uint city)
     {
-        uint city = WorldTourStateService.CityId;
         long now = System.Environment.TickCount64;
-        if (_facilities != null && city == _facilitiesCity &&
-            (_facilities.Count > 0 || now - _facilitiesAt < EMPTY_RETRY_MS))
-            return _facilities;
-
-        _facilitiesCity = city;
-        _facilitiesAt = now;
-        _facilities = new List<Destination>();
+        if (!_facilities.TryBeginRefresh(now)) return _facilities.Places;
         int shop = FieldProbeService.EnumValue(OM_TYPE_ENUM, "Shop");
-        if (shop < 0) return _facilities;
+        if (shop < 0) return _facilities.Places;
 
         var list = FlowHelper.Call(data, "GetWTCityOMSetterData_OM", shop) as ManagedObject;
         int n = System.Math.Min(FlowHelper.GetListCount(list), MAX_READ);
+        int before = _facilities.Places.Count;
         for (int i = 0; i < n; i++)
         {
             var setter = FlowHelper.GetListItem(list, i);
@@ -92,9 +86,11 @@ public static class AccessTargetCatalog
             if (string.IsNullOrEmpty(name) || !ok || x == 0f && y == 0f && z == 0f) continue;
 
             string kind = DeviceMapText.IconType(FlowHelper.CallInt(setter, "GetFacilityIconType"));
-            _facilities.Add(new Destination(name, kind, DestinationCategory.Shops, x, y, z));
+            _facilities.Remember(new Destination(name, kind, DestinationCategory.Shops, x, y, z), DestinationCatalog.MergeM);
         }
-        return _facilities;
+        if (_facilities.Places.Count != before)
+            API.LogInfo($"[SF6Access] Known facilities: city {city}, {_facilities.Places.Count} places");
+        return _facilities.Places;
     }
 
     private static void LogOnce(string what)

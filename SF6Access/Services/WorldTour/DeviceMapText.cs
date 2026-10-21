@@ -63,12 +63,13 @@ public static class DeviceMapText
     {
         string name = FlowHelper.ResolveEnumName(IconTypeEnum, value);
         if (string.IsNullOrEmpty(name) || name == "INVALID" || name == "MAX") return null;
+        if (DestinationCategoryRules.IsRestIcon(name)) return DestinationText.RestKind();
 
         foreach (var (prefix, key, english) in IconFamilies)
             if (name.StartsWith(prefix, System.StringComparison.Ordinal))
                 return LangFile.Get(key, english);
 
-        // Cabinets, portals, terminals, HOME, JOB… — kinds with no family word of
+        // Cabinets, portals, terminals, JOB… — kinds with no family word of
         // their own. Saying "point of interest" still tells the player the icon is
         // not a shop, an enemy or a mission.
         return LangFile.Get("wt.map.icon_other", "point of interest");
