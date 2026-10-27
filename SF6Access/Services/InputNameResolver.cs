@@ -99,18 +99,21 @@ public static class InputNameResolver
         { 226, "Backslash (102)" },
     };
 
+    private static string Localize(string english) => LangFile.GetByText("keyname", english);
+
     /// <summary>Name a via.hid.GamePadButton value; multi-flag values name each set bit.</summary>
     public static string GamePadButtonName(uint value)
     {
-        if (value == 0) return "Unassigned";
-        if (PadButtonNames.TryGetValue(value, out var name)) return name;
+        if (value == 0) return LangFile.Get("keyname.unassigned", "Unassigned");
+        if (PadButtonNames.TryGetValue(value, out var name)) return Localize(name);
 
         var parts = new List<string>();
         for (int bit = 0; bit < 32; bit++)
         {
             uint flag = 1u << bit;
             if ((value & flag) == 0) continue;
-            parts.Add(PadButtonNames.TryGetValue(flag, out var n) ? n : $"Button {flag}");
+            parts.Add(PadButtonNames.TryGetValue(flag, out var n) ? Localize(n)
+                : string.Format(LangFile.Get("keyname.button_n", "Button {0}"), flag));
         }
         return parts.Count > 0 ? string.Join(" + ", parts) : value.ToString();
     }
@@ -118,11 +121,12 @@ public static class InputNameResolver
     /// <summary>Name a via.hid.KeyboardKey value.</summary>
     public static string KeyboardKeyName(int value)
     {
-        if (value == 0) return "Unassigned";
+        if (value == 0) return LangFile.Get("keyname.unassigned", "Unassigned");
         if (value >= 48 && value <= 57) return ((char)value).ToString();  // 0-9
         if (value >= 65 && value <= 90) return ((char)value).ToString();  // A-Z
-        if (value >= 96 && value <= 105) return $"Numpad {value - 96}";
+        if (value >= 96 && value <= 105) return string.Format(LangFile.Get("keyname.numpad_n", "Numpad {0}"), value - 96);
         if (value >= 112 && value <= 135) return $"F{value - 111}";
-        return KeyNames.TryGetValue(value, out var name) ? name : $"Key {value}";
+        return KeyNames.TryGetValue(value, out var name) ? Localize(name)
+            : string.Format(LangFile.Get("keyname.key_n", "Key {0}"), value);
     }
 }

@@ -63,6 +63,39 @@ public static class LocalizedText
 
     public static string Empty() => LangFile.Get("empty", "Empty");
 
+    // Generic numbered fallbacks for rows whose label could not be read.
+    public static string OptionN(int n) => string.Format(LangFile.Get("option_n", "Option {0}"), n);
+
+    public static string TabN(int n) => string.Format(LangFile.Get("tab_n", "Tab {0}"), n);
+
+    public static string SettingN(int n) => string.Format(LangFile.Get("setting_n", "Setting {0}"), n);
+
+    public static string PresetN(int n) => string.Format(LangFile.Get("preset_n", "Preset {0}"), n);
+
+    public static string SlotN(int n) => string.Format(LangFile.Get("slot_n", "Slot {0}"), n);
+
+    public static string ItemN(int n) => string.Format(LangFile.Get("item_n", "Item {0}"), n);
+
+    public static string CategoryN(int n) => string.Format(LangFile.Get("category_n", "Category {0}"), n);
+
+    public static string ShortcutN(int n) => string.Format(LangFile.Get("shortcut_n", "Shortcut {0}"), n);
+
+    public static string FighterN(int n) => string.Format(LangFile.Get("fighter_n", "Fighter {0}"), n);
+
+    public static string StatN(int n) => string.Format(LangFile.Get("stat_n", "Stat {0}"), n);
+
+    /// <summary>Cancel / Confirm buttons the game draws as images.</summary>
+    public static string Cancel() => LangFile.Get("cancel", "Cancel");
+
+    public static string Confirm() => LangFile.Get("confirm", "Confirm");
+
+    /// <summary>Result-screen score labels shared by the Arcade and Bonus results.</summary>
+    public static string Score() => LangFile.Get("result.score", "Score");
+
+    public static string TimeBonus() => LangFile.Get("result.time_bonus", "Time bonus");
+
+    public static string Total() => LangFile.Get("result.total", "Total");
+
     public static string MovesLearned() => LangFile.Get("moves_learned", "Moves Learned");
 
     public static string MoveSet() => LangFile.Get("move_set", "Move Set");
@@ -93,6 +126,12 @@ public static class LocalizedText
     /// despite it saying "any button", only these inputs advance).</summary>
     public static string TitleScreenPrompt() => LangFile.Get("title_prompt",
         "Title screen. Press F on keyboard, A on Xbox controller, or Cross on PlayStation controller");
+
+    /// <summary>Startup notice when GitHub has a newer release ({0} latest, {1} installed).</summary>
+    public static string UpdateAvailable(string latest, string installed) => string.Format(
+        LangFile.Get("update_available",
+            "A new version of SF6 Access is available: {0}. You have {1}. Download it from the mod's GitHub page."),
+        latest, installed);
 
     /// <summary>Avatar combat stat label for a WTPlayerStatusType value
     /// (1 Vitality, 6 Punch, 7 Kick, 8 Throw, 9 Unique Attack, 10 Defense).</summary>

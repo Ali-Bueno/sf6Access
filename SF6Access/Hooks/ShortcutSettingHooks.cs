@@ -113,7 +113,7 @@ public sealed class ShortcutSettingHooks : SingleParamScreenAdapter
         if (firstState) return;
 
         // The switch has no text equivalent — spoken label is a last resort
-        string label = state.Value ? "On" : "Off";
+        string label = LocalizedText.OnOff(state.Value);
         API.LogInfo($"[SF6Access] Shortcut toggle: {label}");
         ScreenReaderService.Speak(label);
     }
@@ -169,7 +169,7 @@ public sealed class ShortcutSettingHooks : SingleParamScreenAdapter
         // Current on/off state right after the name
         if (_lastRowState != null)
         {
-            string stateLabel = _lastRowState.Value ? "On" : "Off";
+            string stateLabel = LocalizedText.OnOff(_lastRowState.Value);
             announcement = string.IsNullOrEmpty(announcement) ? stateLabel : $"{announcement}. {stateLabel}";
         }
 
@@ -178,7 +178,7 @@ public sealed class ShortcutSettingHooks : SingleParamScreenAdapter
 
         if (string.IsNullOrEmpty(announcement))
         {
-            announcement = $"Shortcut {index + 1}";
+            announcement = LocalizedText.ShortcutN(index + 1);
         }
 
         API.LogInfo($"[SF6Access] Shortcut [{index}]: {announcement}");

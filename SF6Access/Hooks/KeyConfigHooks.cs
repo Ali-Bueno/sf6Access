@@ -317,10 +317,15 @@ public sealed class KeyConfigHooks : ScreenAdapter
         for (int i = 0; i < _lastSpinValues.Length; i++)
             _lastSpinValues[i] = FlowHelper.ReadGuiText(_spinTexts[i]);
 
-        string name = device == 1 ? "Keyboard" : "Controller";
+        string name = DeviceName(device);
         API.LogInfo($"[SF6Access] KeyConfig device switched: {name}");
         Speak(name);
     }
+
+    // TargetDevice: GamePad=0, Keyboard=1
+    private static string DeviceName(int device) => device == 1
+        ? LangFile.Get("keyconfig.keyboard", "Keyboard")
+        : LangFile.Get("keyconfig.controller", "Controller");
 
     private void BindMenu(ManagedObject param)
     {
@@ -349,9 +354,9 @@ public sealed class KeyConfigHooks : ScreenAdapter
             $"msgData={_menuMessageData != null}, settingList={_partsListSetting != null}, " +
             $"spins={Array.FindAll(_spinTexts, s => s != null).Length})");
         if (device == 1)
-            Speak("Keyboard", interrupt: false);
+            Speak(DeviceName(1), interrupt: false);
         else if (device == 0)
-            Speak("Controller", interrupt: false);
+            Speak(DeviceName(0), interrupt: false);
 
         _lastMenuPadButtons = ReadPadButtons();
         PollFocus();
@@ -386,7 +391,7 @@ public sealed class KeyConfigHooks : ScreenAdapter
         if (leftId >= LEFT_MODE && leftId <= LEFT_LOW_STICK)
         {
             string value = FlowHelper.ReadGuiText(_spinTexts[leftId]);
-            string label = LeftGroupLabels[leftId];
+            string label = LangFile.GetByText("keyconfig", LeftGroupLabels[leftId]);
             announcement = string.IsNullOrEmpty(value) ? label : $"{label}: {value}";
 
             string guide = GetLeftGroupGuide(leftId);
@@ -418,7 +423,9 @@ public sealed class KeyConfigHooks : ScreenAdapter
         string name = FlowHelper.ResolveGuidField(msg, "Name");
         if (!string.IsNullOrEmpty(name)) return name;
 
-        return listItemId < ListItemFallbacks.Length ? ListItemFallbacks[listItemId] : $"Item {listItemId}";
+        return listItemId < ListItemFallbacks.Length
+            ? LangFile.GetByText("keyconfig", ListItemFallbacks[listItemId])
+            : LocalizedText.ItemN(listItemId);
     }
 
     // --- Spin value changes (left/right on a spin) ---
@@ -647,7 +654,7 @@ public sealed class KeyConfigHooks : ScreenAdapter
         if (!allowFallback) return null;
 
         // UIKeyConfig.MessageBoxIndex: Yes=0, No=1, Cancel=2
-        return selIdx switch { 0 => "Yes", 1 => "No", 2 => "Cancel", _ => null };
+        return selIdx switch { 0 => LocalizedText.Yes(), 1 => LocalizedText.No(), 2 => LocalizedText.Cancel(), _ => null };
     }
 
     // --- Input test screen ("Config. de Teste") ---

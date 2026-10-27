@@ -823,7 +823,7 @@ public sealed class FighterSettingHooks : ScreenAdapter
         }
 
         string[] fallbacks = { "Costume", "Color", IsCpuPanel() ? "CPU Level" : "Control Type", "Preset" };
-        string fb = index < fallbacks.Length ? fallbacks[index] : $"Setting {index}";
+        string fb = index < fallbacks.Length ? LangFile.GetByText("setting", fallbacks[index]) : LocalizedText.SettingN(index);
         _labelCache[index] = fb;
         return fb;
     }
@@ -961,7 +961,7 @@ public sealed class FighterSettingHooks : ScreenAdapter
         if (!string.IsNullOrEmpty(spinText))
             return spinText;
 
-        return $"Preset {presetIndex + 1}";
+        return LocalizedText.PresetN(presetIndex + 1);
     }
 
     private static string CleanTags(string text)

@@ -43,7 +43,7 @@ public sealed class TabWatcher
         _lastIndex = idx;
         if (first) return -1;
 
-        string label = ReadTabLabel(idx) ?? $"Tab {idx + 1}";
+        string label = ReadTabLabel(idx) ?? LocalizedText.TabN(idx + 1);
         API.LogInfo($"[SF6Access] {_logTag} tab [{idx}]: {label}");
         ScreenReaderService.Speak(label);
         return idx;

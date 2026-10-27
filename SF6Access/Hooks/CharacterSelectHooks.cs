@@ -66,7 +66,7 @@ public class CharacterSelectHooks
                 string name = ResolveFighterName(fid);
                 if (!string.IsNullOrEmpty(name))
                 {
-                    string announcement = $"{name} Player {playerNo + 1}";
+                    string announcement = string.Format(LangFile.Get("charselect.fighter_player", "{0} Player {1}"), name, playerNo + 1);
                     API.LogInfo($"[SF6Access] Fighter P{playerNo + 1}: {name} (fid={fid})");
                     _pendingAnnouncements.Add(announcement);
                 }
@@ -103,7 +103,7 @@ public class CharacterSelectHooks
         }
         catch
         {
-            return $"Fighter {fid}";
+            return LocalizedText.FighterN((int)fid);
         }
     }
 

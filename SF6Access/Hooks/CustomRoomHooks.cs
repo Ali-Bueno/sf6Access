@@ -81,7 +81,7 @@ public sealed class CustomRoomHooks : SingleParamScreenAdapter
             ? $"{label}. {guide}"
             : !string.IsNullOrEmpty(label) ? label : guide;
 
-        if (string.IsNullOrEmpty(announcement)) announcement = $"Option {idx + 1}";
+        if (string.IsNullOrEmpty(announcement)) announcement = LocalizedText.OptionN(idx + 1);
 
         API.LogInfo($"[SF6Access] CustomRoomTop [{idx}]: {announcement}");
         ScreenReaderService.Speak(announcement);

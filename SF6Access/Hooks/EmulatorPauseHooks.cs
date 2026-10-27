@@ -28,7 +28,7 @@ public sealed class EmulatorPauseHooks : SingleParamScreenAdapter
     {
         _lastIndex = -2;
         API.LogInfo("[SF6Access] Emulator pause menu opened");
-        ScreenReaderService.Speak("Pause menu");
+        ScreenReaderService.Speak(LangFile.Get("emulator.pause_menu", "Pause menu"));
     }
 
     protected override void OnExit()
@@ -43,7 +43,7 @@ public sealed class EmulatorPauseHooks : SingleParamScreenAdapter
         if (idx < 0 || idx == _lastIndex) return;
         _lastIndex = idx;
 
-        string label = ReadOptionText(idx) ?? $"Option {idx + 1}";
+        string label = ReadOptionText(idx) ?? LocalizedText.OptionN(idx + 1);
         API.LogInfo($"[SF6Access] Emulator pause [{idx}]: {label}");
         ScreenReaderService.Speak(label);
     }

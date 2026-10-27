@@ -10,7 +10,15 @@
          NAudio DLLs on disk so the build can deploy them next to the plugin. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <SF6Path>D:\games\steam\steamapps\common\Street Fighter 6</SF6Path>
+    <!-- The build's version is the newest "## vX.Y.Z" heading of CHANGELOG.md, the same number as the
+         GitHub release tag that UpdateChecker compares against. -->
+    <ChangelogVersion>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\..\CHANGELOG.md')), '(?m)(?&lt;=^## v)\d+\.\d+\.\d+'))</ChangelogVersion>
+    <Version>$(ChangelogVersion)</Version>
   </PropertyGroup>
+
+  <Target Name="RequireChangelogVersion" BeforeTargets="Build" Condition="'$(ChangelogVersion)' == ''">
+    <Error Text="CHANGELOG.md has no '## vX.Y.Z' heading to take the mod version from." />
+  </Target>
 
   <ItemGroup>
     <!-- Mixes the mod's own sound cues (radar, beacons). The game's Wwise banks can

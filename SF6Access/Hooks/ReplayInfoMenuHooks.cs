@@ -105,7 +105,7 @@ public sealed class ReplayInfoMenuHooks : SingleParamScreenAdapter
             string label = FlowHelper.CleanTags(
                 FlowHelper.Call(_list, "GetMenuTypeMessage", type) as string);
             if (string.IsNullOrEmpty(label) && type < FallbackLabels.Length)
-                label = FallbackLabels[type];
+                label = LangFile.GetByText("replay", FallbackLabels[type]);
             if (string.IsNullOrEmpty(label)) return;
 
             // Comentário is an on/off toggle — append its current value.

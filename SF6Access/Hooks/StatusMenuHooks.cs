@@ -329,7 +329,7 @@ public sealed class StatusMenuHooks : ScreenAdapter
         string styleDetail = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(detail, "mTextStyleDetail"));
 
         string text = name;
-        if (!string.IsNullOrEmpty(level)) text += $". Level {level}";
+        if (!string.IsNullOrEmpty(level)) text += ". " + string.Format(LangFile.Get("status.level", "Level {0}"), level);
         if (!string.IsNullOrEmpty(styleDetail)) text += $". {styleDetail}";
 
         if (text == _lastMasterText) return;
@@ -408,7 +408,7 @@ public sealed class StatusMenuHooks : ScreenAdapter
             name = string.IsNullOrWhiteSpace(name) ? null : FlowHelper.CleanTags(name).Trim();
 
             if (!string.IsNullOrWhiteSpace(name)) return name;
-            return itemId > 0 ? null : "Empty";
+            return itemId > 0 ? null : LocalizedText.Empty();
         }
         catch { return null; }
     }

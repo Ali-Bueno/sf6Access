@@ -226,7 +226,7 @@ public sealed class NewsHooks : SingleParamScreenAdapter
         if (first) return; // Don't announce the initial tab, only changes
 
         // TabItem enum: 0 = Mail (news), 1 = Ticker (notification history)
-        string name = tab == 0 ? "News" : "History";
+        string name = tab == 0 ? LangFile.Get("news.news", "News") : LangFile.Get("news.history", "History");
         API.LogInfo($"[SF6Access] News tab: {name}");
         Speak(name);
     }

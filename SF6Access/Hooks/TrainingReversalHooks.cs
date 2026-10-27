@@ -140,7 +140,7 @@ public sealed class TrainingReversalHooks : ScreenAdapter
 
         string announcement = !string.IsNullOrEmpty(title)
             ? FlowHelper.CleanTags(title)
-            : (tab >= 0 && tab < CategoryNames.Length ? CategoryNames[tab] : $"Tab {tab + 1}");
+            : (tab >= 0 && tab < CategoryNames.Length ? LangFile.GetByText("reversal", CategoryNames[tab]) : LocalizedText.TabN(tab + 1));
         API.LogInfo($"[SF6Access] Reversal tab [{tab}]: {announcement}");
         Speak(announcement, interrupt: !first);
     }

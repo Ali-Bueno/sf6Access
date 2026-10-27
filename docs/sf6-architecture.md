@@ -611,6 +611,14 @@ reframework\plugins\
 `managed\SF6Access.notices.txt` (which battle notices are read) is written with defaults on first run
 — don't ship your own copy, it would override the player's defaults.
 
+**Version and update check.** The DLL's version is the newest `## vX.Y.Z` heading of `CHANGELOG.md`
+(read by the csproj at build time; the build fails if there is none). `Services/UpdateChecker.cs` asks
+`api.github.com/repos/Ali-Bueno/sf6Access/releases/latest` once per launch on a background thread and,
+when that tag is newer, speaks `update_available` (queued) on the first announced screen, normally
+the title screen. So: **add the changelog heading before building the release DLL, and tag the
+release with the same `vX.Y.Z`** — otherwise players with the new build are told to update forever.
+Network failures only log `Update check failed`.
+
 Build steps: `dotnet build` (fresh DLL copies into the game folder) → copy the files above into the
 kept `release\SF6Access\` staging folder → `Compress-Archive` the CONTENTS into `release\SF6Access.zip`
 → `gh release create vX.Y.Z release\SF6Access.zip …`. EXCLUDE `managed\generated\` (per-PC),

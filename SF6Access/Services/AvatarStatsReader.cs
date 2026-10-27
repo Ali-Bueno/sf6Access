@@ -218,7 +218,7 @@ public static class AvatarStatsReader
 
         // Unknown type: fall back to the enum constant name so nothing is mislabeled
         string enumName = FlowHelper.ResolveEnumName("app.worldtour.WTStatusDefine.WTPlayerStatusType", type);
-        return string.IsNullOrEmpty(enumName) ? $"Stat {type}" : enumName;
+        return string.IsNullOrEmpty(enumName) ? LocalizedText.StatN(type) : enumName;
     }
 
     private static string PerksLabel() => LocalizedText.Perks();

@@ -109,10 +109,10 @@ public sealed class BonusResultHooks : SingleParamScreenAdapter
 
             _announced = true;
             var parts = new List<string>();
-            if (haveScore) parts.Add($"Score {score}");
-            if (haveTime) parts.Add($"Time bonus {time}");
-            if (haveClear) parts.Add($"Clear bonus {clear}");
-            parts.Add($"Total {total}");
+            if (haveScore) parts.Add($"{LocalizedText.Score()} {score}");
+            if (haveTime) parts.Add($"{LocalizedText.TimeBonus()} {time}");
+            if (haveClear) parts.Add($"{LangFile.Get("bonus.clear_bonus", "Clear bonus")} {clear}");
+            parts.Add($"{LocalizedText.Total()} {total}");
 
             string text = string.Join(". ", parts) + ".";
             API.LogInfo($"[SF6Access] Bonus result: {text}");

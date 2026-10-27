@@ -63,7 +63,7 @@ public sealed class OnlineShopBuyHooks : SingleParamScreenAdapter
         {
             // e_coin_num_used is the (negative) coin cost; a ticket cost otherwise
             bool coins = texts.TryGetValue("e_coin_num_used", out var c) && c != "0" && !string.IsNullOrEmpty(c);
-            parts.Add(coins ? $"Price {total} Fighter Coins" : $"Price {total}");
+            parts.Add(coins ? $"{LocalizedText.Price()} {total} Fighter Coins" : $"{LocalizedText.Price()} {total}");
         }
 
         // Append the initially-focused choice so it does not interrupt the

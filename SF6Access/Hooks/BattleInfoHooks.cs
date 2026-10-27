@@ -194,7 +194,7 @@ public class BattleInfoHooks
             var conn = new List<string>();
             string type = InterfaceLabel(_pendingInterface);
             if (type != null) conn.Add(type);
-            conn.Add($"signal {antenna} of 5");
+            conn.Add(string.Format(LangFile.Get("battleinfo.signal", "signal {0} of 5"), antenna));
             parts.Add(string.Join(", ", conn));
 
             _widgetAnnounced = true; // once per appearance, even if texts were empty
@@ -219,7 +219,7 @@ public class BattleInfoHooks
         if (_confirmAccepted) return;
 
         API.LogInfo("[SF6Access] Opponent confirm cancelled");
-        ScreenReaderService.Speak("Match cancelled", interrupt: false);
+        ScreenReaderService.Speak(LangFile.Get("battleinfo.match_cancelled", "Match cancelled"), interrupt: false);
     }
 
     // ---- VS screen ----
@@ -555,8 +555,8 @@ public class BattleInfoHooks
     // app.network.core.InterfaceType: 0 Unknown, 1 Wireless, 2 Wired
     private static string InterfaceLabel(int type) => type switch
     {
-        1 => "WiFi",
-        2 => "Cable",
+        1 => LangFile.Get("battleinfo.wifi", "WiFi"),
+        2 => LangFile.Get("battleinfo.cable", "Cable"),
         _ => null,
     };
 

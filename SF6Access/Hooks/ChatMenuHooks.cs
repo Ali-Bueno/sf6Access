@@ -66,7 +66,7 @@ public sealed class ChatMenuHooks : SingleParamScreenAdapter
                 }
             }
 
-            var parts = new List<string> { "Chat" };
+            var parts = new List<string> { LangFile.Get("chat.title", "Chat") };
             if (!string.IsNullOrEmpty(tab) && (dest == null || dest.IndexOf(tab, System.StringComparison.OrdinalIgnoreCase) < 0))
                 parts.Add(tab);
             if (!string.IsNullOrEmpty(dest)) parts.Add(dest);

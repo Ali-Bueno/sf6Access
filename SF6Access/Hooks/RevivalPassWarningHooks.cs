@@ -84,7 +84,7 @@ public sealed class RevivalPassWarningHooks : ScreenAdapter
     {
         _lastItem = null;
         API.LogInfo("[SF6Access] Reissue pass warning opened");
-        Speak(WARNING_MESSAGE, interrupt: false);
+        Speak(LangFile.Get("revival.warning", WARNING_MESSAGE), interrupt: false);
     }
 
     protected override void OnDeactivate()
@@ -117,7 +117,7 @@ public sealed class RevivalPassWarningHooks : ScreenAdapter
             var control = FlowHelper.GetObjectField(btn, "Control")
                 ?? FlowHelper.Call(btn, "get_Control") as ManagedObject;
             text = GuiTextReader.ReadControlTextJoined(control);
-            text = string.IsNullOrEmpty(text) ? "Confirm" : text.Trim();
+            text = string.IsNullOrEmpty(text) ? LocalizedText.Confirm() : text.Trim();
             text = $"button|{text}"; // key the dedup so item<->button moves re-announce
         }
         else
@@ -137,7 +137,7 @@ public sealed class RevivalPassWarningHooks : ScreenAdapter
 
             text = name.Trim();
             if (num > 1) text += $" x{num}";
-            if (received) text += ". Sold out, already obtained";
+            if (received) text += ". " + LangFile.Get("revival.sold_out", "Sold out, already obtained");
         }
 
         if (text == _lastItem) return;

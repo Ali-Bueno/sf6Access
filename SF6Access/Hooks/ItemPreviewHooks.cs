@@ -133,9 +133,9 @@ public sealed class ItemPreviewHooks : ScreenAdapter
 
     private static string ModeLabel(int mode) => mode switch
     {
-        1 => "Accept",
-        2 => "Obtain Premium Pass",
-        3 => "Obtain Premium Pass. Or Premium Pass plus 10 tiers",
+        1 => LangFile.Get("itempreview.accept", "Accept"),
+        2 => LangFile.Get("itempreview.obtain_pass", "Obtain Premium Pass"),
+        3 => LangFile.Get("itempreview.obtain_pass_tiers", "Obtain Premium Pass. Or Premium Pass plus 10 tiers"),
         _ => null,
     };
 }

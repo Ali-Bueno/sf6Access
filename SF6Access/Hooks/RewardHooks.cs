@@ -119,7 +119,7 @@ public sealed class RewardHooks : SingleParamScreenAdapter
 
         // Prefer the localized header label; fall back to the fixed tab name
         string name = FlowHelper.ReadSelectedItemText(header);
-        if (string.IsNullOrEmpty(name) && tab < TabNames.Length) name = TabNames[tab];
+        if (string.IsNullOrEmpty(name) && tab < TabNames.Length) name = LangFile.GetByText("tab", TabNames[tab]);
         if (string.IsNullOrEmpty(name)) return;
 
         API.LogInfo($"[SF6Access] Rewards tab: {name}");
@@ -145,8 +145,8 @@ public sealed class RewardHooks : SingleParamScreenAdapter
 
         // SelectedItemType: 0 = GridItem (reward), 1 = Premium Pass button, 2 = Tier Boost button
         int selType = FlowHelper.CallInt(battlePass, "GetSelectedItem", 0);
-        if (selType == 1) { SpeakOnce("bp", "Premium Pass button"); return; }
-        if (selType == 2) { SpeakOnce("bp", "Tier Boost button"); return; }
+        if (selType == 1) { SpeakOnce("bp", LangFile.Get("reward.premium_pass_button", "Premium Pass button")); return; }
+        if (selType == 2) { SpeakOnce("bp", LangFile.Get("reward.tier_boost_button", "Tier Boost button")); return; }
 
         var reward = FlowHelper.Call(battlePass, "GetSelectedReward") as ManagedObject;
         if (reward != null)

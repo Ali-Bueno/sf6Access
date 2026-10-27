@@ -712,7 +712,7 @@ public sealed class TrainingMenuHooks : ScreenAdapter
                     case "e_txt_east": delay ??= text; break;  // "Delay: 0F"
                 }
             }
-            if (string.IsNullOrEmpty(name) && slotNumber > 0) name = $"Slot {slotNumber}";
+            if (string.IsNullOrEmpty(name) && slotNumber > 0) name = LocalizedText.SlotN(slotNumber);
 
             var parts = new System.Collections.Generic.List<string>();
             if (!string.IsNullOrEmpty(name)) parts.Add(name);

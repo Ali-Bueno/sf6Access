@@ -140,21 +140,21 @@ public sealed class SideSelectHooks : ScreenAdapter
         string announcement;
         if (padPs == "POS_1P")
         {
-            announcement = "Player 1: Human";
+            announcement = PlayerSide(1, human: true);
         }
         else if (padPs == "POS_2P")
         {
-            announcement = "Player 2: Human";
+            announcement = PlayerSide(2, human: true);
         }
         else
         {
             // DEFAULT = both CPU. Announce based on which side just changed.
             if (prevPad == "POS_1P")
-                announcement = "Player 1: CPU";
+                announcement = PlayerSide(1, human: false);
             else if (prevPad == "POS_2P")
-                announcement = "Player 2: CPU";
+                announcement = PlayerSide(2, human: false);
             else
-                announcement = "CPU";
+                announcement = LangFile.Get("sideselect.cpu", "CPU");
         }
 
         if (announcement == _lastAnnouncement) return;
@@ -163,6 +163,10 @@ public sealed class SideSelectHooks : ScreenAdapter
         API.LogInfo($"[SF6Access] {announcement} (PadCtrl={padPs})");
         Speak(announcement);
     }
+
+    private static string PlayerSide(int player, bool human) => string.Format(
+        human ? LangFile.Get("sideselect.human", "Player {0}: Human")
+              : LangFile.Get("sideselect.cpu_player", "Player {0}: CPU"), player);
 
     private string ReadPadCtrlFromAny()
     {

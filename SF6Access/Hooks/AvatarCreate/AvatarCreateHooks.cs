@@ -226,7 +226,7 @@ public sealed partial class AvatarCreateHooks : ScreenAdapter
         catch { }
 
         if (string.IsNullOrEmpty(name))
-            name = cat < MainCategoryFallback.Length ? MainCategoryFallback[cat] : $"Category {cat + 1}";
+            name = cat < MainCategoryFallback.Length ? LangFile.GetByText("avatar", MainCategoryFallback[cat]) : LocalizedText.CategoryN(cat + 1);
 
         _mainCategoryNameCache[cat] = name;
         return name;
@@ -256,7 +256,7 @@ public sealed partial class AvatarCreateHooks : ScreenAdapter
                 SubCategoryFallback.TryGetValue(_lastMainCategory, out var subs) &&
                 mid >= 0 && mid < subs.Length)
             {
-                name = subs[mid];
+                name = LangFile.GetByText("avatar", subs[mid]);
             }
             if (string.IsNullOrEmpty(name))
                 name = $"{LangFile.Get("item", "Item")} {mid + 1}";

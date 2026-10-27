@@ -273,7 +273,7 @@ public sealed class BattleSettingsHooks : ScreenAdapter
 
     private static string GetSettingTypeLabel(int index)
     {
-        return $"Setting {index}";
+        return LocalizedText.SettingN(index);
     }
 
     /// <summary>
@@ -386,7 +386,7 @@ public sealed class BattleSettingsHooks : ScreenAdapter
                 if (state != _lastSelectState)
                 {
                     _lastSelectState = state;
-                    prefix = state == 0 ? "Commentator: " : "Caster: ";
+                    prefix = (state == 0 ? LangFile.Get("battlesettings.commentator", "Commentator") : LangFile.Get("battlesettings.caster", "Caster")) + ": ";
                 }
             }
             catch { }

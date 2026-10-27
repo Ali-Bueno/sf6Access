@@ -64,7 +64,7 @@ public sealed class MusicPlayerEditHooks : SingleParamScreenAdapter
 
         // Switching side: prefix which list you moved to
         string announcement = sideChanged
-            ? $"{(side == 1 ? "Playlist" : "All tracks")}. {track}"
+            ? $"{(side == 1 ? LangFile.Get("musicedit.playlist", "Playlist") : LangFile.Get("musicedit.all_tracks", "All tracks"))}. {track}"
             : track;
 
         API.LogInfo($"[SF6Access] Music edit [{side}]: {announcement}");

@@ -110,7 +110,7 @@ public class ExtremeBattleHooks
             _objectiveValues.Clear();
             foreach (var kv in values) _objectiveValues[kv.Key] = kv.Value;
 
-            string announcement = "Objetivos. " + string.Join(". ", pairs);
+            string announcement = LangFile.Get("extreme.objectives", "Objectives.") + " " + string.Join(". ", pairs);
             API.LogInfo($"[SF6Access] Extreme objectives: {announcement}");
             ScreenReaderService.Speak(announcement, interrupt: false);
             return;

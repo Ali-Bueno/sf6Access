@@ -227,8 +227,11 @@ public sealed class BattleHubResultHooks : ScreenAdapter
         if (count > 0) r1 = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(FlowHelper.GetListItem(players, 0), "TextRatio"));
         if (count > 1) r2 = FlowHelper.ReadGuiText(FlowHelper.GetObjectField(FlowHelper.GetListItem(players, 1), "TextRatio"));
 
-        string s1 = $"Player 1: {(p1 < 0 ? 0 : p1)} wins" + (string.IsNullOrWhiteSpace(r1) ? "" : $", {r1.Trim()}");
-        string s2 = $"Player 2: {(p2 < 0 ? 0 : p2)} wins" + (string.IsNullOrWhiteSpace(r2) ? "" : $", {r2.Trim()}");
+        string s1 = PlayerWins(1, p1) + (string.IsNullOrWhiteSpace(r1) ? "" : $", {r1.Trim()}");
+        string s2 = PlayerWins(2, p2) + (string.IsNullOrWhiteSpace(r2) ? "" : $", {r2.Trim()}");
         return $"{s1}. {s2}";
     }
+
+    private static string PlayerWins(int player, int wins)
+        => string.Format(LangFile.Get("battlehub.player_wins", "Player {0}: {1} wins"), player, wins < 0 ? 0 : wins);
 }

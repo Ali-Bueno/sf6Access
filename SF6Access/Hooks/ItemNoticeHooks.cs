@@ -80,7 +80,7 @@ public class ItemNoticeHooks
             _lastName = name;
 
             API.LogInfo($"[SF6Access] Item obtained: {name}");
-            ScreenReaderService.Speak($"Obtained. {name}", interrupt: false);
+            ScreenReaderService.Speak(string.Format(LangFile.Get("itemnotice.obtained", "Obtained. {0}"), name), interrupt: false);
         }
         catch { _pendingNotice = null; }
     }

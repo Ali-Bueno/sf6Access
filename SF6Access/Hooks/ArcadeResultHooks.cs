@@ -101,12 +101,12 @@ public sealed class ArcadeResultHooks : ScreenAdapter
             // The final stage shows only the running total (no breakdown), so omit
             // the zero rows instead of reading "Score 0. Time bonus 0...".
             var parts = new List<string>();
-            if (score > 0) parts.Add($"Score {score}");
-            if (timeBonus > 0) parts.Add($"Time bonus {timeBonus}");
-            if (vitalBonus > 0) parts.Add($"Vitality bonus {vitalBonus}");
-            if (finishBonus > 0) parts.Add($"Finish bonus {finishBonus}");
-            if (subtotal > 0 && subtotal != total) parts.Add($"Subtotal {subtotal}");
-            parts.Add($"Total {total}");
+            if (score > 0) parts.Add($"{LocalizedText.Score()} {score}");
+            if (timeBonus > 0) parts.Add($"{LocalizedText.TimeBonus()} {timeBonus}");
+            if (vitalBonus > 0) parts.Add($"{LangFile.Get("arcade.vitality_bonus", "Vitality bonus")} {vitalBonus}");
+            if (finishBonus > 0) parts.Add($"{LangFile.Get("arcade.finish_bonus", "Finish bonus")} {finishBonus}");
+            if (subtotal > 0 && subtotal != total) parts.Add($"{LangFile.Get("arcade.subtotal", "Subtotal")} {subtotal}");
+            parts.Add($"{LocalizedText.Total()} {total}");
 
             _announcedResult = true;
             string text = string.Join(". ", parts) + ".";
