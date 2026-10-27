@@ -368,7 +368,9 @@ Confirmed prefixes exposing list widgets: `app.UIFlowAccessOtherPlayerMenu` (mPa
 ### Other-player access / profile (`AccessOtherPlayerProfileHooks`)
 - Gated on `app.UIFlowAccessOtherPlayerMenu.FlowParam` in `_Handles`. Reads GUI
   `BattleHubContactPanel_OtherPlayer` `e_text_name` + GUI `CFNFighterProfileSimpleTop`
-  (`e_text_fid_name`/`e_text_title`/`e_text_lp_num`/`e_text_mr_num`) once on appear.
+  (`e_text_fid_name`/`e_text_title`/`e_text_lp_num`/`e_text_mr_num`) once on appear. The point texts
+  carry the game's localized unit and read `--- LP` / `--- MR` when empty (dump 2026-10, ES: `--- PL`
+  / `--- AM`), so the mod speaks the MR text when it holds a number (Master), else the LP text, as-is.
   `AccessOtherPlayerMenu.mSimpleProfileData` = `HatoClientAPI.Component.PostFighterProfileLightOut`.
   Home country: `mSimpleProfileData.fighter_profile_light.fighter_banner_info.home_id` →
   `HomeCountryResolver`, said after the name. The CFN profile reader (`ProfileHooks`) says

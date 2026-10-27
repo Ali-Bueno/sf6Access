@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.6.1 — 27/10/2026
+
+### Ranked — opponent's MR in the Battle Hub
+- Opening another player's profile in the Battle Hub now reads their **MR** when they are a Master,
+  and their **LP** otherwise. It used to read both, with doubled units ("LP 25000 LP. MR 1500 MR"),
+  and "---" for points the player did not have. The VS screen already reads MR for Masters.
+
+### Update notice
+- The mod now checks GitHub once per launch and, when a newer version exists, says so on the title
+  screen. Without a network connection nothing is said.
+
+### Languages
+- The World Tour navigation readouts now exist in all 13 languages (machine-translated; corrections
+  from native speakers are welcome).
+- More readouts that were always in English now follow your game language: arcade and bonus-stage
+  scores, side select (Player 1: Human / CPU), key config device names, Yes/No/Cancel prompts, and
+  numbered fallbacks ("Option 3", "Tab 2").
+
 ## v0.6.0 — 21/10/2026
 
 > Ranked, home country, Training and battle notices were contributed by **Leos-Khai** (pull request #4).

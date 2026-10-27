@@ -2,7 +2,17 @@
 
 > Per-mod status ledger / dashboard. Open this first when resuming the mod so progress isn't re-derived from the code each session. Keep it short — a dashboard, not docs. Update the **Next step** line and the section table whenever you finish a chunk. Derive every value from the game's real data — no guessed offsets.
 
-**Last updated:** 2026-10-01
+**Last updated:** 2026-10-27
+
+**2026-10-27 — v0.6.1 released:** Battle Hub opponent profile reads MR for Masters, LP otherwise
+(tester request), plus the localization and update check below. Not tested in game: a Master's profile.
+
+**2026-10-23 — localization + update check (built, not tested in game):** the World Tour strings (209
+keys) now exist in all 13 lang files (machine-translated, native review welcome), and spoken English
+literals in menu/result hooks go through `LangFile`. New `UpdateChecker` asks GitHub for the latest
+release once per launch and queues a notice on the title screen; version = newest CHANGELOG heading
+([release packaging](docs/sf6-architecture.md#release-packaging)). Test: title screen with an older
+build hears the notice; with no network only `Update check failed` is logged.
 
 **Next step: user tests Places by name and Guidance / Listen across the city. Do not launch the game.**
 The user chose both named selection and recognizing distant places while exploring. Known fixed places

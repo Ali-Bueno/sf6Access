@@ -1,3 +1,4 @@
+using System.Linq;
 using REFrameworkNET;
 using SF6Access.Services;
 using SF6Access.Services.Ui;
@@ -60,7 +61,7 @@ public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
     }
 
     /// <summary>
-    /// "{name}. {country}. {title}. LP {lp}. MR {mr}" from the two profile HUD GUIs,
+    /// "{name}. {country}. {title}. {MR, or LP below Master}" from the two profile HUD GUIs,
     /// plus the CFN Home country (the flag) from the menu's profile data.
     /// Null until at least a name resolves.
     /// </summary>
@@ -99,8 +100,12 @@ public sealed class AccessOtherPlayerProfileHooks : SingleParamScreenAdapter
             FlowHelper.GetObjectField(param, "mSimpleProfileData"), "fighter_profile_light"), "fighter_banner_info"));
         if (!string.IsNullOrWhiteSpace(home)) parts.Add(home.Trim());
         if (!string.IsNullOrEmpty(title)) parts.Add(title);
-        if (!string.IsNullOrEmpty(lp)) parts.Add($"LP {lp}");
-        if (!string.IsNullOrEmpty(mr)) parts.Add($"MR {mr}");
+        // Masters are ranked by MR, so it replaces their LP. The texts carry the
+        // game's localized unit ("21595 LP"), and "---" when there are no points.
+        string points = HasPoints(mr) ? mr : HasPoints(lp) ? lp : null;
+        if (points != null) parts.Add(points);
         return string.Join(". ", parts);
     }
+
+    private static bool HasPoints(string text) => text != null && text.Any(char.IsDigit);
 }
